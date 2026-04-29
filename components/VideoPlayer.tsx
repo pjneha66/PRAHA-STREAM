@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { CurrentVideoInfo, Servers, Settings } from '../types';
+import { tmdbService } from '../services/tmdbService';
 
 interface VideoPlayerProps {
     videoInfo: CurrentVideoInfo;
@@ -8,9 +9,10 @@ interface VideoPlayerProps {
     settings: Settings;
     servers: Servers;
     onServerChange: (serverKey: string) => void;
+    onPlayNext?: (season: number, episode: number) => void;
 }
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoInfo, onClose, settings, servers, onServerChange }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoInfo, onClose, settings, servers, onServerChange, onPlayNext }) => {
     const item = videoInfo.itemData;
     const title = item.title || item.name;
     const subtitle = item.media_type === 'tv' 
@@ -19,6 +21,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoInfo, onClose, settings,
         
     const currentServer = servers[videoInfo.serverKey];
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
+    const [isCheckingNext, setIsCheckingNext] = useState(false);
 
     const handleDownload = () => {
         window.open(videoInfo.embedUrl, '_blank');
@@ -38,6 +41,37 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoInfo, onClose, settings,
         if(iframe) {
             // Some players might capture focus on click
             iframe.focus();
+        }
+    };
+
+    const handleSkipNextEpisode = async () => {
+        if (!onPlayNext || videoInfo.mediaType !== 'tv' || videoInfo.season === null || videoInfo.episode === null) return;
+        
+        setIsCheckingNext(true);
+        try {
+            const currentSeason = videoInfo.season;
+            const currentEpisode = videoInfo.episode;
+            
+            const seasonData = await tmdbService.getTvSeasonDetails(item.id, currentSeason, settings.adBlocker);
+            const episodesCount = seasonData.episodes?.length || 0;
+            
+            if (currentEpisode < episodesCount) {
+                onPlayNext(currentSeason, currentEpisode + 1);
+            } else {
+                const showData = await tmdbService.getTvShowDetails(item.id, settings.adBlocker);
+                const seasons = showData.seasons.filter((s: any) => s.season_number > 0);
+                
+                const nextSeason = seasons.find((s: any) => s.season_number === currentSeason + 1);
+                if (nextSeason) {
+                    onPlayNext(currentSeason + 1, 1);
+                } else {
+                    alert("This is the last episode of the series.");
+                }
+            }
+        } catch (err) {
+            console.error("Failed to fetch next episode info", err);
+        } finally {
+            setIsCheckingNext(false);
         }
     };
 
@@ -77,6 +111,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoInfo, onClose, settings,
                             <i className="fas fa-forward"></i>
                             <span className="hidden sm:inline">Skip Intro</span>
                         </button>
+                        
+                        {/* Skip Next Episode Button */}
+                        {videoInfo.mediaType === 'tv' && (
+                            <button
+                                onClick={handleSkipNextEpisode}
+                                disabled={isCheckingNext}
+                                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs sm:text-sm px-3 py-1.5 rounded-md transition-colors flex items-center gap-2 border border-white/5 font-semibold"
+                                title="Next Episode"
+                            >
+                                {isCheckingNext ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-step-forward"></i>}
+                                <span className="hidden sm:inline">Next Ep</span>
+                            </button>
+                        )}
 
                         {/* Enhanced Server Selector */}
                         <div className="relative flex items-center">

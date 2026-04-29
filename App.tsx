@@ -75,6 +75,8 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchType, setSearchType] = useState('');
+    const [searchSuggestions, setSearchSuggestions] = useState<MediaItem[]>([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
     const [activeTab, setActiveTab] = useState<AppState['activeTab']>('trending');
     const [trendingType, setTrendingType] = useState<'movie' | 'tv'>('movie');
 
@@ -150,6 +152,26 @@ const App: React.FC = () => {
         }
     }, [settings.theme, settings.autoDarkMode, activeProfileId]);
 
+    // Live search suggestions effect
+    useEffect(() => {
+        if (!searchQuery.trim()) {
+            setSearchSuggestions([]);
+            setShowSuggestions(false);
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            tmdbService.searchMulti(searchQuery, searchType, adBlockerEnabled)
+                .then(data => {
+                    setSearchSuggestions(data.results.filter(item => item.media_type !== 'person' && item.poster_path).slice(0, 5));
+                    setShowSuggestions(true);
+                })
+                .catch(err => console.error("Suggestions error:", err));
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [searchQuery, searchType, adBlockerEnabled]);
+
     // --- Handlers ---
     const handleProfileSelect = (id: string) => {
         setActiveProfileId(id);
@@ -183,6 +205,7 @@ const App: React.FC = () => {
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
+        setShowSuggestions(false);
         if (!searchQuery.trim()) return;
         setActiveTab('search');
         fetchContent(tmdbService.searchMulti(searchQuery, searchType, adBlockerEnabled));
@@ -369,10 +392,45 @@ const App: React.FC = () => {
                             </div>
                             <div className="relative flex-1">
                                 <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                                    onFocus={() => { if (searchSuggestions.length > 0) setShowSuggestions(true); }}
+                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
                                     placeholder="Search..."
                                     className="w-full pl-10 pr-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all focus:bg-[#252525]"
                                 />
                                 <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"></i>
+                                
+                                {showSuggestions && searchSuggestions.length > 0 && (
+                                    <div className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a1a] border border-white/10 rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+                                        {searchSuggestions.map(item => (
+                                            <div 
+                                                key={`sug-${item.id}-${item.media_type}`} 
+                                                className="flex items-center gap-3 p-2 hover:bg-white/5 cursor-pointer transition-colors"
+                                                onClick={() => {
+                                                    setSearchQuery(item.title || item.name || '');
+                                                    setShowSuggestions(false);
+                                                    handleCardClick(item);
+                                                }}
+                                            >
+                                                {item.poster_path ? (
+                                                    <img 
+                                                        src={`https://image.tmdb.org/t/p/w92${item.poster_path}`} 
+                                                        alt={item.title || item.name} 
+                                                        className="w-10 h-14 object-cover rounded"
+                                                        referrerPolicy="no-referrer"
+                                                    />
+                                                ) : (
+                                                    <div className="w-10 h-14 bg-gray-800 rounded flex items-center justify-center">
+                                                        <i className="fas fa-film text-gray-600"></i>
+                                                    </div>
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-semibold text-white truncate">{item.title || item.name}</p>
+                                                    <p className="text-xs text-gray-400 capitalize">{item.media_type === 'movie' ? 'Movie' : 'TV Show'}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </form>
 
@@ -448,6 +506,7 @@ const App: React.FC = () => {
                 <VideoPlayer
                     videoInfo={currentVideoInfo} onClose={() => setCurrentVideoInfo(null)}
                     settings={settings} servers={SERVERS} onServerChange={handleServerChange}
+                    onPlayNext={(season, episode) => playVideo(currentVideoInfo.itemData, currentServerKey, season, episode)}
                 />
             )}
 

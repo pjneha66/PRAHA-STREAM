@@ -37,8 +37,11 @@ export const AD_DOMAINS = [
 
 // FIX: Restored the full, extensive list of streaming servers from the user's original code.
 export const SERVERS: Servers = {
+    // --- New Filmu Server ---
+    'filmu-in': { name: '🏆 Filmu.in (Top)', movieUrl: 'https://embed.filmu.in/movie/{id}', tvUrl: 'https://embed.filmu.in/tv/{id}/{season}/{episode}', downloadSupport: true, qualityOptions: ['1080p', '720p', '480p'], cors: true },
+    
     // --- Original Preferred Servers ---
-    'vidify-top': { name: '🥇 Vidify (Default)', movieUrl: 'https://player.vidify.top/embed/movie/{id}', tvUrl: 'https://player.vidify.top/embed/tv/{id}/{season}/{episode}', downloadSupport: true, qualityOptions: ['1080p', '720p', '480p'], cors: true },
+    'vidify-top': { name: '🥇 Vidify', movieUrl: 'https://player.vidify.top/embed/movie/{id}', tvUrl: 'https://player.vidify.top/embed/tv/{id}/{season}/{episode}', downloadSupport: true, qualityOptions: ['1080p', '720p', '480p'], cors: true },
     'vidnest-fun': { name: '🥇 VidNest Multi Language', movieUrl: 'https://vidnest.fun/movie/{id}', tvUrl: 'https://vidnest.fun/tv/{id}/{season}/{episode}', downloadSupport: true, qualityOptions: ['1080p', '720p', '480p'], cors: true },
     'primewire-tf': { name: '🥈 PrimeWire', movieUrl: 'https://www.primewire.tf/embed/movie?tmdb={id}', tvUrl: 'https://www.primewire.tf/embed/tv?tmdb={id}&season={season}&episode={episode}', downloadSupport: true, qualityOptions: ['1080p', '720p'], cors: true },
     'vidsrc-wtf-api2': { name: '🥉 VidSrc.wtf API 2', movieUrl: 'https://www.vidsrc.wtf/api/2/movie/?id={id}', tvUrl: 'https://www.vidsrc.wtf/api/2/tv/?id={id}&s={season}&e={episode}', downloadSupport: true, qualityOptions: ['auto', '720p', '480p'], cors: true },

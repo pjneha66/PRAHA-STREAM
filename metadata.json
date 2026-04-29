@@ -1,5 +1,6 @@
 {
   "name": "Parha Ultimate - Streaming Platform",
   "description": "An ultimate streaming experience platform built with React and Tailwind CSS, featuring a modern UI, extensive search and filter capabilities, and content sourced from various third-party services. Includes features like favorites, watchlist, history, and an experimental ad blocker.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
