@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { tmdbService } from './services/tmdbService';
 import {
     type MediaItem, type FavoriteItem, type WatchlistItem, type HistoryItem, type Settings, type CurrentVideoInfo, type UserProfile
@@ -10,6 +10,244 @@ import VideoPlayer from './components/VideoPlayer';
 import SettingsModal from './components/modals/SettingsModal';
 import ProfileSelection from './components/ProfileSelection';
 import { DEFAULT_SETTINGS, SERVERS, CORS_PROXY_URL } from './constants';
+
+// Netflix-style Hero Banner Component
+const HeroBanner: React.FC<{ item: MediaItem; onPlay: () => void; onMoreInfo: () => void }> = ({ item, onPlay, onMoreInfo }) => {
+    if (!item) return null;
+    
+    const backdropUrl = item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : '';
+    const title = item.title || item.name || 'No Title';
+    const overview = item.overview || '';
+    const rating = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
+    const year = (item.release_date || item.first_air_date || '').split('-')[0];
+
+    return (
+        <div className="relative h-[80vh] w-full overflow-hidden">
+            {/* Background Image */}
+            <div 
+                className="absolute inset-0 bg-cover bg-center transition-transform duration-[10s] ease-out hover:scale-105"
+                style={{ backgroundImage: `url(${backdropUrl})` }}
+            />
+            {/* Gradient Overlays */}
+            <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-transparent to-transparent" />
+            
+            {/* Content */}
+            <div className="absolute bottom-0 left-0 p-8 md:p-16 pb-32 max-w-3xl">
+                <h1 className="text-5xl md:text-7xl font-bold text-white mb-4 drop-shadow-lg">
+                    {title}
+                </h1>
+                <div className="flex items-center gap-4 mb-4 text-sm md:text-base">
+                    <span className="text-green-500 font-semibold">{rating} Match</span>
+                    <span className="text-gray-300">{year}</span>
+                    <span className="border border-gray-500 px-2 py-0.5 text-xs">HD</span>
+                </div>
+                <p className="text-gray-200 text-lg line-clamp-3 mb-6 drop-shadow-md">
+                    {overview}
+                </p>
+                <div className="flex gap-4">
+                    <button 
+                        onClick={onPlay}
+                        className="flex items-center gap-3 bg-white text-black px-8 py-3 rounded font-bold text-lg hover:bg-gray-200 transition-colors"
+                    >
+                        <i className="fas fa-play"></i> Play
+                    </button>
+                    <button 
+                        onClick={onMoreInfo}
+                        className="flex items-center gap-3 bg-gray-600/80 text-white px-8 py-3 rounded font-bold text-lg hover:bg-gray-600 transition-colors backdrop-blur-sm"
+                    >
+                        <i className="fas fa-info-circle"></i> More Info
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Netflix-style Content Row Component
+interface ContentRowProps {
+    title: string;
+    items: MediaItem[];
+    onCardClick: (item: MediaItem) => void;
+    isFavorite: (id: number) => boolean;
+    isInWatchlist: (id: number) => boolean;
+    onFavoriteToggle: (item: MediaItem) => void;
+    onWatchlistToggle: (item: MediaItem) => void;
+    watchProgress: (id: number) => number;
+    isPrivacyMode: boolean;
+}
+
+const ContentRow: React.FC<ContentRowProps> = ({
+    title,
+    items,
+    onCardClick,
+    isFavorite,
+    isInWatchlist,
+    onFavoriteToggle,
+    onWatchlistToggle,
+    watchProgress,
+    isPrivacyMode,
+}) => {
+    const rowRef = useRef<HTMLDivElement>(null);
+    const [showLeftArrow, setShowLeftArrow] = useState(false);
+    const [showRightArrow, setShowRightArrow] = useState(true);
+
+    const scroll = (direction: 'left' | 'right') => {
+        if (rowRef.current) {
+            const scrollAmount = window.innerWidth * 0.8;
+            rowRef.current.scrollBy({
+                left: direction === 'left' ? -scrollAmount : scrollAmount,
+                behavior: 'smooth'
+            });
+        }
+    };
+
+    const handleScroll = () => {
+        if (rowRef.current) {
+            setShowLeftArrow(rowRef.current.scrollLeft > 0);
+            setShowRightArrow(
+                rowRef.current.scrollLeft < rowRef.current.scrollWidth - rowRef.current.clientWidth - 10
+            );
+        }
+    };
+
+    if (items.length === 0) return null;
+
+    return (
+        <div className="relative mb-8 group/row">
+            <h2 className="text-xl md:text-2xl font-bold text-white mb-4 px-4 md:px-16 flex items-center gap-2">
+                {title}
+                <span className="text-xs text-blue-500 opacity-0 group-hover/row:opacity-100 transition-opacity cursor-pointer flex items-center gap-1">
+                    Explore All <i className="fas fa-chevron-right text-xs"></i>
+                </span>
+            </h2>
+            
+            {showLeftArrow && (
+                <button
+                    onClick={() => scroll('left')}
+                    className="absolute left-0 top-0 bottom-0 z-20 w-12 bg-black/50 hover:bg-black/70 flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-all duration-300"
+                >
+                    <i className="fas fa-chevron-left text-white text-2xl"></i>
+                </button>
+            )}
+            
+            <div
+                ref={rowRef}
+                onScroll={handleScroll}
+                className="flex overflow-x-auto gap-2 pb-4 px-4 md:px-16 scrollbar-hide snap-x"
+                style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            >
+                {items.map((item) => (
+                    <div
+                        key={`${item.id}-${item.media_type}`}
+                        className="min-w-[160px] md:min-w-[240px] lg:min-w-[280px] snap-start"
+                    >
+                        <NetflixCard
+                            item={item}
+                            isFavorite={isFavorite(item.id)}
+                            isInWatchlist={isInWatchlist(item.id)}
+                            watchProgress={watchProgress(item.id)}
+                            onCardClick={onCardClick}
+                            onFavoriteToggle={onFavoriteToggle}
+                            onWatchlistToggle={onWatchlistToggle}
+                            isPrivacyMode={isPrivacyMode}
+                        />
+                    </div>
+                ))}
+            </div>
+            
+            {showRightArrow && (
+                <button
+                    onClick={() => scroll('right')}
+                    className="absolute right-0 top-0 bottom-0 z-20 w-12 bg-black/50 hover:bg-black/70 flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-all duration-300"
+                >
+                    <i className="fas fa-chevron-right text-white text-2xl"></i>
+                </button>
+            )}
+        </div>
+    );
+};
+
+// Netflix-style Card Component
+const NetflixCard: React.FC<{
+    item: MediaItem;
+    isFavorite: boolean;
+    isInWatchlist: boolean;
+    watchProgress: number;
+    onCardClick: (item: MediaItem) => void;
+    onFavoriteToggle: (item: MediaItem) => void;
+    onWatchlistToggle: (item: MediaItem) => void;
+    isPrivacyMode: boolean;
+}> = ({ item, isFavorite, isInWatchlist, watchProgress, onCardClick, onFavoriteToggle, onWatchlistToggle, isPrivacyMode }) => {
+    const [isHovered, setIsHovered] = useState(false);
+    const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : 'https://picsum.photos/500/750';
+    const title = item.title || item.name || 'No Title';
+
+    return (
+        <div
+            className="relative aspect-[2/3] rounded-md overflow-hidden cursor-pointer transition-all duration-300 ease-in-out"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+            onClick={() => onCardClick(item)}
+        >
+            <img
+                src={posterUrl}
+                alt={title}
+                className="w-full h-full object-cover transition-transform duration-300"
+                style={{ transform: isHovered ? 'scale(1.1)' : 'scale(1)' }}
+                loading="lazy"
+            />
+            
+            {/* Hover Overlay */}
+            <div
+                className={`absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent transition-opacity duration-300 ${
+                    isHovered ? 'opacity-100' : 'opacity-0'
+                }`}
+            >
+                <div className="absolute bottom-0 left-0 right-0 p-4">
+                    <h3 className="text-white font-bold text-sm mb-2 line-clamp-2">{title}</h3>
+                    <div className="flex items-center gap-2 mb-3">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onFavoriteToggle(item); }}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                                isFavorite ? 'bg-red-600 text-white' : 'bg-white/20 text-white hover:bg-white/40'
+                            }`}
+                        >
+                            <i className={`fas ${isFavorite ? 'fa-heart' : 'fa-heart'}`}></i>
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onWatchlistToggle(item); }}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                                isInWatchlist ? 'bg-blue-600 text-white' : 'bg-white/20 text-white hover:bg-white/40'
+                            }`}
+                        >
+                            <i className="fas fa-bookmark"></i>
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onCardClick(item); }}
+                            className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:bg-gray-200 transition-colors"
+                        >
+                            <i className="fas fa-play text-xs"></i>
+                        </button>
+                    </div>
+                    {watchProgress > 0 && (
+                        <div className="w-full h-1 bg-gray-600 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-red-600 transition-all duration-300"
+                                style={{ width: `${watchProgress}%` }}
+                            />
+                        </div>
+                    )}
+                </div>
+            </div>
+            
+            {/* Privacy Mode Blur */}
+            {isPrivacyMode && !isHovered && (
+                <div className="absolute inset-0 backdrop-blur-sm bg-black/20" />
+            )}
+        </div>
+    );
+};
 
 // Enhanced hook to handle profile-specific storage
 const useLocalStorage = <T,>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] => {
@@ -296,7 +534,31 @@ const App: React.FC = () => {
 
     // --- Render Helpers ---
 
-    const renderContinueWatching = () => {
+    // --- Netflix-style UI Render Helpers ---
+    
+    const [heroItem, setHeroItem] = useState<MediaItem | null>(null);
+    
+    // Set hero item from results when trending changes
+    useEffect(() => {
+        if (results.length > 0 && activeTab === 'trending') {
+            // Find an item with backdrop for hero
+            const itemWithBackdrop = results.find(item => item.backdrop_path) || results[0];
+            setHeroItem(itemWithBackdrop);
+        } else {
+            setHeroItem(null);
+        }
+    }, [results, activeTab]);
+
+    const handleHeroPlay = () => {
+        if (heroItem) handleCardClick(heroItem);
+    };
+
+    const handleHeroMoreInfo = () => {
+        // Could open a modal with more details
+        console.log('More info about:', heroItem);
+    };
+
+    const renderNetflixUI = () => {
         if (!settings.trackHistory || history.length === 0 || activeTab === 'search') return null;
         const recentItems = [...history].sort((a, b) => b.watchedAt - a.watchedAt).slice(0, 10);
         if (recentItems.length === 0) return null;
