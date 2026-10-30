@@ -959,3 +959,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .csx-result-poster { width: 104px; }
   .csx-topbar { flex-wrap: wrap; }
 }
+.csx-native-banner { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border: 1px dashed var(--line-strong); border-radius: 16px; background: var(--bg-soft); }
+.csx-native-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(var(--accent-rgb), .13); color: var(--accent); flex: 0 0 auto; }
+.csx-native-copy { flex: 1; min-width: 0; }
+.csx-native-copy strong { font-size: 14px; }
+.csx-native-copy p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.csx-native-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 760px) { .csx-native-banner { flex-direction: column; align-items: flex-start; } }

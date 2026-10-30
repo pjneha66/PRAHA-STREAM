@@ -107,16 +107,23 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   const cloudStreamSearchLink = `cloudstreamsearch://${encodeURIComponent(query.trim() || provider?.name || 'CloudStream')}`;
 
   useEffect(() => {
-    if (!activeProviderId && providers.length) setActiveProviderId(providers[0].provider.id);
+    // Default to a browser-playable provider. Native .cs3 extensions can be
+    // picked explicitly, but they must never be the landing provider — the
+    // app replica would otherwise open on the Android-handoff screen.
+    const preferred = providers.find((item) => !item.provider.nativeOnly) || providers[0];
+    if (!activeProviderId && providers.length) setActiveProviderId(preferred.provider.id);
     else if (activeProviderId && !providers.some((item) => item.provider.id === activeProviderId)) {
-      setActiveProviderId(providers[0]?.provider.id || null);
+      setActiveProviderId(preferred?.provider.id || null);
     }
   }, [providers, activeProviderId]);
 
   useEffect(() => {
+    // Note: do not clear `selected` here. Opening a title from another
+    // provider's row switches the active provider and selects the title in
+    // the same update; clearing the selection would close the result screen
+    // before its streams load. The provider menu closes it explicitly.
     setResults([]);
     setSearchError('');
-    setSelected(null);
     setHeroIndex(0);
   }, [activeProviderId]);
 
@@ -207,35 +214,48 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   }, [heroItems.length]);
 
   /* ------------------------------ result page ---------------------------- */
-  const loadStreams = useCallback(async (item: MediaItem, mediaId: string, mediaType: 'movie' | 'series') => {
-    if (!provider) return;
+  const selectedProvider = useMemo(
+    () => providers.find((entry) => entry.provider.id === selected?.providerId)?.provider || provider,
+    [providers, selected, provider],
+  );
+
+  const loadStreams = useCallback(async (
+    item: MediaItem,
+    mediaId: string,
+    mediaType: 'movie' | 'series',
+    targetProvider: CloudStreamProvider | undefined = provider,
+  ) => {
+    if (!targetProvider) return;
     setLoading(true);
     setErrors([]);
     setStreams([]);
     try {
-      const result = await getCloudStreamStreams(provider, mediaId, mediaType, tmdbApiKey);
+      const result = await getCloudStreamStreams(targetProvider, mediaId, mediaType, tmdbApiKey);
       setStreams(result);
-      if (!result.length) setErrors([{ sourceName: provider.name, message: 'This extension returned no streams for this title.' }]);
+      if (!result.length) setErrors([{ sourceName: targetProvider.name, message: 'This extension returned no streams for this title.' }]);
     } catch (error) {
-      setErrors([{ sourceName: provider.name, message: error instanceof Error ? error.message : 'Unable to resolve streams.' }]);
+      setErrors([{ sourceName: targetProvider.name, message: error instanceof Error ? error.message : 'Unable to resolve streams.' }]);
     } finally {
       setLoading(false);
     }
   }, [provider, tmdbApiKey]);
 
-  const loadEpisodes = useCallback(async (item: MediaItem) => {
-    if (!provider) return;
+  const loadEpisodes = useCallback(async (
+    item: MediaItem,
+    targetProvider: CloudStreamProvider | undefined = provider,
+  ) => {
+    if (!targetProvider) return;
     setEpisodesLoading(true);
     setEpisodes([]);
     setActiveEpisode(null);
     try {
-      const list = await getCloudStreamEpisodes(provider, item.providerMediaId || item.id, tmdbApiKey);
+      const list = await getCloudStreamEpisodes(targetProvider, item.providerMediaId || item.id, tmdbApiKey);
       setEpisodes(list);
       if (list.length) {
         setSeason(list[0].season || 1);
         setActiveEpisode(list[0].id);
         // The first episode is shown as selected, so resolve its streams too.
-        void loadStreams(item, list[0].id, 'series');
+        void loadStreams(item, list[0].id, 'series', targetProvider);
       }
     } catch (error) {
       setSearchError(error instanceof Error ? error.message : 'Episode list could not be loaded.');
@@ -245,29 +265,35 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   }, [provider, tmdbApiKey, loadStreams]);
 
   const openMedia = (item: MediaItem) => {
+    // A title must always be resolved by the provider that produced it.
+    // Using the currently selected provider here breaks source loading when
+    // a title is opened from another provider's row (setState has not yet
+    // switched providers), e.g. from the native-provider home banner rows.
+    const itemProvider = providers.find((entry) => entry.provider.id === item.providerId)?.provider || provider;
+    if (itemProvider && itemProvider.id !== activeProviderId) setActiveProviderId(itemProvider.id);
     setSelected(item);
     setStreams([]);
     setErrors([]);
     setActiveEpisode(null);
     setSeason(1);
-    if (item.type === 'series') void loadEpisodes(item);
-    else void loadStreams(item, item.providerMediaId || item.id, 'movie');
+    if (item.type === 'series') void loadEpisodes(item, itemProvider);
+    else void loadStreams(item, item.providerMediaId || item.id, 'movie', itemProvider);
   };
 
   const playEpisode = (episode: CloudStreamEpisode) => {
     if (!selected) return;
     setActiveEpisode(episode.id);
-    void loadStreams(selected, episode.id, 'series');
+    void loadStreams(selected, episode.id, 'series', selectedProvider);
   };
 
   const refreshStreams = useCallback(() => {
     if (!selected) return;
     if (selected.type === 'series') {
-      if (activeEpisode) void loadStreams(selected, activeEpisode, 'series');
+      if (activeEpisode) void loadStreams(selected, activeEpisode, 'series', selectedProvider);
     } else {
-      void loadStreams(selected, selected.providerMediaId || selected.id, 'movie');
+      void loadStreams(selected, selected.providerMediaId || selected.id, 'movie', selectedProvider);
     }
-  }, [selected, activeEpisode, loadStreams]);
+  }, [selected, activeEpisode, loadStreams, selectedProvider]);
 
   const seasons = useMemo(
     () => [...new Set<number>(episodes.map((episode) => episode.season || 1))].sort((a, b) => a - b),
@@ -349,7 +375,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
             <div className="csx-result-head">
               {selected.poster ? <img className="csx-result-poster" src={selected.poster} alt="" /> : <span className="csx-result-poster csx-no-poster"><Film size={28} /></span>}
               <div className="csx-result-meta">
-                <span className="page-kicker">{provider?.name}</span>
+                <span className="page-kicker">{selectedProvider?.name}</span>
                 <h1>{selected.title}</h1>
                 <div className="csx-meta-row">
                   {selected.year && <span>{selected.year}</span>}
@@ -443,17 +469,44 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
         /* -------------------------- Home screen -------------------------- */
         <div className="csx-home">
           {nativeOnly ? (
-            <div className="empty-state explore-empty">
-              <span><Package size={26} /></span>
-              <h2>Native CloudStream extension</h2>
-              <p>{provider?.name} is a compiled Kotlin .cs3 package for the Android CloudStream app. A browser cannot execute it, so PRAHA can hand the search and repository to the official app instead.</p>
-              <div className="tmdb-setup-actions">
-                <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={16} /> Search in CloudStream app</a>
-                <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={16} /> Add repository in CloudStream</a>
-                <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
+            <>
+              <div className="csx-native-banner">
+                <span className="csx-native-icon"><Package size={20} /></span>
+                <div className="csx-native-copy">
+                  <strong>{provider?.name} runs in the Android app</strong>
+                  <p>It's a compiled Kotlin .cs3 package, so it can't play in a browser. Your browser-playable providers are shown below — or open this one in the official app.</p>
+                </div>
+                <div className="csx-native-actions">
+                  <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={15} /> Open in CloudStream</a>
+                  <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={15} /> Add repository</a>
+                </div>
               </div>
-              <button className="text-button" onClick={onOpenExtensions}>Manage extensions</button>
-            </div>
+              {browseRows.map((row) => (
+                <section className="csx-section" key={row.provider.id}>
+                  <div className="csx-row-head">
+                    <h2 className="csx-row-title">{row.provider.name}</h2>
+                    <span>{row.loading ? 'Loading…' : `${row.items.length} titles`}</span>
+                  </div>
+                  <div className="media-row">
+                    {row.loading ? Array.from({ length: 8 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>) : row.items.map((item) => (
+                      <MediaCard key={item.id} item={item} onSelect={(media) => { setActiveProviderId(row.provider.id); openMedia(media); }}
+                        onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
+                    ))}
+                    {!row.loading && !row.items.length && (row.error ? (
+                      <span className="explore-note"><CircleAlert size={14} /> {row.provider.name}: {row.error}</span>
+                    ) : <span className="text-button">This provider returned no titles for its home page.</span>)}
+                  </div>
+                </section>
+              ))}
+              {!browseRows.length && (
+                <div className="empty-state explore-empty">
+                  <span><Package size={26} /></span>
+                  <h2>No browser-playable providers</h2>
+                  <p>All of your installed CloudStream extensions are native .cs3 packages. Install a JavaScript extension, or use the official Android app above.</p>
+                  <button className="button button-primary" onClick={onOpenExtensions}>Manage extensions</button>
+                </div>
+              )}
+            </>
           ) : (
             <>
               {hero && (
