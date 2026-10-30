@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Database, ExternalLink, Eye, EyeOff, Gauge,
-  KeyRound, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
+  KeyRound, Keyboard, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository } from '../types';
+import { normalizeCloudStreamServerUrl, testCloudStreamServer } from '../services/cloudstreamServerService';
+import { PLAYER_THEMES } from './player/themes';
+import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository, PlayerSettings } from '../types';
 
 export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
   <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button>
@@ -24,9 +26,43 @@ const SettingsView: React.FC<{
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
+  const [serverDraft, setServerDraft] = useState(settings.cloudstreamServerUrl || '');
+  const [serverStatus, setServerStatus] = useState<ApiStatus>('idle');
+  const [serverMessage, setServerMessage] = useState('');
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => onChange({ ...settings, [key]: value });
+  const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
+  useEffect(() => setServerDraft(settings.cloudstreamServerUrl || ''), [settings.cloudstreamServerUrl]);
+
+  const testAndSaveServer = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const serverUrl = normalizeCloudStreamServerUrl(serverDraft);
+    if (!serverUrl) {
+      setServerStatus('error');
+      setServerMessage('Paste your CloudStream plugin server URL first, e.g. http://192.168.1.20:8080.');
+      return;
+    }
+    setServerStatus('checking');
+    setServerMessage('');
+    try {
+      const providers = await testCloudStreamServer(serverUrl);
+      update('cloudstreamServerUrl', serverUrl);
+      setServerDraft(serverUrl);
+      setServerStatus('success');
+      setServerMessage(`Connected. The server is running ${providers.length} CloudStream provider${providers.length === 1 ? '' : 's'} — native .cs3 extensions will now load in the CloudStream tab.`);
+    } catch (error) {
+      setServerStatus('error');
+      setServerMessage(error instanceof Error ? error.message : 'Could not reach the CloudStream server.');
+    }
+  };
+
+  const clearServer = () => {
+    setServerDraft('');
+    setServerStatus('idle');
+    setServerMessage('');
+    update('cloudstreamServerUrl', '');
+  };
 
   const verifyAndSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -74,12 +110,51 @@ const SettingsView: React.FC<{
             <p className="api-privacy"><ShieldCheck size={14} /><span>Your key is stored only in this browser and sent directly to TMDB. Installed Nuvio providers can also access it through their standard <code>TMDB_API_KEY</code> runtime binding, so only install providers you trust.</span></p>
           </section>
 
+
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><Package size={19} /></span><div><h2>CloudStream Server</h2><p>Run native .cs3 providers — the app's working logic — from a plugin server on your network.</p></div></div>
+            <div className="tmdb-intro"><div><strong>Your providers. Executed for real.</strong><p>.cs3 plugins are Android/Kotlin code; a browser can't run them. A CloudStream plugin server (for example the community CloudStream Web server) executes them and PRAHA loads their home pages, search, episodes, and links here.</p></div><a href="https://github.com/SusyBegula/cloudstream-web-unofficial" target="_blank" rel="noreferrer">Get the server <ExternalLink size={13} /></a></div>
+            <form className="api-key-form" onSubmit={testAndSaveServer}>
+              <label htmlFor="cs-server-url">Plugin server URL</label>
+              <div className="api-key-input"><Package size={16} /><input id="cs-server-url" type="text" value={serverDraft} onChange={(event) => { setServerDraft(event.target.value); setServerStatus('idle'); setServerMessage(''); }} placeholder="http://192.168.1.20:8080" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={serverStatus === 'checking'} /></div>
+              <div className="api-key-actions"><button className="button button-primary" type="submit" disabled={serverStatus === 'checking'}>{serverStatus === 'checking' ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{serverStatus === 'checking' ? 'Testing…' : 'Test & save'}</button>{(settings.cloudstreamServerUrl || serverDraft) && <button className="button button-secondary" type="button" onClick={clearServer} disabled={serverStatus === 'checking'}><Trash2 size={15} /> Clear</button>}<span className={`api-saved-state ${settings.cloudstreamServerUrl ? 'active' : ''}`}><i />{settings.cloudstreamServerUrl ? 'Server connected' : 'No server configured'}</span></div>
+            </form>
+            {serverMessage && <p className={`api-key-message ${serverStatus}`} role="status">{serverStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{serverMessage}</p>}
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Install the same repositories on the server that you use here; PRAHA matches providers by name. Only connect to servers you trust — they execute the plugins you install.</span></p>
+          </section>
+
           <section className="settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Playback & browsing</h2><p>Choose how PRAHA feels as you move through it.</p></div></div>
             <div className="setting-row"><div><strong>Autoplay streams</strong><p>Start playback as soon as a compatible source opens.</p></div><Toggle checked={settings.autoplay} onChange={(value) => update('autoplay', value)} label="Autoplay streams" /></div>
             <div className="setting-row"><div><strong>Compact posters</strong><p>Fit more titles on screen while browsing.</p></div><Toggle checked={settings.compactCards} onChange={(value) => update('compactCards', value)} label="Compact posters" /></div>
             <div className="setting-row"><div><strong>Reduce motion</strong><p>Minimize transitions and animated effects.</p></div><Toggle checked={settings.reduceMotion} onChange={(value) => update('reduceMotion', value)} label="Reduce motion" /></div>
             <div className="setting-row"><div><strong>Preferred audio language</strong><p>Used to prioritize matching streams when available.</p></div><select className="settings-select" value={settings.preferredLanguage} onChange={(event) => update('preferredLanguage', event.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="other">Other</option></select></div>
+          </section>
+
+          <section className="settings-card player-settings-card">
+            <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Player</h2><p>The built-in player follows mpvRx: on-screen controller, mpv key bindings, gesture zones, and themes.</p></div></div>
+            <div className="setting-row"><div><strong>Controller theme</strong><p>Colors the on-screen controller, menus, and statistics overlay.</p></div></div>
+            <div className="player-theme-grid">
+              {PLAYER_THEMES.map((theme) => (
+                <button
+                  key={theme.id}
+                  className={`player-theme-swatch ${settings.player.theme === theme.id ? 'active' : ''}`}
+                  style={{ ['--swatch-bg' as string]: theme.vars['--osc-solid'], ['--swatch-accent' as string]: theme.vars['--osc-accent'], ['--swatch-fg' as string]: theme.vars['--osc-fg'] }}
+                  onClick={() => updatePlayer({ theme: theme.id })}
+                  aria-label={`${theme.name} player theme`}
+                >
+                  <span className="player-theme-bar" />
+                  <em>{theme.name}</em>
+                  {settings.player.theme === theme.id && <Check size={13} />}
+                </button>
+              ))}
+            </div>
+            <div className="setting-row"><div><strong>Seek step</strong><p>Seconds used by the back/forward buttons and the ← / → keys.</p></div><select className="settings-select" value={settings.player.seekStep} onChange={(event) => updatePlayer({ seekStep: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} seconds</option>)}</select></div>
+            <div className="setting-row"><div><strong>Controller auto-hide</strong><p>How long the on-screen controller stays after you move the pointer.</p></div><select className="settings-select" value={settings.player.oscTimeout} onChange={(event) => updatePlayer({ oscTimeout: Number(event.target.value) })}>{[[1500, '1.5 seconds'], [2600, '2.5 seconds'], [4000, '4 seconds'], [0, 'Always visible']].map(([value, label]) => <option key={String(value)} value={value}>{label}</option>)}</select></div>
+            <div className="setting-row"><div><strong>Subtitle size</strong><p>Applied to every subtitle track while playing.</p></div><select className="settings-select" value={settings.player.subtitleSize} onChange={(event) => updatePlayer({ subtitleSize: Number(event.target.value) })}>{[75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></div>
+            <div className="setting-row"><div><strong>Touch gestures</strong><p>Double-tap zones to seek, swipe for volume and brightness, long-press for 2× speed.</p></div><Toggle checked={settings.player.gestures} onChange={(value) => updatePlayer({ gestures: value })} label="Touch gestures" /></div>
+            <div className="setting-row"><div><strong>Statistics overlay</strong><p>Start playback with the mpv-style stats panel open.</p></div><Toggle checked={settings.player.stats} onChange={(value) => updatePlayer({ stats: value })} label="Statistics overlay" /></div>
+            <p className="player-shortcut-note"><Keyboard size={14} /><span>Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd><kbd>→</kbd> seek · <kbd>↑</kbd><kbd>↓</kbd> volume · <kbd>F</kbd> fullscreen · <kbd>J</kbd> subtitles · <kbd>#</kbd> audio · <kbd>I</kbd> stats · <kbd>?</kbd> full list.</span></p>
           </section>
           <section className="settings-card">
             <div className="settings-card-heading"><span><Gauge size={19} /></span><div><h2>Appearance</h2><p>A cinematic canvas with your own accent.</p></div></div>

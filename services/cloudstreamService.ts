@@ -234,7 +234,7 @@ export interface CloudStreamEpisode {
   thumbnail: string;
 }
 
-function runWorker(provider: CloudStreamProvider, args: Record<string, unknown>, mode: 'search' | 'episodes' | 'streams', tmdbApiKey?: string): Promise<any> {
+function runWorker(provider: CloudStreamProvider, args: Record<string, unknown>, mode: 'search' | 'home' | 'episodes' | 'streams', tmdbApiKey?: string): Promise<any> {
   if (!provider.code) throw new Error('This CloudStream extension is a native .cs3 package and cannot run in a browser.');
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./cloudstreamWorker.ts', import.meta.url), { type: 'module' });
@@ -310,6 +310,7 @@ export function normalizeCloudStreamStreams(raw: any[], provider: CloudStreamPro
       language: item.language,
       provider: item.provider || provider.name,
       headers: item.headers,
+      format: item.format,
       subtitles: item.subtitles,
       externalUrl: item.externalUrl,
       ytId: item.ytId,
@@ -317,6 +318,11 @@ export function normalizeCloudStreamStreams(raw: any[], provider: CloudStreamPro
     });
     return results;
   }, []);
+}
+
+export async function getCloudStreamHome(provider: CloudStreamProvider, tmdbApiKey?: string) {
+  const raw = await runWorker(provider, {}, 'home', tmdbApiKey);
+  return normalizeCloudStreamSearch(raw, provider);
 }
 
 export async function searchCloudStreamProvider(provider: CloudStreamProvider, query: string, tmdbApiKey?: string) {

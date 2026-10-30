@@ -51,7 +51,7 @@ export const ContinueCard: React.FC<{
       <Artwork src={entry.media.backdrop || entry.media.poster} alt="" />
       <span className="continue-shade" />
       <span className="continue-play"><Play size={17} fill="currentColor" /></span>
-      <span className="continue-source">{entry.media.source === 'stremio' ? 'ADDON' : 'PRAHA'}</span>
+      <span className="continue-source">{entry.media.source === 'stremio' ? 'ADDON' : entry.media.source === 'nuvio' ? 'NUVIO' : entry.media.source === 'cloudstream' ? 'CLOUDSTREAM' : 'TMDB'}</span>
     </div>
     <div className="continue-copy">
       <strong>{entry.media.title}</strong>
