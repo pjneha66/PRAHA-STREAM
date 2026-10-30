@@ -248,6 +248,7 @@ const App: React.FC = () => {
     page = <CloudStreamPage repositories={cloudstreamRepositories} history={history} watchlist={watchlist}
       compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
       tmdbApiKey={settings.tmdbApiKey}
+      cloudstreamServerUrl={settings.cloudstreamServerUrl || ''}
       onOpenSettings={() => navigate('settings')}
       onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
       onOpenExtensions={() => navigate('extensions')} />;

@@ -7,6 +7,10 @@ import {
   getCloudStreamEpisodes, getCloudStreamHome, getCloudStreamStreams, searchCloudStreamProvider,
   type CloudStreamEpisode,
 } from '../services/cloudstreamService';
+import {
+  fetchServerLinks, fetchServerMainPage, loadServerTitle, resolveServerProviderName, searchServerProvider,
+  type ServerMainPageRow,
+} from '../services/cloudstreamServerService';
 import type {
   CloudStreamProvider, CloudStreamRepository, MediaItem, SourceError, StreamResult, WatchProgress,
 } from '../types';
@@ -21,6 +25,8 @@ interface CloudStreamPageProps {
   compact: boolean;
   preferredLanguage: string;
   tmdbApiKey: string;
+  /** Optional plugin server that executes native .cs3 providers. */
+  cloudstreamServerUrl: string;
   onOpenSettings: () => void;
   onToggleWatchlist: (item: MediaItem) => void;
   onPlay: (media: MediaItem, stream: StreamResult) => void;
@@ -64,7 +70,7 @@ interface BrowseRow {
  */
 const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   repositories, history, watchlist, compact, preferredLanguage, tmdbApiKey,
-  onOpenSettings, onToggleWatchlist, onPlay, onOpenExtensions,
+  cloudstreamServerUrl, onOpenSettings, onToggleWatchlist, onPlay, onOpenExtensions,
 }) => {
   const providers = useMemo(() => repositories
     .filter((repo) => repo.enabled)
@@ -94,6 +100,9 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   const [bookmarkList, setBookmarkList] = useState<(typeof BOOKMARK_LISTS)[number]>('Watching');
   const [heroIndex, setHeroIndex] = useState(0);
   const [nativeQuery, setNativeQuery] = useState('');
+  const [remoteRows, setRemoteRows] = useState<ServerMainPageRow[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const active = useMemo(
@@ -102,6 +111,8 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   );
   const provider = active?.provider;
   const nativeOnly = Boolean(provider?.nativeOnly);
+  const showRemoteHome = nativeOnly && Boolean(cloudstreamServerUrl);
+  const showNativePage = nativeOnly && !cloudstreamServerUrl;
   const cloudStreamRepoLink = active
     ? `https://cs.repo?${active.repository.manifestUrl.replace(/^https?:\/\//, '')}`
     : 'https://github.com/recloudstream/cloudstream';
@@ -135,7 +146,8 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   /* ------------------------------- search ------------------------------- */
   useEffect(() => {
     const term = query.trim();
-    if (view !== 'search' || !term || !provider || nativeOnly || !provider.code) {
+    const canSearch = Boolean(provider) && (nativeOnly ? Boolean(cloudstreamServerUrl) : Boolean(provider?.code));
+    if (view !== 'search' || !term || !provider || !canSearch) {
       setResults([]);
       setSearching(false);
       return;
@@ -145,7 +157,9 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setSearchError('');
     const timer = window.setTimeout(async () => {
       try {
-        const items = await searchCloudStreamProvider(provider, term, tmdbApiKey);
+        const items = nativeOnly
+          ? await searchServerProvider(cloudstreamServerUrl, await resolveServerProviderName(cloudstreamServerUrl, provider.name), term, provider)
+          : await searchCloudStreamProvider(provider, term, tmdbApiKey);
         if (!cancelled) setResults(items);
       } catch (error) {
         if (!cancelled) {
@@ -157,7 +171,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
       }
     }, 400);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query, view, provider, nativeOnly, tmdbApiKey]);
+  }, [query, view, provider, nativeOnly, tmdbApiKey, cloudstreamServerUrl]);
 
   const filteredResults = useMemo(
     () => (typeFilter === 'all' ? results : results.filter((item) => item.type === typeFilter)),
@@ -201,6 +215,35 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
 
   useEffect(() => { loadBrowse(); }, [loadBrowse]);
 
+  useEffect(() => {
+    if (!showRemoteHome || !provider) {
+      setRemoteRows([]);
+      setRemoteError('');
+      return;
+    }
+    let cancelled = false;
+    setRemoteLoading(true);
+    setRemoteError('');
+    (async () => {
+      try {
+        const serverName = await resolveServerProviderName(cloudstreamServerUrl, provider.name);
+        const rows = await fetchServerMainPage(cloudstreamServerUrl, serverName, provider);
+        if (!cancelled) setRemoteRows(rows);
+      } catch (error) {
+        if (!cancelled) {
+          setRemoteRows([]);
+          setRemoteError(error instanceof Error ? error.message : 'The CloudStream server could not load this provider.');
+        }
+      } finally {
+        if (!cancelled) setRemoteLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showRemoteHome, provider, cloudstreamServerUrl]);
+
+  const remoteItems = useMemo(() => remoteRows.flatMap((row) => row.items), [remoteRows]);
+  const remoteHero = remoteItems.length ? remoteItems[heroIndex % remoteItems.length] : undefined;
+
   const activeRow = useMemo(
     () => browseRows.find((row) => row.provider.id === activeProviderId) || null,
     [browseRows, activeProviderId],
@@ -231,7 +274,19 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setErrors([]);
     setStreams([]);
     try {
-      const result = await getCloudStreamStreams(targetProvider, mediaId, mediaType, tmdbApiKey);
+      let result: StreamResult[];
+      if (targetProvider.nativeOnly) {
+        if (!cloudstreamServerUrl) throw new Error('Connect a CloudStream server in Settings to load this provider in the browser.');
+        const serverName = await resolveServerProviderName(cloudstreamServerUrl, targetProvider.name);
+        // Movies resolve links from the load response's dataUrl; episodes
+        // pass their own data straight to loadLinks.
+        const data = mediaType === 'movie'
+          ? (await loadServerTitle(cloudstreamServerUrl, serverName, mediaId)).dataUrl || mediaId
+          : mediaId;
+        result = await fetchServerLinks(cloudstreamServerUrl, serverName, data, targetProvider);
+      } else {
+        result = await getCloudStreamStreams(targetProvider, mediaId, mediaType, tmdbApiKey);
+      }
       setStreams(result);
       if (!result.length) setErrors([{ sourceName: targetProvider.name, message: 'This extension returned no streams for this title.' }]);
     } catch (error) {
@@ -239,7 +294,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [provider, tmdbApiKey]);
+  }, [provider, tmdbApiKey, cloudstreamServerUrl]);
 
   const loadEpisodes = useCallback(async (
     item: MediaItem,
@@ -250,7 +305,13 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setEpisodes([]);
     setActiveEpisode(null);
     try {
-      const list = await getCloudStreamEpisodes(targetProvider, item.providerMediaId || item.id, tmdbApiKey);
+      const list = targetProvider.nativeOnly
+        ? (await (async () => {
+            if (!cloudstreamServerUrl) throw new Error('Connect a CloudStream server in Settings to load this provider in the browser.');
+            const serverName = await resolveServerProviderName(cloudstreamServerUrl, targetProvider.name);
+            return (await loadServerTitle(cloudstreamServerUrl, serverName, item.providerMediaId || item.id)).episodes;
+          })())
+        : await getCloudStreamEpisodes(targetProvider, item.providerMediaId || item.id, tmdbApiKey);
       setEpisodes(list);
       if (list.length) {
         setSeason(list[0].season || 1);
@@ -263,7 +324,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     } finally {
       setEpisodesLoading(false);
     }
-  }, [provider, tmdbApiKey, loadStreams]);
+  }, [provider, tmdbApiKey, loadStreams, cloudstreamServerUrl]);
 
   const openMedia = (item: MediaItem) => {
     // A title must always be resolved by the provider that produced it.
@@ -481,7 +542,54 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
       ) : view === 'home' ? (
         /* -------------------------- Home screen -------------------------- */
         <div className="csx-home">
-          {nativeOnly ? (
+          {showRemoteHome ? (
+            <>
+              {remoteHero && (
+                <div className="csx-hero">
+                  {(remoteHero.backdrop || remoteHero.poster) && <img src={remoteHero.backdrop || remoteHero.poster} alt="" />}
+                  <div className="csx-hero-shade" />
+                  <div className="csx-hero-copy">
+                    <span className="page-kicker">{provider?.name} · CloudStream server</span>
+                    <h1>{remoteHero.title}</h1>
+                    <div className="csx-meta-row">
+                      {remoteHero.year && <span>{remoteHero.year}</span>}
+                      <span>{remoteHero.type === 'series' ? 'TV Series' : 'Movie'}</span>
+                    </div>
+                    <div className="csx-hero-actions">
+                      <button className="csx-list-action" onClick={() => onToggleWatchlist(remoteHero)}>
+                        {inList(remoteHero) ? <Check size={19} /> : <Plus size={19} />}<small>My List</small>
+                      </button>
+                      <button className="csx-play" onClick={() => openMedia(remoteHero)}><Play size={17} fill="currentColor" /> Play</button>
+                      <button className="csx-list-action" onClick={() => openMedia(remoteHero)}>
+                        <Info size={19} /><small>Info</small>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {remoteLoading && <p className="explore-note"><LoaderCircle size={14} className="spin" /> Loading {provider?.name} from your CloudStream server…</p>}
+              {remoteError && (
+                <p className="explore-note"><CircleAlert size={14} /> {remoteError} <button className="inline-link" onClick={onOpenSettings}>Server settings</button></p>
+              )}
+              {!remoteLoading && !remoteError && !remoteRows.length && (
+                <p className="csx-empty-note">Your CloudStream server returned no home-page rows for {provider?.name}.</p>
+              )}
+              {remoteRows.map((row) => (
+                <section className="csx-section" key={row.name}>
+                  <div className="csx-row-head">
+                    <h2 className="csx-row-title">{row.name}</h2>
+                    <span>{row.items.length} titles</span>
+                  </div>
+                  <div className="media-row">
+                    {row.items.map((item) => (
+                      <MediaCard key={item.id} item={item} onSelect={openMedia}
+                        onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </>
+          ) : showNativePage ? (
             <div className="csx-native-page">
               <div className="csx-native-hero">
                 {provider?.iconUrl
@@ -524,7 +632,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
                 <button className="button button-secondary" onClick={onOpenExtensions}>Manage extensions</button>
               </div>
 
-              <p className="explore-note"><CircleAlert size={14} /> This provider's catalog and streams are generated by its compiled Android plugin at runtime. A web page cannot execute .cs3 plugins — in the official CloudStream app this same provider fills its home page and search from this screen's deep link. Providers that can play right here are under “Play in browser” in the provider selector above.</p>
+              <p className="explore-note"><CircleAlert size={14} /> This provider's catalog and streams are generated by its compiled Android plugin at runtime. To load them here, connect a CloudStream plugin server in Settings — it executes .cs3 providers (the same working logic as the app) and PRAHA will show this provider's home page, search, episodes, and links in this tab. <button className="inline-link" onClick={onOpenSettings}>Connect a server</button></p>
             </div>
           ) : (
             <>
@@ -638,7 +746,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
       ) : (
         /* ------------------------- Search screen ------------------------- */
         <div className="csx-search">
-          {nativeOnly ? (
+          {showNativePage ? (
             <div className="empty-state explore-empty">
               <span><Package size={26} /></span>
               <h2>Native CloudStream extension</h2>

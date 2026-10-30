@@ -4,6 +4,7 @@ import {
   KeyRound, Keyboard, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
+import { normalizeCloudStreamServerUrl, testCloudStreamServer } from '../services/cloudstreamServerService';
 import { PLAYER_THEMES } from './player/themes';
 import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository, PlayerSettings } from '../types';
 
@@ -25,10 +26,43 @@ const SettingsView: React.FC<{
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
+  const [serverDraft, setServerDraft] = useState(settings.cloudstreamServerUrl || '');
+  const [serverStatus, setServerStatus] = useState<ApiStatus>('idle');
+  const [serverMessage, setServerMessage] = useState('');
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => onChange({ ...settings, [key]: value });
   const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
+  useEffect(() => setServerDraft(settings.cloudstreamServerUrl || ''), [settings.cloudstreamServerUrl]);
+
+  const testAndSaveServer = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const serverUrl = normalizeCloudStreamServerUrl(serverDraft);
+    if (!serverUrl) {
+      setServerStatus('error');
+      setServerMessage('Paste your CloudStream plugin server URL first, e.g. http://192.168.1.20:8080.');
+      return;
+    }
+    setServerStatus('checking');
+    setServerMessage('');
+    try {
+      const providers = await testCloudStreamServer(serverUrl);
+      update('cloudstreamServerUrl', serverUrl);
+      setServerDraft(serverUrl);
+      setServerStatus('success');
+      setServerMessage(`Connected. The server is running ${providers.length} CloudStream provider${providers.length === 1 ? '' : 's'} — native .cs3 extensions will now load in the CloudStream tab.`);
+    } catch (error) {
+      setServerStatus('error');
+      setServerMessage(error instanceof Error ? error.message : 'Could not reach the CloudStream server.');
+    }
+  };
+
+  const clearServer = () => {
+    setServerDraft('');
+    setServerStatus('idle');
+    setServerMessage('');
+    update('cloudstreamServerUrl', '');
+  };
 
   const verifyAndSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -74,6 +108,19 @@ const SettingsView: React.FC<{
             </form>
             {apiMessage && <p className={`api-key-message ${apiStatus}`} role="status">{apiStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{apiMessage}</p>}
             <p className="api-privacy"><ShieldCheck size={14} /><span>Your key is stored only in this browser and sent directly to TMDB. Installed Nuvio providers can also access it through their standard <code>TMDB_API_KEY</code> runtime binding, so only install providers you trust.</span></p>
+          </section>
+
+
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><Package size={19} /></span><div><h2>CloudStream Server</h2><p>Run native .cs3 providers — the app's working logic — from a plugin server on your network.</p></div></div>
+            <div className="tmdb-intro"><div><strong>Your providers. Executed for real.</strong><p>.cs3 plugins are Android/Kotlin code; a browser can't run them. A CloudStream plugin server (for example the community CloudStream Web server) executes them and PRAHA loads their home pages, search, episodes, and links here.</p></div><a href="https://github.com/SusyBegula/cloudstream-web-unofficial" target="_blank" rel="noreferrer">Get the server <ExternalLink size={13} /></a></div>
+            <form className="api-key-form" onSubmit={testAndSaveServer}>
+              <label htmlFor="cs-server-url">Plugin server URL</label>
+              <div className="api-key-input"><Package size={16} /><input id="cs-server-url" type="text" value={serverDraft} onChange={(event) => { setServerDraft(event.target.value); setServerStatus('idle'); setServerMessage(''); }} placeholder="http://192.168.1.20:8080" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={serverStatus === 'checking'} /></div>
+              <div className="api-key-actions"><button className="button button-primary" type="submit" disabled={serverStatus === 'checking'}>{serverStatus === 'checking' ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{serverStatus === 'checking' ? 'Testing…' : 'Test & save'}</button>{(settings.cloudstreamServerUrl || serverDraft) && <button className="button button-secondary" type="button" onClick={clearServer} disabled={serverStatus === 'checking'}><Trash2 size={15} /> Clear</button>}<span className={`api-saved-state ${settings.cloudstreamServerUrl ? 'active' : ''}`}><i />{settings.cloudstreamServerUrl ? 'Server connected' : 'No server configured'}</span></div>
+            </form>
+            {serverMessage && <p className={`api-key-message ${serverStatus}`} role="status">{serverStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{serverMessage}</p>}
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Install the same repositories on the server that you use here; PRAHA matches providers by name. Only connect to servers you trust — they execute the plugins you install.</span></p>
           </section>
 
           <section className="settings-card">

@@ -52,5 +52,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preferredLanguage: 'en',
   accent: 'lime',
   tmdbApiKey: '',
+  cloudstreamServerUrl: '',
   player: DEFAULT_PLAYER_SETTINGS,
 };

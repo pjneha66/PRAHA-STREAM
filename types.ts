@@ -144,6 +144,7 @@ export interface StreamResult {
   peers?: number;
   infoHash?: string;
   headers?: Record<string, string>;
+  referer?: string;
   format?: string;
   subtitles?: StreamSubtitle[];
   externalUrl?: string;
@@ -233,6 +234,8 @@ export interface AppSettings {
   preferredLanguage: string;
   accent: 'lime' | 'violet' | 'blue';
   tmdbApiKey: string;
+  /** Optional CloudStream plugin server that executes native .cs3 providers. */
+  cloudstreamServerUrl: string;
   player: PlayerSettings;
 }
 

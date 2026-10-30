@@ -44,7 +44,7 @@ Cinemeta is included as the default metadata/catalog addon. It does **not** prov
 - Resolve each entry’s `url`, `iconUrl`, `language`, `tvTypes`, `authors`, and `fileSize`.
 - Enable, disable, refresh, and remove repositories, and toggle each extension individually.
 
-CloudStream itself is an Android app, and most CloudStream extensions are Kotlin (`.cs3`) packages. Those native packages cannot execute in a browser; selecting one in PRAHA now offers the official CloudStream deep links to continue the search or add the same repository in the Android app. Browser-compatible CloudStream JavaScript extensions can be browsed and played in PRAHA, including optional `getHome()` live feeds. Their upstream failures are shown on the relevant row instead of being reported as an empty catalog.
+CloudStream itself is an Android app, and most CloudStream extensions are Kotlin (`.cs3`) packages whose logic (`getMainPage`/`search`/`load`/`loadLinks`) a browser cannot execute. PRAHA offers two ways to use them: the official CloudStream app's deep links, or a **CloudStream plugin server** — a JVM runtime (e.g. the community CloudStream Web server, built on the official library) that executes .cs3 providers and serves their home pages, search, episodes, and links over HTTP/WebSocket. Set its URL in Settings → CloudStream Server, install the same repositories on the server, and native providers load in the CloudStream tab just like in the app. Browser-compatible CloudStream JavaScript extensions can be browsed and played in PRAHA without a server, including optional `getHome()` live feeds.
 
 ### Browse by source
 
