@@ -1,6 +1,6 @@
 # PRAHA STREAM
 
-A completely rebuilt, responsive streaming interface inspired by Nuvio’s bring-your-own-sources philosophy. PRAHA combines Stremio addons, Nuvio plugin repositories, and CloudStream extension repositories in one local-first library.
+A responsive streaming interface built around Nuvio’s bring-your-own-sources philosophy. PRAHA combines a built-in Stremio addon browser, Stremio addons, and Nuvio plugin repositories in one local-first library — with separate profiles for everyone on the device.
 
 **No movies or shows are bundled in this repository.** Every title, poster, rating, genre, and backdrop is fetched live from TMDB with your own API key, and every stream comes from the sources you install. The app ships nothing but the UI, the Cinemeta metadata addon, and the player.
 
@@ -13,24 +13,39 @@ npm run dev
 
 The Vite server listens on `0.0.0.0:3000`.
 
-To run PRAHA together with the CloudStream plugin server (which executes native `.cs3` providers), use one command — it downloads the server on first run and starts both:
-
-```bash
-npm run dev:full
-```
-
-Requires JDK 21+. PRAHA auto-detects the server on `http://localhost:8080` when the CloudStream tab opens; no URL needs to be pasted. (`npm run server:cloudstream` starts only the plugin server.)
-
 ```bash
 npm run build
 npm run preview
 ```
 
+## Addon browser (stremio-addons.net)
+
+The **Addons** tab is a browser for the community directory at [stremio-addons.net](https://stremio-addons.net/addons):
+
+- Search the public directory API by name, description, or slug, browse by category, and sort by stars or recency.
+- Family friendly mode hides adult addons by default.
+- One-click **Install** fetches the addon’s `manifest.json` and adds it to your sources; configurable addons link straight to their configuration page.
+- Star counts, descriptions, and categories come from the directory API and link back to stremio-addons.net.
+
+The API (`https://stremio-addons.net/api/v0/*`) is public, read-only, and CORS-open. If the directory cannot be reached, PRAHA reports it and you can still paste any manifest URL in **Extensions**.
+
+## Profiles
+
+PRAHA supports multiple local profiles — ideal for a shared TV, laptop, or tablet:
+
+- Create as many profiles as you like (**avatar menu → Profiles**), each with a name and a custom display picture uploaded from your device.
+- Uploads are centre-cropped and downscaled to a small JPEG on-device, so several profiles fit comfortably in local storage.
+- Every profile keeps its **own addons, Nuvio repositories, watchlist, history, and preferences**.
+- Switch profiles from the sidebar or the topbar avatar; the whole workspace reloads with that profile’s data.
+- Deleting a profile removes its library, history, and sources from this browser.
+
+Profiles are not accounts: nothing is uploaded and there is no server-side sync.
+
 ## Source support
 
 ### Stremio
 
-- Install `https://…/manifest.json` and `stremio://…` links.
+- Install `https://…/manifest.json` and `stremio://…` links, or install from the built-in directory browser.
 - Read manifest resources, catalogs, types, and ID prefixes.
 - Load catalogs, catalog search, and full `/meta/{type}/{id}.json` details.
 - Request movie and episode streams using Stremio’s `/stream/{type}/{id}.json` contract.
@@ -46,19 +61,11 @@ Cinemeta is included as the default metadata/catalog addon. It does **not** prov
 - Provide Cheerio and CryptoJS compatibility, per-provider controls, and test execution.
 - Enable, disable, refresh, and remove repositories.
 
-### CloudStream extensions
-
-- Install CloudStream repositories from `repo.json` (a repository-of-repositories), a direct `plugins.json`, or the legacy `{ addons: [...] }` shape.
-- Resolve each entry’s `url`, `iconUrl`, `language`, `tvTypes`, `authors`, and `fileSize`.
-- Enable, disable, refresh, and remove repositories, and toggle each extension individually.
-
-CloudStream itself is an Android app, and most CloudStream extensions are Kotlin (`.cs3`) packages whose logic (`getMainPage`/`search`/`load`/`loadLinks`) a browser cannot execute. PRAHA offers two ways to use them: the official CloudStream app's deep links, or a **CloudStream plugin server** — a JVM runtime (e.g. the community CloudStream Web server, built on the official library) that executes .cs3 providers and serves their home pages, search, episodes, and links over HTTP/WebSocket. Set its URL in Settings → CloudStream Server, install the same repositories on the server, and native providers load in the CloudStream tab just like in the app. Browser-compatible CloudStream JavaScript extensions can be browsed and played in PRAHA without a server, including optional `getHome()` live feeds.
-
 ### Browse by source
 
-The **Explore** tab keeps each ecosystem separate. Switch between **Addons** (Stremio), **Plugins** (Nuvio), and **Extensions** (CloudStream) to browse a single source’s catalogs and providers without mixing them into one list. Use the Extensions page to install and manage everything.
+The **Explore** tab keeps each ecosystem separate. Switch between **Addons** (Stremio) and **Plugins** (Nuvio) to browse a single source’s catalogs and providers without mixing them into one list. Use **Extensions** (and the **Addons** directory tab) to install and manage everything.
 
-Only install third-party repositories you trust. Native Nuvio and browser networking are different: remote manifests, scrapers, catalogs, and media must permit browser CORS requests. PRAHA reports these errors rather than pretending a source is connected.
+Only install third-party repositories you trust. Remote manifests, scrapers, catalogs, and media must permit browser CORS requests. PRAHA reports these errors rather than pretending a source is connected.
 
 ## TMDB API key (required for the catalog)
 
@@ -74,7 +81,7 @@ The key drives the entire catalog:
 | Details & sources | `/{type}/{id}?append_to_response=external_ids,…` and `/find/{imdb_id}` for ID resolution |
 | Nuvio providers | the standard `TMDB_API_KEY` runtime binding |
 
-Until a key is saved, Home and Discover show a setup card that links to Settings and to [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) — the app never falls back to a hardcoded list. Self-hosted deployments can optionally set `VITE_TMDB_API_KEY`; a key saved in Settings takes priority.
+Until a key is saved, Home and Discover show a setup card that links to Settings and to [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) — the app never falls back to a hardcoded list. Self-hosted deployments can optionally set `VITE_TMDB_API_KEY`; a key saved in Settings takes priority. New profiles inherit the key from the profile you are using when you create them.
 
 ## Playback: the mpvRx-style player
 
@@ -93,4 +100,4 @@ YouTube sources open in an embedded player, and magnet links can be copied or ha
 
 ## Privacy
 
-Watchlist, history, sources, API keys, and preferences are stored in this browser’s local storage. Keys are sent directly to TMDB; installed Nuvio providers can also access the saved key through their runtime, so only install providers you trust.
+Profiles, display pictures, watchlist, history, sources, API keys, and preferences are stored in this browser’s local storage. Directory searches go to stremio-addons.net; your TMDB key is sent directly to TMDB. Installed Nuvio providers can also access the saved key through their runtime, so only install providers you trust.

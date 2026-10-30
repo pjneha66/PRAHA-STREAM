@@ -6,18 +6,20 @@ import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
-import CloudStreamPage from './components/CloudStreamPage';
+import AddonBrowserView from './components/AddonBrowserView';
+import ProfilesView from './components/ProfilesView';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
 import { usePersistentState } from './hooks/usePersistentState';
+import { useProfiles, type ProfileInput } from './hooks/useProfiles';
 import { CINEMETA_ADDON, DEFAULT_SETTINGS, EMPTY_HOME_CATALOG } from './data/defaults';
-import { buildBuiltinCloudStreamJsRepository, refreshBuiltinCloudStreamJsRepository, BUILTIN_MANIFEST_URL } from './data/cloudstreamJsPlugins';
+import { profileDataKey } from './services/profileService';
 import { fetchStremioCatalog, fetchStremioMeta, searchStremioAddons } from './services/stremioService';
 import { tmdbService } from './services/tmdbService';
 import type {
-  AppSettings, AppView, CloudStreamRepository, HomeCatalog, InstalledAddon, MediaItem,
-  NuvioRepository, PlayerSettings, StreamResult, ToastMessage, WatchProgress,
+  AppSettings, AppView, HomeCatalog, InstalledAddon, MediaItem,
+  NuvioRepository, PlayerSettings, StreamResult, ToastMessage, UserProfile, WatchProgress,
 } from './types';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
@@ -34,9 +36,28 @@ const uniqueMedia = (items: MediaItem[]) => {
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 
-const App: React.FC = () => {
-  const [view, setView] = useState<AppView>('home');
-  const [query, setQuery] = useState('');
+interface WorkspaceProps {
+  profile: UserProfile;
+  profiles: UserProfile[];
+  view: AppView;
+  query: string;
+  onNavigate: (view: AppView) => void;
+  onQueryChange: (query: string) => void;
+  onSwitchProfile: (id: string) => void;
+  onCreateProfile: (input: ProfileInput) => void;
+  onUpdateProfile: (id: string, patch: Partial<ProfileInput>) => void;
+  onDeleteProfile: (id: string) => void;
+}
+
+/**
+ * Everything inside a profile. App remounts this component with the profile id
+ * as its key, so each profile re-reads its own persisted library, sources, and
+ * preferences from localStorage.
+ */
+const ProfileWorkspace: React.FC<WorkspaceProps> = ({
+  profile, profiles, view, query, onNavigate, onQueryChange,
+  onSwitchProfile, onCreateProfile, onUpdateProfile, onDeleteProfile,
+}) => {
   const [catalog, setCatalog] = useState<HomeCatalog>(EMPTY_HOME_CATALOG);
   const [catalogState, setCatalogState] = useState<LoadState>('idle');
   const [catalogError, setCatalogError] = useState('');
@@ -48,12 +69,13 @@ const App: React.FC = () => {
   const [player, setPlayer] = useState<{ media: MediaItem; stream: StreamResult } | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
-  const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
-  const [cloudstreamRepositories, setCloudstreamRepositories] = usePersistentState<CloudStreamRepository[]>('praha.v2.cloudstream-repositories', []);
-  const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>('praha.v2.watchlist', []);
-  const [history, setHistory] = usePersistentState<WatchProgress[]>('praha.v2.history', []);
-  const [settings, setSettings] = usePersistentState<AppSettings>('praha.v2.settings', DEFAULT_SETTINGS);
+  const scope = useCallback((name: string) => profileDataKey(profile.id, name), [profile.id]);
+
+  const [addons, setAddons] = usePersistentState<InstalledAddon[]>(scope('addons'), [CINEMETA_ADDON]);
+  const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>(scope('nuvio-repositories'), []);
+  const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>(scope('watchlist'), []);
+  const [history, setHistory] = usePersistentState<WatchProgress[]>(scope('history'), []);
+  const [settings, setSettings] = usePersistentState<AppSettings>(scope('settings'), DEFAULT_SETTINGS);
 
   /** PRAHA ships no catalog of its own — TMDB is the only metadata source. */
   const tmdbReady = Boolean(settings.tmdbApiKey?.trim());
@@ -76,6 +98,11 @@ const App: React.FC = () => {
   const updatePlayerSettings = useCallback((patch: Partial<PlayerSettings>) => {
     setSettings((current) => ({ ...current, player: { ...current.player, ...patch } }));
   }, [setSettings]);
+
+  const navigate = useCallback((next: AppView) => {
+    onNavigate(next);
+    window.scrollTo({ top: 0, behavior: settings.reduceMotion ? 'auto' : 'smooth' });
+  }, [onNavigate, settings.reduceMotion]);
 
   const loadCatalog = useCallback(() => {
     if (!tmdbReady) {
@@ -138,8 +165,8 @@ const App: React.FC = () => {
           if (active) setDiscoverItems(uniqueMedia([...tmdb, ...stremio]));
         } else {
           const catalogJobs = addons.filter((addon) => addon.enabled).flatMap((addon) =>
-            addon.manifest.catalogs.filter((catalog) => catalog.id === 'top').slice(0, 2)
-              .map((catalog) => fetchStremioCatalog(addon, catalog).catch(() => [])),
+            addon.manifest.catalogs.filter((catalogEntry) => catalogEntry.id === 'top').slice(0, 2)
+              .map((catalogEntry) => fetchStremioCatalog(addon, catalogEntry).catch(() => [])),
           );
           const [catalogs, movies, series] = await Promise.all([
             Promise.all(catalogJobs),
@@ -159,27 +186,8 @@ const App: React.FC = () => {
 
   const activeSourceCount = useMemo(() =>
     addons.filter((addon) => addon.enabled).length +
-    repositories.filter((repo) => repo.enabled).length +
-    cloudstreamRepositories.filter((repo) => repo.enabled).length,
-  [addons, repositories, cloudstreamRepositories]);
-
-  // Always include the browser-playable built-in CloudStream JS extensions so
-  // the CloudStream tab shows real content even when a repo only ships .cs3.
-  const builtinJsRepo = useMemo(() => buildBuiltinCloudStreamJsRepository(), []);
-  useEffect(() => {
-    setCloudstreamRepositories((current) => {
-      const existing = current.find((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL);
-      if (!existing) return [builtinJsRepo, ...current];
-      const refreshed = refreshBuiltinCloudStreamJsRepository(existing);
-      const unchanged = JSON.stringify({ ...refreshed, updatedAt: existing.updatedAt }) === JSON.stringify(existing);
-      return unchanged ? current : current.map((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL ? refreshed : repo);
-    });
-  }, [builtinJsRepo, setCloudstreamRepositories]);
-
-  const navigate = (next: AppView) => {
-    setView(next);
-    window.scrollTo({ top: 0, behavior: settings.reduceMotion ? 'auto' : 'smooth' });
-  };
+    repositories.filter((repo) => repo.enabled).length,
+  [addons, repositories]);
 
   const toggleWatchlist = (item: MediaItem) => {
     const exists = watchlist.some((entry) => entry.id === item.id);
@@ -234,7 +242,7 @@ const App: React.FC = () => {
   } else if (view === 'discover') {
     page = <DiscoverView items={discoverItems} loading={discoverLoading} error={discoverError} query={query}
       watchlist={watchlist} tmdbReady={tmdbReady}
-      onSelect={openDetails} onToggleWatchlist={toggleWatchlist} onClearSearch={() => setQuery('')}
+      onSelect={openDetails} onToggleWatchlist={toggleWatchlist} onClearSearch={() => onQueryChange('')}
       onOpenSettings={() => navigate('settings')} compact={settings.compactCards} />;
   } else if (view === 'library') {
     page = <LibraryView watchlist={watchlist} history={history} onSelect={openDetails} onPlay={openSources}
@@ -243,27 +251,33 @@ const App: React.FC = () => {
     page = <ExploreView addons={addons} repositories={repositories}
       watchlist={watchlist} compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
       onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
+      onOpenExtensions={() => navigate('extensions')} onOpenAddons={() => navigate('addons')} />;
+  } else if (view === 'addons') {
+    page = <AddonBrowserView addons={addons} setAddons={setAddons} notify={notify}
       onOpenExtensions={() => navigate('extensions')} />;
-  } else if (view === 'cloudstream') {
-    page = <CloudStreamPage repositories={cloudstreamRepositories} history={history} watchlist={watchlist}
-      compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
-      tmdbApiKey={settings.tmdbApiKey}
-      cloudstreamServerUrl={settings.cloudstreamServerUrl || ''}
-      onServerUrlChange={(url) => setSettings({ ...settings, cloudstreamServerUrl: url })}
-      onOpenSettings={() => navigate('settings')}
-      onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
-      onOpenExtensions={() => navigate('extensions')} />;
+  } else if (view === 'profiles') {
+    page = <ProfilesView profiles={profiles} activeId={profile.id}
+      onSwitch={(id) => { onSwitchProfile(id); navigate('home'); }}
+      onCreate={(input) => { onCreateProfile(input); navigate('home'); }}
+      onUpdate={onUpdateProfile}
+      onDelete={onDeleteProfile}
+      onContinue={() => navigate('home')} />;
   } else if (view === 'extensions') {
-    page = <ExtensionsView addons={addons} repositories={repositories} cloudstreamRepositories={cloudstreamRepositories}
-      setAddons={setAddons} setRepositories={setRepositories} setCloudstreamRepositories={setCloudstreamRepositories} notify={notify} />;
+    page = <ExtensionsView addons={addons} repositories={repositories}
+      setAddons={setAddons} setRepositories={setRepositories} notify={notify}
+      onOpenAddonBrowser={() => navigate('addons')} />;
   } else {
-    page = <SettingsView settings={settings} onChange={setSettings} onReset={() => { setSettings({ ...DEFAULT_SETTINGS, tmdbApiKey: settings.tmdbApiKey || '' }); notify('Preferences reset. Your TMDB API key was kept.', 'success'); }} addons={addons} repositories={repositories} cloudstreamRepositories={cloudstreamRepositories} />;
+    page = <SettingsView settings={settings} onChange={setSettings}
+      onReset={() => { setSettings({ ...DEFAULT_SETTINGS, tmdbApiKey: settings.tmdbApiKey || '' }); notify('Preferences reset. Your TMDB API key was kept.', 'success'); }}
+      addons={addons} repositories={repositories} profile={profile} profileCount={profiles.length}
+      onOpenProfiles={() => navigate('profiles')} />;
   }
 
   return (
     <>
-      <Navigation view={view} onNavigate={navigate} query={query} onQueryChange={setQuery}
-        onSearch={() => navigate('discover')} sourceCount={activeSourceCount}>
+      <Navigation view={view} onNavigate={navigate} query={query} onQueryChange={onQueryChange}
+        onSearch={() => navigate('discover')} sourceCount={activeSourceCount}
+        profile={profile} onOpenProfiles={() => navigate('profiles')}>
         {page}
       </Navigation>
 
@@ -279,6 +293,28 @@ const App: React.FC = () => {
         <span>{toast.message}</span><button onClick={() => setToast(null)} aria-label="Dismiss notification"><X size={15} /></button>
       </div>}
     </>
+  );
+};
+
+const App: React.FC = () => {
+  const { profiles, activeProfile, activeId, switchProfile, addProfile, updateProfile, deleteProfile } = useProfiles();
+  const [view, setView] = useState<AppView>('home');
+  const [query, setQuery] = useState('');
+
+  return (
+    <ProfileWorkspace
+      key={activeId}
+      profile={activeProfile}
+      profiles={profiles}
+      view={view}
+      query={query}
+      onNavigate={setView}
+      onQueryChange={setQuery}
+      onSwitchProfile={switchProfile}
+      onCreateProfile={addProfile}
+      onUpdateProfile={updateProfile}
+      onDeleteProfile={deleteProfile}
+    />
   );
 };
 

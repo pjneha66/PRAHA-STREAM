@@ -81,7 +81,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
             <div className="stream-main">
               <div className="stream-title"><strong>{stream.title}</strong><span className={`quality-badge quality-${qualityOf(stream).replace('p', '')}`}>{qualityOf(stream)}</span></div>
               <div className="stream-meta">
-                <span className={`stream-origin ${stream.sourceType}`}>{stream.sourceType === 'cloudstream' ? <Zap size={11} /> : stream.sourceType === 'nuvio' ? <Zap size={11} /> : <Blocks size={11} />}{stream.sourceName}</span>
+                <span className={`stream-origin ${stream.sourceType}`}>{stream.sourceType === 'nuvio' ? <Zap size={11} /> : <Blocks size={11} />}{stream.sourceName}</span>
                 {stream.provider && stream.provider !== stream.sourceName && <span>{stream.provider}</span>}
                 {stream.size && <span>{stream.size}</span>}
                 {stream.language && <span><Languages size={12} />{stream.language}</span>}
@@ -98,7 +98,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
           <div className="empty-state source-empty">
             <span><Film size={28} /></span>
             <h2>{providerCount ? 'No streams found for this title' : 'Add a stream provider to press play'}</h2>
-            <p>{providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon, a Nuvio provider, or a CloudStream JavaScript extension to start watching.'}</p>
+            <p>{providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon or a Nuvio provider to start watching.'}</p>
             {onOpenExtensions && <button className="button button-primary" onClick={onOpenExtensions}><Blocks size={17} /> Manage extensions</button>}
           </div>
         )}

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Database, ExternalLink, Eye, EyeOff, Gauge,
-  KeyRound, Keyboard, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
+  KeyRound, Keyboard, LoaderCircle, MonitorPlay, RotateCcw, Settings, ShieldCheck, Trash2, Users,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import { normalizeCloudStreamServerUrl, testCloudStreamServer } from '../services/cloudstreamServerService';
 import { PLAYER_THEMES } from './player/themes';
-import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository, PlayerSettings } from '../types';
+import ProfileAvatar from './ProfileAvatar';
+import type { AppSettings, InstalledAddon, NuvioRepository, PlayerSettings, UserProfile } from '../types';
 
 export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
   <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button>
@@ -20,50 +20,18 @@ const SettingsView: React.FC<{
   onReset: () => void;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
-}> = ({ settings, onChange, onReset, addons, repositories, cloudstreamRepositories }) => {
+  profile: UserProfile;
+  profileCount: number;
+  onOpenProfiles: () => void;
+}> = ({ settings, onChange, onReset, addons, repositories, profile, profileCount, onOpenProfiles }) => {
   const [apiDraft, setApiDraft] = useState(settings.tmdbApiKey || '');
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
-  const [serverDraft, setServerDraft] = useState(settings.cloudstreamServerUrl || '');
-  const [serverStatus, setServerStatus] = useState<ApiStatus>('idle');
-  const [serverMessage, setServerMessage] = useState('');
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => onChange({ ...settings, [key]: value });
   const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
-  useEffect(() => setServerDraft(settings.cloudstreamServerUrl || ''), [settings.cloudstreamServerUrl]);
-
-  const testAndSaveServer = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const serverUrl = normalizeCloudStreamServerUrl(serverDraft);
-    if (!serverUrl) {
-      setServerStatus('error');
-      setServerMessage('Paste your CloudStream plugin server URL first, e.g. http://192.168.1.20:8080.');
-      return;
-    }
-    setServerStatus('checking');
-    setServerMessage('');
-    try {
-      const providers = await testCloudStreamServer(serverUrl);
-      update('cloudstreamServerUrl', serverUrl);
-      setServerDraft(serverUrl);
-      setServerStatus('success');
-      setServerMessage(`Connected. The server is running ${providers.length} CloudStream provider${providers.length === 1 ? '' : 's'} — native .cs3 extensions will now load in the CloudStream tab.`);
-    } catch (error) {
-      setServerStatus('error');
-      setServerMessage(error instanceof Error ? error.message : 'Could not reach the CloudStream server.');
-    }
-  };
-
-  const clearServer = () => {
-    setServerDraft('');
-    setServerStatus('idle');
-    setServerMessage('');
-    update('cloudstreamServerUrl', '');
-  };
-
   const verifyAndSave = async (event: React.FormEvent) => {
     event.preventDefault();
     const apiKey = apiDraft.trim();
@@ -98,6 +66,15 @@ const SettingsView: React.FC<{
       <div className="page-heading"><div><span className="page-kicker"><Settings size={14} /> MAKE IT YOURS</span><h1>Settings</h1><p>A few small tweaks for a better night in. Everything is saved on this device.</p></div></div>
       <div className="settings-layout">
         <div className="settings-main">
+          <section className="settings-card profile-settings-card">
+            <div className="settings-card-heading"><span><Users size={19} /></span><div><h2>Profiles</h2><p>Give everyone their own library, history, sources, preferences, and display picture.</p></div></div>
+            <div className="settings-profile-row">
+              <ProfileAvatar profile={profile} size={52} />
+              <div><strong>{profile.name}</strong><p>{profileCount === 1 ? 'Only profile on this device' : `1 of ${profileCount} profiles on this device`} — every profile keeps its own data.</p></div>
+              <button className="button button-secondary button-small" onClick={onOpenProfiles}><Users size={15} /> Manage profiles</button>
+            </div>
+          </section>
+
           <section className="settings-card tmdb-settings-card">
             <div className="settings-card-heading"><span><KeyRound size={19} /></span><div><h2>TMDB API</h2><p>Use your own key for trending titles, search, metadata, and ID resolution.</p></div></div>
             <div className="tmdb-intro"><div><strong>Your key. Your metadata.</strong><p>PRAHA does not include a shared API key. Both v3 API keys and v4 read access tokens are supported.</p></div><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">Get a free key <ExternalLink size={13} /></a></div>
@@ -110,18 +87,6 @@ const SettingsView: React.FC<{
             <p className="api-privacy"><ShieldCheck size={14} /><span>Your key is stored only in this browser and sent directly to TMDB. Installed Nuvio providers can also access it through their standard <code>TMDB_API_KEY</code> runtime binding, so only install providers you trust.</span></p>
           </section>
 
-
-          <section className="settings-card">
-            <div className="settings-card-heading"><span><Package size={19} /></span><div><h2>CloudStream Server</h2><p>Run native .cs3 providers — the app's working logic — from a plugin server on your network.</p></div></div>
-            <div className="tmdb-intro"><div><strong>Your providers. Executed for real.</strong><p>.cs3 plugins are Android/Kotlin code; a browser can't run them. A CloudStream plugin server (for example the community CloudStream Web server) executes them and PRAHA loads their home pages, search, episodes, and links here.</p></div><a href="https://github.com/SusyBegula/cloudstream-web-unofficial" target="_blank" rel="noreferrer">Get the server <ExternalLink size={13} /></a></div>
-            <form className="api-key-form" onSubmit={testAndSaveServer}>
-              <label htmlFor="cs-server-url">Plugin server URL</label>
-              <div className="api-key-input"><Package size={16} /><input id="cs-server-url" type="text" value={serverDraft} onChange={(event) => { setServerDraft(event.target.value); setServerStatus('idle'); setServerMessage(''); }} placeholder="http://192.168.1.20:8080" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={serverStatus === 'checking'} /></div>
-              <div className="api-key-actions"><button className="button button-primary" type="submit" disabled={serverStatus === 'checking'}>{serverStatus === 'checking' ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{serverStatus === 'checking' ? 'Testing…' : 'Test & save'}</button>{(settings.cloudstreamServerUrl || serverDraft) && <button className="button button-secondary" type="button" onClick={clearServer} disabled={serverStatus === 'checking'}><Trash2 size={15} /> Clear</button>}<span className={`api-saved-state ${settings.cloudstreamServerUrl ? 'active' : ''}`}><i />{settings.cloudstreamServerUrl ? 'Server connected' : 'No server configured'}</span></div>
-            </form>
-            {serverMessage && <p className={`api-key-message ${serverStatus}`} role="status">{serverStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{serverMessage}</p>}
-            <p className="api-privacy"><ShieldCheck size={14} /><span>Install the same repositories on the server that you use here; PRAHA matches providers by name. Only connect to servers you trust — they execute the plugins you install.</span></p>
-          </section>
 
           <section className="settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Playback & browsing</h2><p>Choose how PRAHA feels as you move through it.</p></div></div>
@@ -162,10 +127,10 @@ const SettingsView: React.FC<{
           </section>
         </div>
         <aside className="settings-side">
-          <section className="settings-card source-summary-card"><span className="settings-side-icon"><Database size={21} /></span><h2>Your setup</h2><div className="setup-stat"><span>Stremio addons</span><strong>{addons.length}</strong></div><div className="setup-stat"><span>Nuvio repositories</span><strong>{repositories.length}</strong></div><div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div><div className="setup-stat"><span>CloudStream extensions</span><strong>{cloudstreamRepositories.reduce((sum, repo) => sum + repo.providers.length, 0)}</strong></div><div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div><p><Blocks size={14} /> Sources sync with this local profile.</p></section>
+          <section className="settings-card source-summary-card"><span className="settings-side-icon"><Database size={21} /></span><h2>Your setup</h2><div className="setup-stat"><span>Stremio addons</span><strong>{addons.length}</strong></div><div className="setup-stat"><span>Nuvio repositories</span><strong>{repositories.length}</strong></div><div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div><div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div><p><Blocks size={14} /> Sources and settings sync with this local profile.</p></section>
           <section className="settings-card privacy-card"><span className="settings-side-icon"><ShieldCheck size={21} /></span><h2>Private by design</h2><p>Your library, history, API key, and extension settings stay in this browser. PRAHA does not operate a tracking account.</p></section>
           <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset preferences</button>
-          <span className="version-label">PRAHA STREAM · 2.0.0</span>
+          <span className="version-label">PRAHA STREAM · 3.0.0</span>
         </aside>
       </div>
     </div>

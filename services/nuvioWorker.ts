@@ -9,7 +9,7 @@ worker.onmessage = async (event) => {
   const { code, args, scraperId, settings, tmdbApiKey, mode } = event.data;
   try {
     const module = { exports: {} as Record<string, unknown> };
-    // Same getter-only `self` trap as the CloudStream worker: install the
+    // Getter-only `self` trap: install the
     // plugin globals with defineProperty instead of assignment.
     const setGlobal = (name: string, value: unknown) => {
       Object.defineProperty(worker, name, { value, writable: true, configurable: true });

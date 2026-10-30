@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import {
-  Blocks, Cloud, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles,
+  Blocks, ChevronsUpDown, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, Store,
 } from 'lucide-react';
-import type { AppView } from '../types';
+import type { AppView, UserProfile } from '../types';
+import ProfileAvatar from './ProfileAvatar';
 
 interface NavigationProps {
   view: AppView;
@@ -11,6 +12,8 @@ interface NavigationProps {
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   sourceCount: number;
+  profile: UserProfile;
+  onOpenProfiles: () => void;
   children: React.ReactNode;
 }
 
@@ -18,12 +21,12 @@ const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
-  { id: 'cloudstream' as const, label: 'CloudStream', icon: Cloud },
+  { id: 'addons' as const, label: 'Addons', icon: Store },
   { id: 'library' as const, label: 'My library', icon: Library },
 ];
 
 const Navigation: React.FC<NavigationProps> = ({
-  view, onNavigate, query, onQueryChange, onSearch, sourceCount, children,
+  view, onNavigate, query, onQueryChange, onSearch, sourceCount, profile, onOpenProfiles, children,
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -81,10 +84,10 @@ const Navigation: React.FC<NavigationProps> = ({
             <p>{sourceCount || 'No'} active source{sourceCount === 1 ? '' : 's'}</p>
             <button onClick={() => onNavigate('extensions')}>Manage sources <Plus size={14} /></button>
           </div>
-          <button className="profile-chip" onClick={() => onNavigate('settings')}>
-            <span className="avatar">P</span>
-            <span><strong>Guest</strong><small>Local profile</small></span>
-            <Settings size={15} />
+          <button className="profile-chip" onClick={onOpenProfiles} aria-label={`Manage profiles — current profile ${profile.name}`}>
+            <ProfileAvatar profile={profile} size={32} />
+            <span><strong>{profile.name}</strong><small>Local profile · Switch</small></span>
+            <ChevronsUpDown size={15} />
           </button>
         </div>
       </aside>
@@ -112,7 +115,9 @@ const Navigation: React.FC<NavigationProps> = ({
             <span>{sourceCount} source{sourceCount === 1 ? '' : 's'}</span>
             <Plus size={16} />
           </button>
-          <button className="top-avatar" onClick={() => onNavigate('settings')} aria-label="Open settings">P</button>
+          <button className="top-avatar" onClick={onOpenProfiles} aria-label={`Switch profile — current profile ${profile.name}`}>
+            <ProfileAvatar profile={profile} size={34} />
+          </button>
         </header>
         <main className="main-content">{children}</main>
       </div>

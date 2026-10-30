@@ -1,10 +1,12 @@
 {
   "name": "PRAHA STREAM",
-  "description": "A modern, source-agnostic streaming interface with Stremio addon and Nuvio plugin repository support, unified discovery, local libraries, and a responsive web player.",
+  "description": "A modern, source-agnostic streaming interface with a built-in stremio-addons.net browser, Stremio addon and Nuvio plugin repository support, multiple local profiles with custom display pictures, unified discovery, local libraries, and a responsive web player.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "Stremio manifests, catalogs, search, metadata IDs, and streams",
+    "Stremio addon browser backed by the stremio-addons.net directory API",
+    "Multiple local profiles, each with a custom uploaded display picture",
     "Nuvio repository manifests and worker-based scraper runtime",
-    "Persistent watchlist, history, sources, and preferences"
+    "Persistent watchlist, history, sources, and per-profile preferences"
   ]
 }
