@@ -93,6 +93,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   const [browseRows, setBrowseRows] = useState<BrowseRow[]>([]);
   const [bookmarkList, setBookmarkList] = useState<(typeof BOOKMARK_LISTS)[number]>('Watching');
   const [heroIndex, setHeroIndex] = useState(0);
+  const [nativeQuery, setNativeQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const active = useMemo(
@@ -342,13 +343,25 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
             </button>
             {providerMenuOpen && (
               <div className="csx-provider-menu" role="listbox" aria-label="CloudStream provider">
-                {providers.map(({ provider: p, repository }) => (
+                <p className="csx-menu-label">Play in browser</p>
+                {providers.filter((entry) => !entry.provider.nativeOnly).map(({ provider: p, repository }) => (
                   <button key={p.id} role="option" aria-selected={activeProviderId === p.id}
                     className={activeProviderId === p.id ? 'active' : ''}
                     onClick={() => { setActiveProviderId(p.id); setProviderMenuOpen(false); setView('home'); setSelected(null); }}>
                     {p.iconUrl ? <img src={p.iconUrl.replace('%size%', '64')} alt="" /> : <Package size={15} />}
                     <span><strong>{p.name}</strong><small>{repository.name}</small></span>
                     {p.nativeOnly && <span className="native-badge">CS3</span>}
+                    {activeProviderId === p.id && <Check size={15} />}
+                  </button>
+                ))}
+                <p className="csx-menu-label">CloudStream app (.cs3)</p>
+                {providers.filter((entry) => entry.provider.nativeOnly).map(({ provider: p, repository }) => (
+                  <button key={p.id} role="option" aria-selected={activeProviderId === p.id}
+                    className={activeProviderId === p.id ? 'active' : ''}
+                    onClick={() => { setActiveProviderId(p.id); setProviderMenuOpen(false); setView('home'); setSelected(null); }}>
+                    {p.iconUrl ? <img src={p.iconUrl.replace('%size%', '64')} alt="" /> : <Package size={15} />}
+                    <span><strong>{p.name}</strong><small>{repository.name}</small></span>
+                    <span className="native-badge">CS3</span>
                     {activeProviderId === p.id && <Check size={15} />}
                   </button>
                 ))}
@@ -469,44 +482,50 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
         /* -------------------------- Home screen -------------------------- */
         <div className="csx-home">
           {nativeOnly ? (
-            <>
-              <div className="csx-native-banner">
-                <span className="csx-native-icon"><Package size={20} /></span>
-                <div className="csx-native-copy">
-                  <strong>{provider?.name} runs in the Android app</strong>
-                  <p>It's a compiled Kotlin .cs3 package, so it can't play in a browser. Your browser-playable providers are shown below — or open this one in the official app.</p>
-                </div>
-                <div className="csx-native-actions">
-                  <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={15} /> Open in CloudStream</a>
-                  <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={15} /> Add repository</a>
+            <div className="csx-native-page">
+              <div className="csx-native-hero">
+                {provider?.iconUrl
+                  ? <img className="csx-native-logo" src={provider.iconUrl.replace('%size%', '200')} alt="" />
+                  : <span className="csx-native-logo csx-no-poster"><Package size={30} /></span>}
+                <div className="csx-native-headline">
+                  <span className="page-kicker">{active?.repository.name}</span>
+                  <h1>{provider?.name}</h1>
+                  {provider?.description && <p>{provider.description}</p>}
+                  <div className="csx-native-chips">
+                    {provider?.language && <span>{provider.language.toUpperCase()}</span>}
+                    {(provider?.tvTypes?.length ? provider.tvTypes : provider?.supportedTypes || []).map((type) => <span key={type}>{type}</span>)}
+                    {provider?.version !== undefined && <span>v{provider.version}</span>}
+                    {typeof provider?.fileSize === 'number' && provider.fileSize > 0 && <span>{(provider.fileSize / 1024).toFixed(0)} KB</span>}
+                    <span className="native-badge">CS3 · Android</span>
+                  </div>
+                  {Array.isArray(provider?.authors) && provider.authors.length > 0 && (
+                    <p className="csx-native-authors">By {provider.authors.join(', ')}</p>
+                  )}
                 </div>
               </div>
-              {browseRows.map((row) => (
-                <section className="csx-section" key={row.provider.id}>
-                  <div className="csx-row-head">
-                    <h2 className="csx-row-title">{row.provider.name}</h2>
-                    <span>{row.loading ? 'Loading…' : `${row.items.length} titles`}</span>
-                  </div>
-                  <div className="media-row">
-                    {row.loading ? Array.from({ length: 8 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>) : row.items.map((item) => (
-                      <MediaCard key={item.id} item={item} onSelect={(media) => { setActiveProviderId(row.provider.id); openMedia(media); }}
-                        onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
-                    ))}
-                    {!row.loading && !row.items.length && (row.error ? (
-                      <span className="explore-note"><CircleAlert size={14} /> {row.provider.name}: {row.error}</span>
-                    ) : <span className="text-button">This provider returned no titles for its home page.</span>)}
-                  </div>
-                </section>
-              ))}
-              {!browseRows.length && (
-                <div className="empty-state explore-empty">
-                  <span><Package size={26} /></span>
-                  <h2>No browser-playable providers</h2>
-                  <p>All of your installed CloudStream extensions are native .cs3 packages. Install a JavaScript extension, or use the official Android app above.</p>
-                  <button className="button button-primary" onClick={onOpenExtensions}>Manage extensions</button>
+
+              <div className="csx-native-search">
+                <div className="explore-search">
+                  <Search size={16} />
+                  <input value={nativeQuery} onChange={(event) => setNativeQuery(event.target.value)}
+                    placeholder={`Search ${provider?.name || 'this provider'} in the CloudStream app…`}
+                    aria-label={`Search ${provider?.name || 'provider'} in the CloudStream app`} />
                 </div>
-              )}
-            </>
+                <a className="button button-primary" href={`cloudstreamsearch://${encodeURIComponent(nativeQuery.trim() || provider?.name || 'CloudStream')}`}>
+                  <Smartphone size={16} /> Search in CloudStream app
+                </a>
+              </div>
+
+              <div className="csx-native-actions">
+                <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={15} /> Add repository in CloudStream</a>
+                {provider?.repositoryUrl && <a className="button button-secondary" href={provider.repositoryUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Provider source</a>}
+                {provider?.url && <a className="button button-secondary" href={provider.url} target="_blank" rel="noreferrer"><Package size={15} /> .cs3 package</a>}
+                <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
+                <button className="button button-secondary" onClick={onOpenExtensions}>Manage extensions</button>
+              </div>
+
+              <p className="explore-note"><CircleAlert size={14} /> This provider's catalog and streams are generated by its compiled Android plugin at runtime. A web page cannot execute .cs3 plugins — in the official CloudStream app this same provider fills its home page and search from this screen's deep link. Providers that can play right here are under “Play in browser” in the provider selector above.</p>
+            </div>
           ) : (
             <>
               {hero && (

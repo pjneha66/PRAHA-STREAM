@@ -966,3 +966,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .csx-native-copy p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .csx-native-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 760px) { .csx-native-banner { flex-direction: column; align-items: flex-start; } }
+.csx-menu-label { margin: 8px 10px 4px; font-size: 10px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: var(--muted-2); }
+.csx-native-page { display: flex; flex-direction: column; gap: 18px; }
+.csx-native-hero { display: flex; gap: 20px; align-items: center; padding: 26px; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-soft); }
+.csx-native-logo { width: 92px; height: 92px; border-radius: 18px; object-fit: contain; background: var(--surface); padding: 10px; flex: 0 0 auto; }
+.csx-native-headline h1 { margin: 4px 0 6px; font-size: 30px; letter-spacing: -.5px; }
+.csx-native-headline p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; max-width: 640px; }
+.csx-native-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.csx-native-chips span { padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 10px; font-weight: 700; color: var(--muted); }
+.csx-native-authors { margin-top: 10px !important; font-size: 11px !important; }
+.csx-native-search { display: flex; gap: 10px; align-items: center; }
+.csx-native-search .explore-search { flex: 1; }
+.csx-native-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 760px) { .csx-native-hero { flex-direction: column; align-items: flex-start; } .csx-native-search { flex-direction: column; align-items: stretch; } }
