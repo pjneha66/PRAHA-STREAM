@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, Blocks, LayoutGrid, Zap } from 'lucide-react';
+import { ArrowRight, Blocks, LayoutGrid, Store, Zap } from 'lucide-react';
 import type {
   InstalledAddon, MediaItem, NuvioRepository, StreamResult,
 } from '../types';
@@ -17,11 +17,12 @@ interface ExploreViewProps {
   onToggleWatchlist: (item: MediaItem) => void;
   onPlay: (media: MediaItem, stream: StreamResult) => void;
   onOpenExtensions: () => void;
+  onOpenAddons?: () => void;
 }
 
 const ExploreView: React.FC<ExploreViewProps> = ({
   addons, repositories, watchlist, compact,
-  preferredLanguage, onToggleWatchlist, onPlay, onOpenExtensions,
+  preferredLanguage, onToggleWatchlist, onPlay, onOpenExtensions, onOpenAddons,
 }) => {
   const [tab, setTab] = useState<ExploreTab>('stremio');
 
@@ -39,7 +40,10 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       <p>{id === 'stremio'
         ? 'Install a Stremio addon to browse its catalogs, metadata, and streams here.'
         : 'Install a Nuvio repository to browse its stream providers here.'}</p>
-      <button className="button button-primary" onClick={onOpenExtensions}>Manage sources <ArrowRight size={16} /></button>
+      <div className="empty-state-actions">
+        {onOpenAddons && id === 'stremio' && <button className="button button-primary" onClick={onOpenAddons}><Store size={16} /> Browse addons</button>}
+        <button className={`button ${onOpenAddons && id === 'stremio' ? 'button-secondary' : 'button-primary'}`} onClick={onOpenExtensions}>Manage sources <ArrowRight size={16} /></button>
+      </div>
     </div>
   );
 
@@ -48,7 +52,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       <div className="page-heading"><div>
         <span className="page-kicker"><LayoutGrid size={14} /> SOURCE BROWSER</span>
         <h1>Explore your sources</h1>
-        <p>Browse, load, and play each source type — CloudStream lives in its own tab.</p>
+        <p>Browse, load, and play each installed source type in its own workspace.</p>
       </div></div>
 
       <div className="explore-tabs" role="tablist" aria-label="Source type">

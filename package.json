@@ -1,14 +1,12 @@
 {
   "name": "praha-stream",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "server:cloudstream": "node scripts/cloudstream-server.mjs",
-    "dev:full": "node scripts/cloudstream-server.mjs --dev"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",
@@ -26,5 +24,5 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   },
-  "description": "A local-first streaming interface for Stremio addons and Nuvio plugins."
+  "description": "A local-first streaming interface for Stremio addons and Nuvio plugins, with a built-in addon browser and local profiles."
 }

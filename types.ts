@@ -1,5 +1,6 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
+export type AppView =
+  | 'home' | 'discover' | 'library' | 'explore' | 'addons' | 'profiles' | 'extensions' | 'settings';
 
 /** Home screen rows. Every entry is loaded from TMDB at runtime — nothing is bundled. */
 export interface HomeCatalog {
@@ -25,7 +26,7 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio' | 'cloudstream';
+  source: 'tmdb' | 'stremio' | 'nuvio';
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
@@ -135,7 +136,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'cloudstream';
+  sourceType: 'stremio' | 'nuvio';
   quality?: string;
   size?: string;
   language?: string;
@@ -157,48 +158,7 @@ export interface SourceError {
   message: string;
 }
 
-export type SourceKind = 'stremio' | 'nuvio' | 'cloudstream';
-
-export interface CloudStreamPluginEntry {
-  name: string;
-  version?: number | string;
-  url?: string;
-  iconUrl?: string;
-  description?: string;
-  apiVersion?: number;
-  repositoryUrl?: string;
-  fileSize?: number;
-  status?: number;
-  language?: string;
-  authors?: string[];
-  tvTypes?: string[];
-  enabled?: boolean;
-}
-
-export interface CloudStreamProvider extends CloudStreamPluginEntry {
-  id: string;
-  repositoryId: string;
-  enabled: boolean;
-  manifestEnabled: boolean;
-  supportedTypes: string[];
-  installedAt: number;
-  /** Fetched JavaScript source for extensions that can run in the browser. */
-  code?: string;
-  /** True when the extension is a compiled .cs3 package that needs the native app. */
-  nativeOnly?: boolean;
-}
-
-export interface CloudStreamRepository {
-  manifestUrl: string;
-  name: string;
-  description?: string;
-  manifestVersion?: number;
-  pluginListUrls: string[];
-  enabled: boolean;
-  providers: CloudStreamProvider[];
-  installedAt: number;
-  updatedAt: number;
-}
+export type SourceKind = 'stremio' | 'nuvio';
 
 export type PlayerThemeId =
   | 'mpvrx' | 'amoled' | 'catppuccin' | 'nord' | 'tokyo' | 'dracula' | 'gruvbox' | 'rosepine';
@@ -234,9 +194,46 @@ export interface AppSettings {
   preferredLanguage: string;
   accent: 'lime' | 'violet' | 'blue';
   tmdbApiKey: string;
-  /** Optional CloudStream plugin server that executes native .cs3 providers. */
-  cloudstreamServerUrl: string;
   player: PlayerSettings;
+}
+
+/** A local viewer profile. Every profile keeps its own library, history, sources, and settings. */
+export interface UserProfile {
+  id: string;
+  name: string;
+  /** Square, downscaled data URL uploaded by the user. */
+  avatar?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One addon from the stremio-addons.net directory. */
+export interface DirectoryAddon {
+  uuid: string;
+  slug: string;
+  name: string;
+  description: string;
+  logo?: string;
+  version: string;
+  types: string[];
+  stars: number;
+  categories: Array<{ name: string; slug: string }>;
+  manifestUrl: string;
+  siteUrl: string;
+  configureUrl?: string;
+  updatedAt?: string;
+}
+
+export interface DirectoryAddonPage {
+  addons: DirectoryAddon[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
 }
 
 export interface ToastMessage {

@@ -41,7 +41,7 @@ const PlayerModal: React.FC<{
       <section className="player-modal" role="dialog" aria-modal="true" aria-label={`Playing ${media.title}`}>
         <header className="player-header">
           <div><span>NOW PLAYING</span><h2>{media.title}</h2></div>
-          <div className="player-source-label">{stream.sourceType === 'nuvio' ? 'NUVIO' : stream.sourceType === 'cloudstream' ? 'CLOUDSTREAM' : 'STREMIO'} · {stream.sourceName}</div>
+          <div className="player-source-label">{stream.sourceType === 'nuvio' ? 'NUVIO' : 'STREMIO'} · {stream.sourceName}</div>
           <button className="modal-close" onClick={onClose} aria-label="Close player"><X size={21} /></button>
         </header>
         <div className="player-stage">
