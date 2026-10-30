@@ -9,15 +9,18 @@ worker.onmessage = async (event) => {
   const { code, args, scraperId, settings, tmdbApiKey, mode } = event.data;
   try {
     const module = { exports: {} as Record<string, unknown> };
-    Object.assign(worker as any, {
-      window: worker,
-      global: worker,
-      SCRAPER_ID: scraperId,
-      SCRAPER_SETTINGS: settings || {},
-      TMDB_API_KEY: tmdbApiKey || '',
-      cheerio,
-      CryptoJS,
-    });
+    // Same getter-only `self` trap as the CloudStream worker: install the
+    // plugin globals with defineProperty instead of assignment.
+    const setGlobal = (name: string, value: unknown) => {
+      Object.defineProperty(worker, name, { value, writable: true, configurable: true });
+    };
+    setGlobal('window', worker);
+    setGlobal('global', worker);
+    setGlobal('SCRAPER_ID', scraperId);
+    setGlobal('SCRAPER_SETTINGS', settings || {});
+    setGlobal('TMDB_API_KEY', tmdbApiKey || '');
+    setGlobal('cheerio', cheerio);
+    setGlobal('CryptoJS', CryptoJS);
     const require = (name: string) => {
       if (['cheerio', 'cheerio-without-node-native', 'react-native-cheerio'].includes(name)) return cheerio;
       if (name === 'crypto-js') return CryptoJS;

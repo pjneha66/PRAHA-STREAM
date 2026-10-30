@@ -23,14 +23,18 @@ worker.onmessage = async (event) => {
       throw new Error('This extension needs your TMDB API key. Add it in Settings → TMDB API, then try again.');
     }
     const module = { exports: {} as Record<string, unknown> };
-    Object.assign(worker as any, {
-      window: worker,
-      global: worker,
-      self: worker,
-      SCRAPER_ID: providerId,
-      SCRAPER_SETTINGS: {},
-      fetch,
-    });
+    // WorkerGlobalScope.self is a getter-only accessor in browsers, so a
+    // plain assignment (Object.assign included) throws
+    // "Cannot set property self ... which has only a getter". `self` already
+    // refers to the worker scope, so leave it alone and install only the
+    // Node-style aliases plugin code may expect.
+    const setGlobal = (name: string, value: unknown) => {
+      Object.defineProperty(worker, name, { value, writable: true, configurable: true });
+    };
+    setGlobal('window', worker);
+    setGlobal('global', worker);
+    setGlobal('SCRAPER_ID', providerId);
+    setGlobal('SCRAPER_SETTINGS', {});
     const require = (name: string) => {
       throw new Error(`Module '${name}' is not available in the PRAHA CloudStream web runtime.`);
     };
