@@ -1,6 +1,6 @@
 # PRAHA STREAM
 
-A completely rebuilt, responsive streaming interface inspired by Nuvio’s bring-your-own-sources philosophy. PRAHA combines Stremio addons and Nuvio plugin repositories in one local-first library.
+A completely rebuilt, responsive streaming interface inspired by Nuvio’s bring-your-own-sources philosophy. PRAHA combines Stremio addons, Nuvio plugin repositories, and CloudStream extension repositories in one local-first library.
 
 ## Run locally
 
@@ -35,6 +35,18 @@ Cinemeta is included as the default metadata/catalog addon. It does **not** prov
 - Run the Nuvio `getStreams(tmdbId, mediaType, season, episode)` contract in a dedicated web worker.
 - Provide Cheerio and CryptoJS compatibility, per-provider controls, and test execution.
 - Enable, disable, refresh, and remove repositories.
+
+### CloudStream extensions
+
+- Install CloudStream repositories from `repo.json` (a repository-of-repositories), a direct `plugins.json`, or the legacy `{ addons: [...] }` shape.
+- Resolve each entry’s `url`, `iconUrl`, `language`, `tvTypes`, `authors`, and `fileSize`.
+- Enable, disable, refresh, and remove repositories, and toggle each extension individually.
+
+CloudStream extensions are Kotlin (`.cs3`) packages that run inside the native CloudStream app. PRAHA installs and lists them alongside Stremio and Nuvio, but they cannot resolve streams in a browser. Stream playback continues to come from Stremio addons and Nuvio plugins.
+
+### Browse by source
+
+The **Explore** tab keeps each ecosystem separate. Switch between **Addons** (Stremio), **Plugins** (Nuvio), and **Extensions** (CloudStream) to browse a single source’s catalogs and providers without mixing them into one list. Use the Extensions page to install and manage everything.
 
 Only install third-party repositories you trust. Native Nuvio and browser networking are different: remote manifests, scrapers, catalogs, and media must permit browser CORS requests. PRAHA reports these errors rather than pretending a source is connected.
 

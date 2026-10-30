@@ -1,0 +1,90 @@
+/// <reference lib="webworker" />
+
+const worker = self as unknown as DedicatedWorkerGlobalScope;
+
+/**
+ * CloudStream JavaScript extensions expose three optional entry points:
+ *   search(query)          -> SearchResult[]      (JSON string or array)
+ *   getEpisodes(showId)    -> Episode[]           (JSON string or array)
+ *   getStreams(mediaId)    -> StreamSource[]      (JSON string or array)
+ *
+ * They may be attached to `module.exports` or declared as globals. Some
+ * CloudStream repositories also ship a Nuvio-style `getStreams(tmdbId,
+ * mediaType, season, episode)`, so we fall back to that contract when the
+ * CloudStream-style call returns nothing.
+ */
+worker.onmessage = async (event) => {
+  const { code, mode, args, providerId, tmdbApiKey } = event.data;
+  try {
+    // CloudStream JS plugins may ship a placeholder TMDB key — inject the
+    // user's own key when one is provided so TMDB-based plugins work.
+    const source = tmdbApiKey ? code.replace(/YOUR_TMDB_API_KEY/g, tmdbApiKey) : code;
+    const module = { exports: {} as Record<string, unknown> };
+    Object.assign(worker as any, {
+      window: worker,
+      global: worker,
+      self: worker,
+      SCRAPER_ID: providerId,
+      SCRAPER_SETTINGS: {},
+      fetch,
+    });
+    const require = (name: string) => {
+      throw new Error(`Module '${name}' is not available in the PRAHA CloudStream web runtime.`);
+    };
+    const evaluate = new Function(
+      'module', 'exports', 'require',
+      `${source}\n;return { exported: module.exports, localSearch: typeof search === 'function' ? search : undefined, localGetEpisodes: typeof getEpisodes === 'function' ? getEpisodes : undefined, localGetStreams: typeof getStreams === 'function' ? getStreams : undefined };`,
+    );
+    const context = evaluate(module, module.exports, require);
+    const exported = context.exported as Record<string, unknown>;
+
+    const decode = (result: unknown) => {
+      if (typeof result === 'string') {
+        try { return JSON.parse(result); } catch { return []; }
+      }
+      return Array.isArray(result) ? result : [];
+    };
+
+    if (mode === 'search') {
+      const search = exported.search || context.localSearch || (worker as any).search;
+      if (typeof search !== 'function') throw new Error('This extension does not export search().');
+      worker.postMessage({ ok: true, result: decode(await search(args.query)) });
+      return;
+    }
+
+    if (mode === 'episodes') {
+      const getEpisodes = exported.getEpisodes || context.localGetEpisodes || (worker as any).getEpisodes;
+      if (typeof getEpisodes !== 'function') throw new Error('This extension does not export getEpisodes().');
+      worker.postMessage({ ok: true, result: decode(await getEpisodes(args.showId)) });
+      return;
+    }
+
+    const getStreams = exported.getStreams || context.localGetStreams || (worker as any).getStreams;
+    if (typeof getStreams !== 'function') throw new Error('This extension does not export getStreams().');
+
+    // CloudStream contract: getStreams(mediaId).
+    let raw = [];
+    if (args.mediaId) {
+      try {
+        raw = decode(await getStreams(args.mediaId));
+      } catch {
+        raw = [];
+      }
+    }
+    if (raw.length) {
+      worker.postMessage({ ok: true, result: raw });
+      return;
+    }
+
+    // Some CloudStream repositories also ship a Nuvio-style getStreams(tmdbId,
+    // mediaType, season, episode). Only try it when we actually have a TMDB id.
+    const fallback = args.tmdbId
+      ? decode(await getStreams(args.tmdbId, args.mediaType, args.season ?? undefined, args.episode ?? undefined))
+      : [];
+    worker.postMessage({ ok: true, result: fallback });
+  } catch (error) {
+    worker.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+};
+
+export {};

@@ -5,15 +5,18 @@ import HomeView from './components/HomeView';
 import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
+import ExploreView from './components/ExploreView';
+import CloudStreamPage from './components/CloudStreamPage';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
 import { usePersistentState } from './hooks/usePersistentState';
 import { CINEMETA_ADDON, CURATED_MEDIA, DEFAULT_PROGRESS, DEFAULT_SETTINGS } from './data/catalog';
+import { buildBuiltinCloudStreamJsRepository, BUILTIN_MANIFEST_URL } from './data/cloudstreamJsPlugins';
 import { fetchStremioCatalog, fetchStremioMeta, searchStremioAddons } from './services/stremioService';
 import { searchCurated, tmdbService } from './services/tmdbService';
 import type {
-  AppSettings, AppView, InstalledAddon, MediaItem, NuvioRepository,
+  AppSettings, AppView, CloudStreamRepository, InstalledAddon, MediaItem, NuvioRepository,
   StreamResult, ToastMessage, WatchProgress,
 } from './types';
 
@@ -42,6 +45,7 @@ const App: React.FC = () => {
 
   const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
   const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
+  const [cloudstreamRepositories, setCloudstreamRepositories] = usePersistentState<CloudStreamRepository[]>('praha.v2.cloudstream-repositories', []);
   const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>('praha.v2.watchlist', []);
   const [history, setHistory] = usePersistentState<WatchProgress[]>('praha.v2.history', DEFAULT_PROGRESS);
   const [settings, setSettings] = usePersistentState<AppSettings>('praha.v2.settings', DEFAULT_SETTINGS);
@@ -103,8 +107,19 @@ const App: React.FC = () => {
   }, [view, query, addons, settings.tmdbApiKey]);
 
   const activeSourceCount = useMemo(() =>
-    addons.filter((addon) => addon.enabled).length + repositories.filter((repo) => repo.enabled).length,
-  [addons, repositories]);
+    addons.filter((addon) => addon.enabled).length +
+    repositories.filter((repo) => repo.enabled).length +
+    cloudstreamRepositories.filter((repo) => repo.enabled).length,
+  [addons, repositories, cloudstreamRepositories]);
+
+  // Always include the browser-playable built-in CloudStream JS extensions so
+  // the CloudStream tab shows real content even when a repo only ships .cs3.
+  const builtinJsRepo = useMemo(() => buildBuiltinCloudStreamJsRepository(), []);
+  useEffect(() => {
+    setCloudstreamRepositories((current) =>
+      current.some((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL) ? current : [builtinJsRepo, ...current],
+    );
+  }, [builtinJsRepo, setCloudstreamRepositories]);
 
   const navigate = (next: AppView) => {
     setView(next);
@@ -147,6 +162,14 @@ const App: React.FC = () => {
     setPlayer({ media, stream });
   };
 
+  const playExplorerStream = (media: MediaItem, stream: StreamResult) => {
+    setHistory((current) => {
+      const existing = current.find((entry) => entry.media.id === media.id);
+      return [{ media, progress: existing?.progress || 1, watchedAt: Date.now() }, ...current.filter((entry) => entry.media.id !== media.id)].slice(0, 30);
+    });
+    setPlayer({ media, stream });
+  };
+
   let page: React.ReactNode;
   if (view === 'home') {
     page = <HomeView trending={trending} history={history} watchlist={watchlist} addons={addons} repositories={repositories}
@@ -158,10 +181,22 @@ const App: React.FC = () => {
   } else if (view === 'library') {
     page = <LibraryView watchlist={watchlist} history={history} onSelect={openDetails} onPlay={openSources}
       onToggleWatchlist={toggleWatchlist} onExplore={() => navigate('discover')} onClearHistory={() => { setHistory([]); notify('Watch history cleared.'); }} compact={settings.compactCards} />;
+  } else if (view === 'explore') {
+    page = <ExploreView addons={addons} repositories={repositories}
+      watchlist={watchlist} compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
+      onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
+      onOpenExtensions={() => navigate('extensions')} />;
+  } else if (view === 'cloudstream') {
+    page = <CloudStreamPage repositories={cloudstreamRepositories} history={history} watchlist={watchlist}
+      compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
+      tmdbApiKey={settings.tmdbApiKey}
+      onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
+      onOpenExtensions={() => navigate('extensions')} />;
   } else if (view === 'extensions') {
-    page = <ExtensionsView addons={addons} repositories={repositories} setAddons={setAddons} setRepositories={setRepositories} notify={notify} />;
+    page = <ExtensionsView addons={addons} repositories={repositories} cloudstreamRepositories={cloudstreamRepositories}
+      setAddons={setAddons} setRepositories={setRepositories} setCloudstreamRepositories={setCloudstreamRepositories} notify={notify} />;
   } else {
-    page = <SettingsView settings={settings} onChange={setSettings} onReset={() => { setSettings({ ...DEFAULT_SETTINGS, tmdbApiKey: settings.tmdbApiKey || '' }); notify('Preferences reset. Your TMDB API key was kept.', 'success'); }} addons={addons} repositories={repositories} />;
+    page = <SettingsView settings={settings} onChange={setSettings} onReset={() => { setSettings({ ...DEFAULT_SETTINGS, tmdbApiKey: settings.tmdbApiKey || '' }); notify('Preferences reset. Your TMDB API key was kept.', 'success'); }} addons={addons} repositories={repositories} cloudstreamRepositories={cloudstreamRepositories} />;
   }
 
   return (

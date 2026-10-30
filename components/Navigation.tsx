@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import {
-  Blocks, Compass, Home, Library, Plus, Search, Settings, Sparkles,
+  Blocks, Cloud, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles,
 } from 'lucide-react';
 import type { AppView } from '../types';
 
@@ -17,6 +17,8 @@ interface NavigationProps {
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
+  { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
+  { id: 'cloudstream' as const, label: 'CloudStream', icon: Cloud },
   { id: 'library' as const, label: 'My library', icon: Library },
 ];
 
