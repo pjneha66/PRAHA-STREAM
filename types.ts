@@ -1,66 +1,160 @@
+export type MediaType = 'movie' | 'series';
+export type AppView = 'home' | 'discover' | 'library' | 'extensions' | 'settings';
 
 export interface MediaItem {
-  id: number;
+  id: string;
+  tmdbId?: number;
+  imdbId?: string;
+  type: MediaType;
   title: string;
+  overview: string;
+  poster: string;
+  backdrop?: string;
+  logo?: string;
+  year?: string;
+  rating?: number;
+  genres: string[];
+  runtime?: string;
+  maturity?: string;
+  source: 'praha' | 'tmdb' | 'stremio';
+  addonUrl?: string;
+}
+
+export interface WatchProgress {
+  media: MediaItem;
+  progress: number;
+  watchedAt: number;
+  season?: number;
+  episode?: number;
+}
+
+export interface StremioResource {
+  name: 'catalog' | 'meta' | 'stream' | 'subtitles' | 'addon_catalog' | string;
+  types: string[];
+  idPrefixes?: string[];
+}
+
+export interface StremioCatalog {
+  type: string;
+  id: string;
   name?: string;
-  media_type: 'movie' | 'tv' | 'person';
-  poster_path: string | null;
-  release_date?: string;
-  first_air_date?: string;
-  vote_average?: number;
-  genre_ids?: number[];
-  overview?: string;
-}
-
-export interface FavoriteItem extends MediaItem {}
-
-export interface WatchlistItem extends MediaItem {
-    addedAt: number;
-}
-
-export interface HistoryItem extends MediaItem {
-    watchedAt: number;
-    progress: number;
-}
-
-export interface UserProfile {
-    id: string;
+  extra?: Array<{
     name: string;
-    avatar: string; // class name for icon or color
-    created: number;
+    isRequired?: boolean;
+    options?: string[];
+    optionsLimit?: number;
+  }>;
 }
 
-export interface Settings {
-    theme: 'dark' | 'light' | 'blue' | 'purple';
-    autoDarkMode: boolean;
-    privacyMode: boolean;
-    trackHistory: boolean;
-    analyticsEnabled: boolean;
-    autoPlay: boolean;
-    defaultQuality: 'auto' | '1080p' | '720p' | '480p';
-    vpnMode: boolean;
-    adBlocker: boolean;
+export interface StremioManifest {
+  id: string;
+  name: string;
+  description?: string;
+  version: string;
+  logo?: string;
+  resources: StremioResource[];
+  types: string[];
+  idPrefixes?: string[];
+  catalogs: StremioCatalog[];
+  behaviorHints?: {
+    configurable?: boolean;
+    configurationRequired?: boolean;
+    adult?: boolean;
+    p2p?: boolean;
+  };
 }
 
-export interface Server {
-    name: string;
-    movieUrl: string;
-    tvUrl: string;
-    downloadSupport: boolean;
-    qualityOptions: string[];
-    cors: boolean;
+export interface InstalledAddon {
+  manifestUrl: string;
+  manifest: StremioManifest;
+  enabled: boolean;
+  installedAt: number;
+  updatedAt: number;
 }
 
-export interface Servers {
-    [key: string]: Server;
+export interface NuvioManifestScraper {
+  id: string;
+  name: string;
+  description?: string;
+  version: string;
+  filename: string;
+  supportedTypes?: string[];
+  enabled?: boolean;
+  hasSettings?: boolean;
+  logo?: string;
+  contentLanguage?: string[];
+  supportedPlatforms?: string[];
+  disabledPlatforms?: string[];
+  formats?: string[];
+  supportedFormats?: string[];
+  supportsExternalPlayer?: boolean;
+  limited?: boolean;
 }
 
-export interface CurrentVideoInfo {
-    embedUrl: string;
-    tmdbId: number;
-    mediaType: 'movie' | 'tv';
-    season: number | null;
-    episode: number | null;
-    serverKey: string;
-    itemData: MediaItem;
+export interface NuvioScraper extends NuvioManifestScraper {
+  id: string;
+  repositoryUrl: string;
+  enabled: boolean;
+  manifestEnabled: boolean;
+  supportedTypes: string[];
+  code: string;
+}
+
+export interface NuvioRepository {
+  manifestUrl: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  enabled: boolean;
+  scrapers: NuvioScraper[];
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface StreamSubtitle {
+  url: string;
+  language: string;
+  name?: string;
+  headers?: Record<string, string>;
+}
+
+export interface StreamResult {
+  id: string;
+  title: string;
+  url: string;
+  sourceName: string;
+  sourceType: 'stremio' | 'nuvio';
+  quality?: string;
+  size?: string;
+  language?: string;
+  provider?: string;
+  seeders?: number;
+  peers?: number;
+  infoHash?: string;
+  headers?: Record<string, string>;
+  subtitles?: StreamSubtitle[];
+  externalUrl?: string;
+  ytId?: string;
+  behaviorHints?: Record<string, unknown>;
+}
+
+export interface SourceError {
+  sourceName: string;
+  message: string;
+}
+
+export interface AppSettings {
+  autoplay: boolean;
+  compactCards: boolean;
+  reduceMotion: boolean;
+  preferredLanguage: string;
+  accent: 'lime' | 'violet' | 'blue';
+  tmdbApiKey: string;
+}
+
+export interface ToastMessage {
+  id: number;
+  message: string;
+  tone?: 'default' | 'success' | 'error';
 }

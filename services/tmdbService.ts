@@ -1,153 +1,101 @@
+import { CURATED_MEDIA } from '../data/catalog';
+import type { MediaItem } from '../types';
+import { getTmdbApiKey } from './tmdbConfig';
 
-import { TMDB_API_KEY, TMDB_API_URL } from '../constants';
-import { fetchWithAdBlock } from './adBlockerService';
+const API_URL = 'https://api.themoviedb.org/3';
+const IMAGE_URL = 'https://image.tmdb.org/t/p';
 
-const CACHE_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+async function request<T>(path: string, suppliedKey?: string): Promise<T> {
+  const apiKey = (suppliedKey === undefined ? getTmdbApiKey() : suppliedKey).trim();
+  if (!apiKey) throw new Error('Add your personal TMDB API key in Settings → TMDB API.');
 
-const fetchWithCache = async <T,>(url: string, cacheKey: string, adBlockerEnabled: boolean, forceRefresh = false): Promise<T> => {
-    const cached = localStorage.getItem(cacheKey);
-    if (cached && !forceRefresh) {
-        try {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < CACHE_EXPIRY_MS) {
-                return data as T;
-            }
-        } catch (e) {
-            localStorage.removeItem(cacheKey);
-        }
-    }
+  const url = new URL(`${API_URL}${path}`);
+  const isV4Token = apiKey.startsWith('eyJ') && apiKey.split('.').length === 3;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (isV4Token) headers.Authorization = `Bearer ${apiKey}`;
+  else url.searchParams.set('api_key', apiKey);
 
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    let message = `TMDB returned HTTP ${response.status}.`;
     try {
-        const response = await fetchWithAdBlock(url, adBlockerEnabled);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        const data = await response.json();
-        localStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
-        return data as T;
-    } catch (error) {
-        console.error(`Fetch failed for ${url}:`, error);
-        if (cached) {
-            try {
-                const { data } = JSON.parse(cached);
-                return data as T; // Return stale cache on error
-            } catch (e) {
-                localStorage.removeItem(cacheKey);
-            }
-        }
-        throw error;
-    }
-};
+      const error = await response.json() as { status_message?: string };
+      if (error.status_message) message = error.status_message;
+    } catch { /* Keep the HTTP error when the response is not JSON. */ }
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export function mapTmdbItem(item: Record<string, any>, forcedType?: 'movie' | 'tv'): MediaItem | null {
+  const rawType = forcedType || item.media_type;
+  if (!['movie', 'tv'].includes(rawType) || (!item.poster_path && !item.backdrop_path)) return null;
+  return {
+    id: `tmdb:${item.id}`,
+    tmdbId: Number(item.id),
+    type: rawType === 'tv' ? 'series' : 'movie',
+    title: item.title || item.name || 'Untitled',
+    overview: item.overview || '',
+    poster: item.poster_path ? `${IMAGE_URL}/w500${item.poster_path}` : `${IMAGE_URL}/w780${item.backdrop_path}`,
+    backdrop: item.backdrop_path ? `${IMAGE_URL}/original${item.backdrop_path}` : undefined,
+    year: String(item.release_date || item.first_air_date || '').slice(0, 4),
+    rating: Number(item.vote_average) || undefined,
+    genres: [],
+    source: 'tmdb',
+  };
+}
 
 export const tmdbService = {
-    searchMulti: (query: string, type: string, adBlockerEnabled: boolean) => {
-        const url = type 
-            ? `${TMDB_API_URL}/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`
-            : `${TMDB_API_URL}/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`;
-        return fetchWithCache<{ results: any[] }>(url, `search_${query}_${type}`, adBlockerEnabled);
-    },
-    getTrending: (mediaType: 'movie' | 'tv', adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/trending/${mediaType}/week?api_key=${TMDB_API_KEY}`;
-        return fetchWithCache<{ results: any[] }>(url, `trending_${mediaType}`, adBlockerEnabled);
-    },
-    getIndianMovies: async (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/discover/movie?api_key=${TMDB_API_KEY}&region=IN&sort_by=popularity.desc&with_original_language=hi`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'indian_movies_hi', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'movie'}))
-        };
-    },
-    getAnime: async (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_keywords=210024&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'anime_tv', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'tv'}))
-        };
-    },
-    getAnimation: async (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/discover/movie?api_key=${TMDB_API_KEY}&with_genres=16&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'animation_movies', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'movie'}))
-        };
-    },
-    getIndianSeries: async (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_origin_country=IN&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'indian_series', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'tv'}))
-        };
-    },
-    getKDramas: async (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_origin_country=KR&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'k_dramas', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'tv'}))
-        };
-    },
-    getWrestling: async (adBlockerEnabled: boolean) => {
-        // Keywords: Wrestling (6075), WWE (19320), AEW (257985), UFC (16088), Pro Wrestling (156544)
-        // Exclude animation (16) to ensure we get live action wrestling shows
-        const url = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_keywords=6075|19320|257985|16088|156544&without_genres=16&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'wrestling_tv_v4', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'tv'}))
-        };
-    },
-    getSports: async (adBlockerEnabled: boolean) => {
-        // Use broad keywords for various sports: Sport (2702), Football (5580), Basketball (6048), Tennis (4119), Golf (4118), Soccer (9666), F1 (14937)
-        // Exclude wrestling (6075) to keep tabs distinct and exclude animation (16)
-        const url = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_keywords=2702|5580|6048|4119|4118|9666|14937&without_keywords=6075&without_genres=16&sort_by=popularity.desc`;
-        const data = await fetchWithCache<{ results: any[] }>(url, 'sports_tv_v4', adBlockerEnabled);
-        return { 
-            ...data,
-            results: data.results.map(item => ({...item, media_type: 'tv'}))
-        };
-    },
-    getDocumentaries: async (adBlockerEnabled: boolean) => {
-        // Fetch both TV shows and Movies for documentaries to provide a complete list
-        const tvUrl = `${TMDB_API_URL}/discover/tv?api_key=${TMDB_API_KEY}&with_genres=99&sort_by=popularity.desc`;
-        const movieUrl = `${TMDB_API_URL}/discover/movie?api_key=${TMDB_API_KEY}&with_genres=99&sort_by=popularity.desc`;
-        
-        try {
-            const [tvData, movieData] = await Promise.all([
-                fetchWithCache<{ results: any[] }>(tvUrl, 'documentaries_tv_v3', adBlockerEnabled),
-                fetchWithCache<{ results: any[] }>(movieUrl, 'documentaries_movie_v3', adBlockerEnabled)
-            ]);
+  async validateApiKey(apiKey: string) {
+    await request('/configuration', apiKey);
+    return true;
+  },
 
-            const tvResults = (tvData?.results || []).map(item => ({...item, media_type: 'tv'}));
-            const movieResults = (movieData?.results || []).map(item => ({...item, media_type: 'movie'}));
-            
-            // Combine and sort by popularity
-            const combined = [...tvResults, ...movieResults].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+  async trending(type: 'movie' | 'tv' = 'movie') {
+    const data = await request<{ results: Record<string, any>[] }>(`/trending/${type}/week`);
+    return data.results.map((item) => mapTmdbItem(item, type)).filter((item): item is MediaItem => Boolean(item));
+  },
 
-            return { results: combined };
-        } catch (e) {
-            console.error("Error fetching documentaries:", e);
-            // Fallback to just TV if something fails
-            const data = await fetchWithCache<{ results: any[] }>(tvUrl, 'documentaries_tv_fallback', adBlockerEnabled);
-            return {
-                 ...data,
-                 results: data.results.map(item => ({...item, media_type: 'tv'}))
-            };
-        }
-    },
-    getTvShowDetails: (id: number, adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/tv/${id}?api_key=${TMDB_API_KEY}`;
-        return fetchWithCache<any>(url, `tv_${id}_details`, adBlockerEnabled);
-    },
-    getTvSeasonDetails: (tvId: number, seasonNumber: number, adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/tv/${tvId}/season/${seasonNumber}?api_key=${TMDB_API_KEY}`;
-        return fetchWithCache<any>(url, `tv_${tvId}_s${seasonNumber}`, adBlockerEnabled);
-    },
-    getGenres: (adBlockerEnabled: boolean) => {
-        const url = `${TMDB_API_URL}/genre/movie/list?api_key=${TMDB_API_KEY}`;
-        return fetchWithCache<{ genres: {id: number, name: string}[] }>(url, 'movie_genres', adBlockerEnabled);
-    },
+  async search(query: string) {
+    const data = await request<{ results: Record<string, any>[] }>(`/search/multi?query=${encodeURIComponent(query)}&include_adult=false`);
+    return data.results.map((item) => mapTmdbItem(item)).filter((item): item is MediaItem => Boolean(item));
+  },
+
+  async resolveIds(media: MediaItem): Promise<{ tmdbId?: string; imdbId?: string }> {
+    let tmdbId = media.tmdbId ? String(media.tmdbId) : undefined;
+    let imdbId = media.imdbId || (media.id.startsWith('tt') ? media.id : undefined);
+    if (!tmdbId && media.id.startsWith('tmdb:')) tmdbId = media.id.slice(5);
+    if (tmdbId && !imdbId) {
+      const type = media.type === 'series' ? 'tv' : 'movie';
+      const details = await request<{ external_ids?: { imdb_id?: string }; imdb_id?: string }>(`/${type}/${tmdbId}?append_to_response=external_ids`);
+      imdbId = details.external_ids?.imdb_id || details.imdb_id;
+    }
+    if (!tmdbId && imdbId) {
+      const data = await request<{ movie_results: Array<{ id: number }>; tv_results: Array<{ id: number }> }>(`/find/${imdbId}?external_source=imdb_id`);
+      tmdbId = String((media.type === 'series' ? data.tv_results[0]?.id : data.movie_results[0]?.id) || data.movie_results[0]?.id || data.tv_results[0]?.id || '') || undefined;
+    }
+    return { tmdbId, imdbId };
+  },
+
+  async enrich(media: MediaItem): Promise<MediaItem> {
+    if (!media.tmdbId) return media;
+    const type = media.type === 'series' ? 'tv' : 'movie';
+    const details = await request<Record<string, any>>(`/${type}/${media.tmdbId}?append_to_response=external_ids`);
+    return {
+      ...media,
+      imdbId: details.external_ids?.imdb_id || details.imdb_id || media.imdbId,
+      overview: details.overview || media.overview,
+      runtime: details.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : details.number_of_seasons ? `${details.number_of_seasons} season${details.number_of_seasons === 1 ? '' : 's'}` : media.runtime,
+      genres: details.genres?.map((genre: { name: string }) => genre.name) || media.genres,
+      maturity: details.adult ? 'R' : media.maturity,
+    };
+  },
 };
+
+export function searchCurated(query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return CURATED_MEDIA;
+  return CURATED_MEDIA.filter((item) =>
+    item.title.toLowerCase().includes(normalized) || item.genres.some((genre) => genre.toLowerCase().includes(normalized)),
+  );
+}
