@@ -1,0 +1,392 @@
+/* mpvRx-style in-browser player: on-screen controller, OSD, menus, stats, gestures. */
+
+.mpv-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  isolation: isolate;
+  --osc-bg: rgba(16,12,26,.86);
+  --osc-solid: #1b1428;
+  --osc-fg: #f2eefc;
+  --osc-muted: #a497c4;
+  --osc-accent: #b18cff;
+  --osc-accent-fg: #150f22;
+  --osc-track: rgba(255,255,255,.2);
+  --osc-buffered: rgba(255,255,255,.3);
+  --osc-border: rgba(177,140,255,.22);
+  color: var(--osc-fg);
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.mpv-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.mpv-stage.controls-off { cursor: none; }
+
+/* Dim the picture slightly while the controller is visible, like mpv's OSC backdrop. */
+.mpv-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(0deg, rgba(0,0,0,.72) 0%, rgba(0,0,0,.18) 22%, transparent 42%);
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+.mpv-stage.controls-on::after { opacity: 1; }
+
+/* Center play/pause affordance */
+.mpv-center-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 74px;
+  height: 74px;
+  border: 1px solid var(--osc-border);
+  border-radius: 50%;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.9);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+}
+.mpv-stage.controls-on .mpv-center-toggle { opacity: .92; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+.mpv-center-toggle:hover { background: var(--osc-accent); color: var(--osc-accent-fg); }
+
+/* Buffering spinner */
+.mpv-spinner { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; }
+.mpv-spinner > span {
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(255,255,255,.18);
+  border-top-color: var(--osc-accent);
+  border-radius: 50%;
+  animation: mpv-spin .9s linear infinite;
+}
+@keyframes mpv-spin { to { transform: rotate(360deg); } }
+
+/* Transient OSD (mpv's top-right status messages) */
+.mpv-osd {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 6;
+  padding: 8px 13px;
+  border: 1px solid var(--osc-border);
+  border-radius: 9px;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  backdrop-filter: blur(12px);
+  animation: mpv-osd-in .18s ease both;
+}
+@keyframes mpv-osd-in { from { opacity: 0; transform: translateY(-6px); } }
+
+/* Gesture feedback */
+.mpv-gesture-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 6;
+  padding: 9px 15px;
+  border-radius: 10px;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  font-size: 12px;
+  font-weight: 650;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(10px);
+}
+.mpv-ripple {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 34%;
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,.14), transparent 70%);
+  pointer-events: none;
+  animation: mpv-ripple .6s ease both;
+}
+.mpv-ripple.left { left: 0; }
+.mpv-ripple.right { right: 0; }
+.mpv-ripple b {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  font-size: 12px;
+  font-weight: 700;
+}
+@keyframes mpv-ripple { from { opacity: 0; } 40% { opacity: 1; } to { opacity: 0; } }
+
+/* Statistics overlay (mpv's `i`) */
+.mpv-stats {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 6;
+  width: min(310px, 46%);
+  padding: 11px 13px 13px;
+  border: 1px solid var(--osc-border);
+  border-radius: 11px;
+  background: var(--osc-bg);
+  backdrop-filter: blur(14px);
+  font-size: 10px;
+}
+.mpv-stats h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 9px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--osc-muted); }
+.mpv-stats dl { margin: 0; }
+.mpv-stats dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 2.5px 0; }
+.mpv-stats dt { color: var(--osc-muted); }
+.mpv-stats dd { margin: 0; overflow: hidden; font-variant-numeric: tabular-nums; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Keyboard help */
+.mpv-help {
+  position: absolute;
+  inset: 12px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--osc-border);
+  border-radius: 13px;
+  background: var(--osc-solid);
+  overflow: hidden;
+}
+.mpv-help > header { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; border-bottom: 1px solid var(--osc-border); }
+.mpv-help > header span { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }
+.mpv-help > header button, .mpv-menu > header button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--osc-muted); }
+.mpv-help > header button:hover, .mpv-menu > header button:hover { background: rgba(255,255,255,.08); color: var(--osc-fg); }
+.mpv-help-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; padding: 14px; overflow: auto; }
+.mpv-help-body h5 { margin: 0 0 7px; color: var(--osc-accent); font-size: 9px; letter-spacing: 1.4px; text-transform: uppercase; }
+.mpv-help-body section > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; color: var(--osc-muted); font-size: 10px; }
+.mpv-help-body kbd { padding: 2px 6px; border: 1px solid var(--osc-border); border-radius: 5px; background: rgba(255,255,255,.05); color: var(--osc-fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; white-space: nowrap; }
+
+/* Fatal playback error */
+.mpv-fatal {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 26px;
+  background: rgba(6,6,8,.94);
+  color: #ff8f8f;
+  text-align: center;
+}
+.mpv-fatal h3 { margin: 8px 0 0; font-size: 16px; color: var(--osc-fg); }
+.mpv-fatal p { max-width: 440px; margin: 0 0 10px; color: var(--osc-muted); font-size: 10.5px; line-height: 1.7; }
+
+.mpv-loading-hint {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--osc-bg);
+  color: var(--osc-muted);
+  font-size: 10px;
+  transform: translateX(-50%);
+  backdrop-filter: blur(10px);
+}
+
+/* On-screen controller */
+.mpv-osc {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  padding: 0 12px 10px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.mpv-stage.controls-on .mpv-osc { opacity: 1; transform: none; }
+
+/* Seek bar */
+.mpv-seek { position: relative; height: 22px; cursor: pointer; touch-action: none; }
+.mpv-seek-track { position: absolute; top: 9px; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 999px; background: var(--osc-track); transition: height .15s ease, top .15s ease; }
+.mpv-seek:hover .mpv-seek-track, .mpv-seek:focus-visible .mpv-seek-track { top: 7px; height: 8px; }
+.mpv-seek-track .buffered { position: absolute; inset: 0 auto 0 0; background: var(--osc-buffered); }
+.mpv-seek-track .played { position: absolute; inset: 0 auto 0 0; background: var(--osc-accent); }
+.mpv-seek-handle {
+  position: absolute;
+  top: 11px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--osc-accent);
+  box-shadow: 0 0 0 3px rgba(0,0,0,.35);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform .15s ease;
+}
+.mpv-seek:hover .mpv-seek-handle, .mpv-seek:focus-visible .mpv-seek-handle { transform: translate(-50%, -50%) scale(1); }
+.mpv-seek-preview {
+  position: absolute;
+  bottom: 24px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+  backdrop-filter: blur(8px);
+}
+.mpv-loop-a, .mpv-loop-b { position: absolute; top: 4px; width: 2px; height: 14px; background: var(--osc-accent); opacity: .85; }
+
+/* Control rows */
+.mpv-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mpv-left, .mpv-right { display: flex; align-items: center; gap: 6px; }
+.mpv-left { flex: 1; min-width: 0; }
+.mpv-right { flex-wrap: wrap; justify-content: flex-end; }
+
+.mpv-controls > .mpv-left > button,
+.mpv-volume > button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--osc-fg);
+  transition: background .15s ease, color .15s ease;
+}
+.mpv-controls > .mpv-left > button:hover, .mpv-volume > button:hover { background: rgba(255,255,255,.1); }
+.mpv-controls > .mpv-left > button:first-child { color: var(--osc-accent); }
+
+.mpv-volume { display: flex; align-items: center; gap: 6px; }
+.mpv-volume input[type='range'] { width: 76px; accent-color: var(--osc-accent); }
+.mpv-volume-value { min-width: 22px; color: var(--osc-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+.mpv-time { margin-left: 4px; color: var(--osc-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mpv-time > i { margin: 0 3px; font-style: normal; opacity: .5; }
+
+/* Chips (speed, quality, tracks, tools) */
+.mpv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--osc-border);
+  border-radius: 8px;
+  background: var(--osc-bg);
+  color: var(--osc-fg);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.mpv-chip:hover { border-color: var(--osc-accent); color: var(--osc-accent); }
+.mpv-chip.active { border-color: var(--osc-accent); background: var(--osc-accent); color: var(--osc-accent-fg); }
+
+/* Menus */
+.mpv-menu {
+  position: absolute;
+  right: 12px;
+  bottom: 62px;
+  z-index: 7;
+  display: none;
+  width: min(268px, calc(100% - 24px));
+  border: 1px solid var(--osc-border);
+  border-radius: 12px;
+  background: var(--osc-solid);
+  box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  overflow: hidden;
+}
+.mpv-menu.open { display: block; animation: mpv-menu-in .16s ease both; }
+@keyframes mpv-menu-in { from { opacity: 0; transform: translateY(6px); } }
+.mpv-menu > header { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-bottom: 1px solid var(--osc-border); font-size: 9px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--osc-muted); }
+.mpv-menu-body { max-height: 46vh; padding: 8px; overflow: auto; }
+.mpv-list { display: flex; flex-direction: column; gap: 2px; }
+.mpv-list > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: var(--osc-fg);
+  font-size: 11px;
+  text-align: left;
+}
+.mpv-list > button:hover { background: rgba(255,255,255,.08); }
+.mpv-list > button.active { color: var(--osc-accent); font-weight: 700; }
+
+.mpv-menu-extra { display: flex; flex-direction: column; gap: 9px; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--osc-border); }
+.mpv-menu-extra label { display: flex; flex-direction: column; gap: 5px; color: var(--osc-muted); font-size: 10px; }
+.mpv-menu-extra label > span { display: flex; align-items: center; gap: 5px; }
+.mpv-menu-extra input[type='range'] { accent-color: var(--osc-accent); }
+.mpv-menu-extra input[type='color'] { width: 100%; height: 26px; padding: 0; border: 1px solid var(--osc-border); border-radius: 7px; background: transparent; }
+.mpv-toggle { flex-direction: row !important; align-items: center; justify-content: space-between; }
+.mpv-toggle > button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 22px;
+  border: 1px solid var(--osc-border);
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: var(--osc-accent-fg);
+}
+.mpv-toggle > button[aria-checked='true'] { background: var(--osc-accent); }
+
+/* Small controls toggle for touch users */
+.mpv-collapse {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--osc-border);
+  border-radius: 9px;
+  background: var(--osc-bg);
+  color: var(--osc-muted);
+  opacity: 0;
+  transition: opacity .2s ease;
+  backdrop-filter: blur(10px);
+}
+.mpv-stage.controls-on .mpv-collapse { opacity: 1; }
+.mpv-collapse:hover { color: var(--osc-accent); }
+
+/* Fullscreen: give the controller more breathing room. */
+.mpv-stage:fullscreen { border-radius: 0; }
+.mpv-stage:fullscreen .mpv-osc { padding: 0 26px 20px; }
+.mpv-stage:fullscreen .mpv-chip { height: 36px; font-size: 11px; }
+.mpv-stage:fullscreen .mpv-controls > .mpv-left > button,
+.mpv-stage:fullscreen .mpv-volume > button { width: 42px; height: 42px; }
+.mpv-stage:fullscreen .mpv-time { font-size: 13px; }
+
+@media (max-width: 760px) {
+  .mpv-right .mpv-chip span { display: none; }
+  .mpv-volume input[type='range'] { width: 54px; }
+  .mpv-stats { width: min(260px, 62%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-osc, .mpv-center-toggle, .mpv-ripple, .mpv-osd, .mpv-menu.open { animation: none; transition: none; }
+  .mpv-spinner > span { animation-duration: 1.6s; }
+}

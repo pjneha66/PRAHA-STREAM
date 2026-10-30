@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Database, ExternalLink, Eye, EyeOff, Gauge,
-  KeyRound, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
+  KeyRound, Keyboard, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository } from '../types';
+import { PLAYER_THEMES } from './player/themes';
+import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository, PlayerSettings } from '../types';
 
 export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
   <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button>
@@ -25,6 +26,7 @@ const SettingsView: React.FC<{
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => onChange({ ...settings, [key]: value });
+  const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
 
@@ -80,6 +82,32 @@ const SettingsView: React.FC<{
             <div className="setting-row"><div><strong>Compact posters</strong><p>Fit more titles on screen while browsing.</p></div><Toggle checked={settings.compactCards} onChange={(value) => update('compactCards', value)} label="Compact posters" /></div>
             <div className="setting-row"><div><strong>Reduce motion</strong><p>Minimize transitions and animated effects.</p></div><Toggle checked={settings.reduceMotion} onChange={(value) => update('reduceMotion', value)} label="Reduce motion" /></div>
             <div className="setting-row"><div><strong>Preferred audio language</strong><p>Used to prioritize matching streams when available.</p></div><select className="settings-select" value={settings.preferredLanguage} onChange={(event) => update('preferredLanguage', event.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="other">Other</option></select></div>
+          </section>
+
+          <section className="settings-card player-settings-card">
+            <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Player</h2><p>The built-in player follows mpvRx: on-screen controller, mpv key bindings, gesture zones, and themes.</p></div></div>
+            <div className="setting-row"><div><strong>Controller theme</strong><p>Colors the on-screen controller, menus, and statistics overlay.</p></div></div>
+            <div className="player-theme-grid">
+              {PLAYER_THEMES.map((theme) => (
+                <button
+                  key={theme.id}
+                  className={`player-theme-swatch ${settings.player.theme === theme.id ? 'active' : ''}`}
+                  style={{ ['--swatch-bg' as string]: theme.vars['--osc-solid'], ['--swatch-accent' as string]: theme.vars['--osc-accent'], ['--swatch-fg' as string]: theme.vars['--osc-fg'] }}
+                  onClick={() => updatePlayer({ theme: theme.id })}
+                  aria-label={`${theme.name} player theme`}
+                >
+                  <span className="player-theme-bar" />
+                  <em>{theme.name}</em>
+                  {settings.player.theme === theme.id && <Check size={13} />}
+                </button>
+              ))}
+            </div>
+            <div className="setting-row"><div><strong>Seek step</strong><p>Seconds used by the back/forward buttons and the ← / → keys.</p></div><select className="settings-select" value={settings.player.seekStep} onChange={(event) => updatePlayer({ seekStep: Number(event.target.value) })}>{[5, 10, 15, 30, 60].map((value) => <option key={value} value={value}>{value} seconds</option>)}</select></div>
+            <div className="setting-row"><div><strong>Controller auto-hide</strong><p>How long the on-screen controller stays after you move the pointer.</p></div><select className="settings-select" value={settings.player.oscTimeout} onChange={(event) => updatePlayer({ oscTimeout: Number(event.target.value) })}>{[[1500, '1.5 seconds'], [2600, '2.5 seconds'], [4000, '4 seconds'], [0, 'Always visible']].map(([value, label]) => <option key={String(value)} value={value}>{label}</option>)}</select></div>
+            <div className="setting-row"><div><strong>Subtitle size</strong><p>Applied to every subtitle track while playing.</p></div><select className="settings-select" value={settings.player.subtitleSize} onChange={(event) => updatePlayer({ subtitleSize: Number(event.target.value) })}>{[75, 100, 125, 150, 200].map((value) => <option key={value} value={value}>{value}%</option>)}</select></div>
+            <div className="setting-row"><div><strong>Touch gestures</strong><p>Double-tap zones to seek, swipe for volume and brightness, long-press for 2× speed.</p></div><Toggle checked={settings.player.gestures} onChange={(value) => updatePlayer({ gestures: value })} label="Touch gestures" /></div>
+            <div className="setting-row"><div><strong>Statistics overlay</strong><p>Start playback with the mpv-style stats panel open.</p></div><Toggle checked={settings.player.stats} onChange={(value) => updatePlayer({ stats: value })} label="Statistics overlay" /></div>
+            <p className="player-shortcut-note"><Keyboard size={14} /><span>Shortcuts: <kbd>Space</kbd> play/pause · <kbd>←</kbd><kbd>→</kbd> seek · <kbd>↑</kbd><kbd>↓</kbd> volume · <kbd>F</kbd> fullscreen · <kbd>J</kbd> subtitles · <kbd>#</kbd> audio · <kbd>I</kbd> stats · <kbd>?</kbd> full list.</span></p>
           </section>
           <section className="settings-card">
             <div className="settings-card-heading"><span><Gauge size={19} /></span><div><h2>Appearance</h2><p>A cinematic canvas with your own accent.</p></div></div>

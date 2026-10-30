@@ -1,6 +1,15 @@
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
 
+/** Home screen rows. Every entry is loaded from TMDB at runtime — nothing is bundled. */
+export interface HomeCatalog {
+  hero: MediaItem[];
+  trending: MediaItem[];
+  movies: MediaItem[];
+  series: MediaItem[];
+  topRated: MediaItem[];
+}
+
 export interface MediaItem {
   id: string;
   tmdbId?: number;
@@ -16,7 +25,7 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'praha' | 'tmdb' | 'stremio' | 'nuvio' | 'cloudstream';
+  source: 'tmdb' | 'stremio' | 'nuvio' | 'cloudstream';
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
@@ -189,6 +198,33 @@ export interface CloudStreamRepository {
   updatedAt: number;
 }
 
+export type PlayerThemeId =
+  | 'mpvrx' | 'amoled' | 'catppuccin' | 'nord' | 'tokyo' | 'dracula' | 'gruvbox' | 'rosepine';
+
+/** Settings for the built-in mpvRx-style player. Persisted with the rest of the app. */
+export interface PlayerSettings {
+  /** Color scheme for the on-screen controller, inspired by mpvRx themes. */
+  theme: PlayerThemeId;
+  /** Seconds used by ←/→ and the back/forward buttons. */
+  seekStep: number;
+  /** Milliseconds before the controller hides itself. 0 keeps it visible. */
+  oscTimeout: number;
+  /** Subtitle font size as a percentage of the browser default. */
+  subtitleSize: number;
+  /** Subtitle text color. */
+  subtitleColor: string;
+  /** Show the mpv-style statistics overlay on startup. */
+  stats: boolean;
+  /** Enable touch gestures (double-tap seek, swipe volume/brightness, long-press speed). */
+  gestures: boolean;
+  /** Volume in percent, restored for the next session. */
+  volume: number;
+  /** Playback speed multiplier. */
+  speed: number;
+  /** Brightness in percent, applied as a CSS filter. */
+  brightness: number;
+}
+
 export interface AppSettings {
   autoplay: boolean;
   compactCards: boolean;
@@ -196,6 +232,7 @@ export interface AppSettings {
   preferredLanguage: string;
   accent: 'lime' | 'violet' | 'blue';
   tmdbApiKey: string;
+  player: PlayerSettings;
 }
 
 export interface ToastMessage {
