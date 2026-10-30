@@ -144,6 +144,7 @@ export interface StreamResult {
   peers?: number;
   infoHash?: string;
   headers?: Record<string, string>;
+  format?: string;
   subtitles?: StreamSubtitle[];
   externalUrl?: string;
   ytId?: string;

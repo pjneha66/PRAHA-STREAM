@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Check, ChevronLeft, CircleAlert, LoaderCircle, Package, Search, Sparkles,
+  Check, ChevronLeft, CircleAlert, ExternalLink, LoaderCircle, Package, RotateCcw, Search, Smartphone, Sparkles,
 } from 'lucide-react';
 import {
-  getCloudStreamEpisodes, getCloudStreamStreams, searchCloudStreamProvider,
+  getCloudStreamEpisodes, getCloudStreamHome, getCloudStreamStreams, searchCloudStreamProvider,
   type CloudStreamEpisode,
 } from '../services/cloudstreamService';
 import type {
@@ -21,27 +21,26 @@ interface CloudStreamPageProps {
   compact: boolean;
   preferredLanguage: string;
   tmdbApiKey: string;
+  onOpenSettings: () => void;
   onToggleWatchlist: (item: MediaItem) => void;
   onPlay: (media: MediaItem, stream: StreamResult) => void;
   onOpenExtensions: () => void;
 }
 
 /**
- * Popular titles used to seed each extension's Home carousel. CloudStream's
- * JavaScript contract is search-only (search/getEpisodes/getStreams), so the
- * Home screen can't browse a catalog — these trending queries are the only
- * way to surface "content from source" without a user query.
+ * CloudStream's JavaScript contract originally only had search/getEpisodes/
+ * getStreams. PRAHA now also calls an optional getHome() so the Home tab can
+ * show each extension's own live feed instead of seeding it with fixed titles.
+ * Extensions without getHome() fall back to broad search terms.
  */
-const TRENDING_QUERIES = [
-  'Avatar', 'Dune', 'Spider-Man', 'The Batman', 'Interstellar',
-  'Stranger Things', 'Attack on Titan', 'Dandadan', 'Solo Leveling', 'Demon Slayer',
-];
+const FALLBACK_BROWSE_TERMS = ['Popular', 'Latest', 'Anime', 'Movies', 'Series'];
 
 interface BrowseRow {
   provider: CloudStreamProvider;
   repository: CloudStreamRepository;
   items: MediaItem[];
   loading: boolean;
+  error?: string;
 }
 
 /**
@@ -55,7 +54,7 @@ interface BrowseRow {
  */
 const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   repositories, history, watchlist, compact, preferredLanguage, tmdbApiKey,
-  onToggleWatchlist, onPlay, onOpenExtensions,
+  onOpenSettings, onToggleWatchlist, onPlay, onOpenExtensions,
 }) => {
   const providers = useMemo(() => repositories
     .filter((repo) => repo.enabled)
@@ -86,6 +85,10 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   );
   const provider = active?.provider;
   const nativeOnly = Boolean(provider?.nativeOnly);
+  const cloudStreamRepoLink = active
+    ? `https://cs.repo?${active.repository.manifestUrl.replace(/^https?:\/\//, '')}`
+    : 'https://github.com/recloudstream/cloudstream';
+  const cloudStreamSearchLink = `cloudstreamsearch://${encodeURIComponent(query.trim() || provider?.name || 'CloudStream')}`;
 
   useEffect(() => {
     if (!activeProviderId && providers.length) setActiveProviderId(providers[0].provider.id);
@@ -126,28 +129,44 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
       }
     }, 400);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query, view, provider, nativeOnly]);
+  }, [query, view, provider, nativeOnly, tmdbApiKey]);
 
-  // Home carousels: search each JavaScript extension with trending titles so
-  // the Home screen shows content without the user having to search first.
+  // Home carousels: prefer each extension's own getHome() feed. Older JS
+  // extensions without getHome() are searched with broad terms. Failures are
+  // kept on the row so a dead endpoint no longer looks like "0 titles".
   const loadBrowse = useCallback(async () => {
     const jsProviders = providers.filter((entry) => entry.provider.enabled && !entry.provider.nativeOnly && entry.provider.code);
     setBrowseRows(jsProviders.map((entry) => ({ provider: entry.provider, repository: entry.repository, items: [], loading: true })));
     await Promise.all(jsProviders.map(async (entry) => {
       const seen = new Set<string>();
       const collected: MediaItem[] = [];
-      for (const term of TRENDING_QUERIES) {
-        try {
-          const items = await searchCloudStreamProvider(entry.provider, term);
-          for (const item of items) {
-            if (!seen.has(item.id)) { seen.add(item.id); collected.push(item); }
-          }
-        } catch { /* extension failed for this term — skip */ }
-        if (collected.length >= 30) break;
+      const failures: string[] = [];
+      const collect = (items: MediaItem[]) => {
+        for (const item of items) {
+          if (!seen.has(item.id)) { seen.add(item.id); collected.push(item); }
+        }
+      };
+      try {
+        collect(await getCloudStreamHome(entry.provider, tmdbApiKey));
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : 'Home feed failed.');
       }
-      setBrowseRows((current) => current.map((row) => row.provider.id === entry.provider.id ? { ...row, items: collected, loading: false } : row));
+      if (!collected.length) {
+        for (const term of FALLBACK_BROWSE_TERMS) {
+          try {
+            collect(await searchCloudStreamProvider(entry.provider, term, tmdbApiKey));
+          } catch (error) {
+            failures.push(error instanceof Error ? error.message : 'Search failed.');
+          }
+          if (collected.length >= 30) break;
+        }
+      }
+      const firstFailure = failures.find((message) => !message.includes('does not export getHome'));
+      setBrowseRows((current) => current.map((row) => row.provider.id === entry.provider.id
+        ? { ...row, items: collected, loading: false, error: collected.length ? undefined : firstFailure }
+        : row));
     }));
-  }, [providers]);
+  }, [providers, tmdbApiKey]);
 
   useEffect(() => { loadBrowse(); }, [loadBrowse]);
 
@@ -242,6 +261,10 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
             ))}
           </div>
 
+          {!tmdbApiKey && provider?.code?.includes('YOUR_TMDB_API_KEY') && (
+            <p className="explore-note"><CircleAlert size={14} /> {provider.name} needs your TMDB API key before it can load titles. <button className="inline-link" onClick={onOpenSettings}>Add your TMDB key</button></p>
+          )}
+
           {selected ? (
             <div className="cs-detail page-enter">
               <button className="text-button" onClick={() => setSelected(null)}><ChevronLeft size={15} /> Back to {view === 'search' ? 'results' : 'CloudStream'}</button>
@@ -295,7 +318,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
 
               {browseRows.length > 0 && (
                 <section className="cs-section">
-                  <div className="section-heading"><div><h2>Browse extensions</h2><p>Trending titles from your CloudStream extensions</p></div></div>
+                  <div className="section-heading"><div><h2>Browse extensions</h2><p>Live home feeds from your browser-compatible CloudStream extensions</p></div><button className="button button-secondary" onClick={loadBrowse}><RotateCcw size={15} /> Retry</button></div>
                   {browseRows.map((row) => (
                     <div className="cs-carousel" key={row.provider.id}>
                       <div className="cs-carousel-head">
@@ -307,14 +330,16 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
                           <MediaCard key={item.id} item={item} onSelect={openMedia}
                             onToggleWatchlist={onToggleWatchlist} inWatchlist={watchlist.some((entry) => entry.id === item.id)} compact={compact} />
                         ))}
-                        {!row.loading && !row.items.length && <span className="text-button">No trending results from this extension.</span>}
+                        {!row.loading && !row.items.length && (row.error ? (
+                          <span className="explore-note"><CircleAlert size={14} /> {row.provider.name}: {row.error}</span>
+                        ) : <span className="text-button">This extension returned no titles for its home feed.</span>)}
                       </div>
                     </div>
                   ))}
                 </section>
               )}
               {providers.some((entry) => entry.provider.nativeOnly) && (
-                <p className="explore-note"><CircleAlert size={14} /> {providers.filter((entry) => entry.provider.nativeOnly).length} of your CloudStream extensions are native .cs3 packages. They run inside the CloudStream app and can't load content in a browser — only the JavaScript extensions above can be browsed and played here.</p>
+                <p className="explore-note"><CircleAlert size={14} /> {providers.filter((entry) => entry.provider.nativeOnly).length} of your CloudStream extensions are native .cs3 packages. CloudStream is an Android app and its Kotlin extensions can't execute in a browser — only the JavaScript extensions above can be browsed and played here. <a className="inline-link" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get the official CloudStream app</a></p>
               )}
 
               <section className="cs-section">
@@ -342,7 +367,13 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
                 <div className="empty-state explore-empty">
                   <span><Package size={26} /></span>
                   <h2>Native CloudStream extension</h2>
-                  <p>{provider?.name} is a compiled .cs3 package. It runs inside the CloudStream app and cannot resolve streams in a browser. Pick a CloudStream JavaScript extension to search and play here.</p>
+                  <p>{provider?.name} is a compiled Kotlin .cs3 package for the Android CloudStream app. A browser cannot execute it, so PRAHA can hand the search and repository to the official app instead.</p>
+                  <div className="tmdb-setup-actions">
+                    <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={16} /> Search in CloudStream app</a>
+                    <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={16} /> Add repository in CloudStream</a>
+                    <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
+                  </div>
+                  <button className="text-button" onClick={onOpenExtensions}>Manage extensions</button>
                 </div>
               ) : (
                 <>

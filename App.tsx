@@ -12,7 +12,7 @@ import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
 import { usePersistentState } from './hooks/usePersistentState';
 import { CINEMETA_ADDON, DEFAULT_SETTINGS, EMPTY_HOME_CATALOG } from './data/defaults';
-import { buildBuiltinCloudStreamJsRepository, BUILTIN_MANIFEST_URL } from './data/cloudstreamJsPlugins';
+import { buildBuiltinCloudStreamJsRepository, refreshBuiltinCloudStreamJsRepository, BUILTIN_MANIFEST_URL } from './data/cloudstreamJsPlugins';
 import { fetchStremioCatalog, fetchStremioMeta, searchStremioAddons } from './services/stremioService';
 import { tmdbService } from './services/tmdbService';
 import type {
@@ -167,9 +167,13 @@ const App: React.FC = () => {
   // the CloudStream tab shows real content even when a repo only ships .cs3.
   const builtinJsRepo = useMemo(() => buildBuiltinCloudStreamJsRepository(), []);
   useEffect(() => {
-    setCloudstreamRepositories((current) =>
-      current.some((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL) ? current : [builtinJsRepo, ...current],
-    );
+    setCloudstreamRepositories((current) => {
+      const existing = current.find((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL);
+      if (!existing) return [builtinJsRepo, ...current];
+      const refreshed = refreshBuiltinCloudStreamJsRepository(existing);
+      const unchanged = JSON.stringify({ ...refreshed, updatedAt: existing.updatedAt }) === JSON.stringify(existing);
+      return unchanged ? current : current.map((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL ? refreshed : repo);
+    });
   }, [builtinJsRepo, setCloudstreamRepositories]);
 
   const navigate = (next: AppView) => {
@@ -244,6 +248,7 @@ const App: React.FC = () => {
     page = <CloudStreamPage repositories={cloudstreamRepositories} history={history} watchlist={watchlist}
       compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
       tmdbApiKey={settings.tmdbApiKey}
+      onOpenSettings={() => navigate('settings')}
       onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
       onOpenExtensions={() => navigate('extensions')} />;
   } else if (view === 'extensions') {

@@ -19,6 +19,9 @@ worker.onmessage = async (event) => {
     // CloudStream JS plugins may ship a placeholder TMDB key — inject the
     // user's own key when one is provided so TMDB-based plugins work.
     const source = tmdbApiKey ? code.replace(/YOUR_TMDB_API_KEY/g, tmdbApiKey) : code;
+    if (source.includes('YOUR_TMDB_API_KEY')) {
+      throw new Error('This extension needs your TMDB API key. Add it in Settings → TMDB API, then try again.');
+    }
     const module = { exports: {} as Record<string, unknown> };
     Object.assign(worker as any, {
       window: worker,
@@ -33,7 +36,7 @@ worker.onmessage = async (event) => {
     };
     const evaluate = new Function(
       'module', 'exports', 'require',
-      `${source}\n;return { exported: module.exports, localSearch: typeof search === 'function' ? search : undefined, localGetEpisodes: typeof getEpisodes === 'function' ? getEpisodes : undefined, localGetStreams: typeof getStreams === 'function' ? getStreams : undefined };`,
+      `${source}\n;return { exported: module.exports, localSearch: typeof search === 'function' ? search : undefined, localGetHome: typeof getHome === 'function' ? getHome : undefined, localGetEpisodes: typeof getEpisodes === 'function' ? getEpisodes : undefined, localGetStreams: typeof getStreams === 'function' ? getStreams : undefined };`,
     );
     const context = evaluate(module, module.exports, require);
     const exported = context.exported as Record<string, unknown>;
@@ -49,6 +52,13 @@ worker.onmessage = async (event) => {
       const search = exported.search || context.localSearch || (worker as any).search;
       if (typeof search !== 'function') throw new Error('This extension does not export search().');
       worker.postMessage({ ok: true, result: decode(await search(args.query)) });
+      return;
+    }
+
+    if (mode === 'home') {
+      const getHome = exported.getHome || context.localGetHome || (worker as any).getHome;
+      if (typeof getHome !== 'function') throw new Error('This extension does not export getHome().');
+      worker.postMessage({ ok: true, result: decode(await getHome()) });
       return;
     }
 

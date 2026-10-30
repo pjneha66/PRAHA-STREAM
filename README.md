@@ -44,7 +44,7 @@ Cinemeta is included as the default metadata/catalog addon. It does **not** prov
 - Resolve each entry’s `url`, `iconUrl`, `language`, `tvTypes`, `authors`, and `fileSize`.
 - Enable, disable, refresh, and remove repositories, and toggle each extension individually.
 
-CloudStream extensions are Kotlin (`.cs3`) packages that run inside the native CloudStream app. PRAHA installs and lists them alongside Stremio and Nuvio, but they cannot resolve streams in a browser. Stream playback continues to come from Stremio addons and Nuvio plugins.
+CloudStream itself is an Android app, and most CloudStream extensions are Kotlin (`.cs3`) packages. Those native packages cannot execute in a browser; selecting one in PRAHA now offers the official CloudStream deep links to continue the search or add the same repository in the Android app. Browser-compatible CloudStream JavaScript extensions can be browsed and played in PRAHA, including optional `getHome()` live feeds. Their upstream failures are shown on the relevant row instead of being reported as an empty catalog.
 
 ### Browse by source
 
