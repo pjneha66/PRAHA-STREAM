@@ -1,7 +1,7 @@
 {
-  "name": "parha-ultimate---streaming-platform",
+  "name": "praha-stream",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,13 +9,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
-    "react": "^19.2.0"
+    "@fontsource-variable/manrope": "^5.3.0",
+    "cheerio": "^1.2.0",
+    "crypto-js": "^4.2.0",
+    "hls.js": "^1.7.4",
+    "lucide-react": "^1.65.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
-  }
+  },
+  "description": "A local-first streaming interface for Stremio addons and Nuvio plugins."
 }

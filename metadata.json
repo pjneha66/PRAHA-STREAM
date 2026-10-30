@@ -1,6 +1,10 @@
 {
-  "name": "Parha Ultimate - Streaming Platform",
-  "description": "An ultimate streaming experience platform built with React and Tailwind CSS, featuring a modern UI, extensive search and filter capabilities, and content sourced from various third-party services. Includes features like favorites, watchlist, history, and an experimental ad blocker.",
+  "name": "PRAHA STREAM",
+  "description": "A modern, source-agnostic streaming interface with Stremio addon and Nuvio plugin repository support, unified discovery, local libraries, and a responsive web player.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "Stremio manifests, catalogs, search, metadata IDs, and streams",
+    "Nuvio repository manifests and worker-based scraper runtime",
+    "Persistent watchlist, history, sources, and preferences"
+  ]
 }
