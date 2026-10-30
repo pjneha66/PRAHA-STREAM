@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'discover' | 'library' | 'extensions' | 'settings';
+export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
 
 export interface MediaItem {
   id: string;
@@ -16,8 +16,10 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'praha' | 'tmdb' | 'stremio';
+  source: 'praha' | 'tmdb' | 'stremio' | 'nuvio' | 'cloudstream';
   addonUrl?: string;
+  providerId?: string;
+  providerMediaId?: string;
 }
 
 export interface WatchProgress {
@@ -124,7 +126,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio';
+  sourceType: 'stremio' | 'nuvio' | 'cloudstream';
   quality?: string;
   size?: string;
   language?: string;
@@ -142,6 +144,49 @@ export interface StreamResult {
 export interface SourceError {
   sourceName: string;
   message: string;
+}
+
+export type SourceKind = 'stremio' | 'nuvio' | 'cloudstream';
+
+export interface CloudStreamPluginEntry {
+  name: string;
+  version?: number | string;
+  url?: string;
+  iconUrl?: string;
+  description?: string;
+  apiVersion?: number;
+  repositoryUrl?: string;
+  fileSize?: number;
+  status?: number;
+  language?: string;
+  authors?: string[];
+  tvTypes?: string[];
+  enabled?: boolean;
+}
+
+export interface CloudStreamProvider extends CloudStreamPluginEntry {
+  id: string;
+  repositoryId: string;
+  enabled: boolean;
+  manifestEnabled: boolean;
+  supportedTypes: string[];
+  installedAt: number;
+  /** Fetched JavaScript source for extensions that can run in the browser. */
+  code?: string;
+  /** True when the extension is a compiled .cs3 package that needs the native app. */
+  nativeOnly?: boolean;
+}
+
+export interface CloudStreamRepository {
+  manifestUrl: string;
+  name: string;
+  description?: string;
+  manifestVersion?: number;
+  pluginListUrls: string[];
+  enabled: boolean;
+  providers: CloudStreamProvider[];
+  installedAt: number;
+  updatedAt: number;
 }
 
 export interface AppSettings {

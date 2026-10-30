@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Database, ExternalLink, Eye, EyeOff, Gauge,
-  KeyRound, LoaderCircle, MonitorPlay, RotateCcw, Settings, ShieldCheck, Trash2,
+  KeyRound, LoaderCircle, MonitorPlay, Package, RotateCcw, Settings, ShieldCheck, Trash2,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import type { AppSettings, InstalledAddon, NuvioRepository } from '../types';
+import type { AppSettings, CloudStreamRepository, InstalledAddon, NuvioRepository } from '../types';
 
 export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
   <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button>
@@ -18,7 +18,8 @@ const SettingsView: React.FC<{
   onReset: () => void;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-}> = ({ settings, onChange, onReset, addons, repositories }) => {
+  cloudstreamRepositories: CloudStreamRepository[];
+}> = ({ settings, onChange, onReset, addons, repositories, cloudstreamRepositories }) => {
   const [apiDraft, setApiDraft] = useState(settings.tmdbApiKey || '');
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
@@ -86,7 +87,7 @@ const SettingsView: React.FC<{
           </section>
         </div>
         <aside className="settings-side">
-          <section className="settings-card source-summary-card"><span className="settings-side-icon"><Database size={21} /></span><h2>Your setup</h2><div className="setup-stat"><span>Stremio addons</span><strong>{addons.length}</strong></div><div className="setup-stat"><span>Nuvio repositories</span><strong>{repositories.length}</strong></div><div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div><div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div><p><Blocks size={14} /> Sources sync with this local profile.</p></section>
+          <section className="settings-card source-summary-card"><span className="settings-side-icon"><Database size={21} /></span><h2>Your setup</h2><div className="setup-stat"><span>Stremio addons</span><strong>{addons.length}</strong></div><div className="setup-stat"><span>Nuvio repositories</span><strong>{repositories.length}</strong></div><div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div><div className="setup-stat"><span>CloudStream extensions</span><strong>{cloudstreamRepositories.reduce((sum, repo) => sum + repo.providers.length, 0)}</strong></div><div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div><p><Blocks size={14} /> Sources sync with this local profile.</p></section>
           <section className="settings-card privacy-card"><span className="settings-side-icon"><ShieldCheck size={21} /></span><h2>Private by design</h2><p>Your library, history, API key, and extension settings stay in this browser. PRAHA does not operate a tracking account.</p></section>
           <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset preferences</button>
           <span className="version-label">PRAHA STREAM · 2.0.0</span>

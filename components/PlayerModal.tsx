@@ -14,6 +14,7 @@ const PlayerModal: React.FC<{
   const [copied, setCopied] = useState(false);
   const isMagnet = stream.url.startsWith('magnet:') || (!stream.url && Boolean(stream.infoHash));
   const isYoutube = Boolean(stream.ytId);
+  const isEmbed = stream.format === 'embed' || /vidsrc\.to\/embed|\/embed\//i.test(stream.url || '');
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -48,9 +49,11 @@ const PlayerModal: React.FC<{
   return (
     <div className="player-backdrop">
       <section className="player-modal" role="dialog" aria-modal="true" aria-label={`Playing ${media.title}`}>
-        <header className="player-header"><div><span>NOW PLAYING</span><h2>{media.title}</h2></div><div className="player-source-label">{stream.sourceType === 'nuvio' ? 'NUVIO' : 'STREMIO'} · {stream.sourceName}</div><button className="modal-close" onClick={onClose} aria-label="Close player"><X size={21} /></button></header>
+        <header className="player-header"><div><span>NOW PLAYING</span><h2>{media.title}</h2></div><div className="player-source-label">{stream.sourceType === 'nuvio' ? 'NUVIO' : stream.sourceType === 'cloudstream' ? 'CLOUDSTREAM' : 'STREMIO'} · {stream.sourceName}</div><button className="modal-close" onClick={onClose} aria-label="Close player"><X size={21} /></button></header>
         <div className="player-stage">
-          {isYoutube ? <iframe src={`https://www.youtube.com/embed/${stream.ytId}?autoplay=${autoplay ? 1 : 0}`} title={media.title} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : isMagnet ? (
+          {isYoutube ? <iframe src={`https://www.youtube.com/embed/${stream.ytId}?autoplay=${autoplay ? 1 : 0}`} title={media.title} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : isEmbed ? (
+            <iframe src={stream.url} title={media.title} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+          ) : isMagnet ? (
             <div className="player-message"><span><Magnet size={30} /></span><h2>This stream needs an external player</h2><p>Torrent and magnet playback is not built into the web player. Copy the link or open it with a compatible app on your device.</p><div><button className="button button-secondary" onClick={copyLink}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? 'Copied' : 'Copy magnet link'}</button><a className="button button-primary" href={stream.url}>Open external player <ExternalLink size={16} /></a></div></div>
           ) : (
             <>
