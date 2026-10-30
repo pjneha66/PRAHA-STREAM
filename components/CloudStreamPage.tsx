@@ -170,22 +170,6 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
 
   useEffect(() => { loadBrowse(); }, [loadBrowse]);
 
-  const loadEpisodes = useCallback(async (item: MediaItem) => {
-    if (!provider) return;
-    setEpisodesLoading(true);
-    setEpisodes([]);
-    setActiveEpisode(null);
-    try {
-      const list = await getCloudStreamEpisodes(provider, item.providerMediaId || item.id, tmdbApiKey);
-      setEpisodes(list);
-      if (list.length) setActiveEpisode(list[0].id);
-    } catch (error) {
-      setSearchError(error instanceof Error ? error.message : 'Episode list could not be loaded.');
-    } finally {
-      setEpisodesLoading(false);
-    }
-  }, [provider]);
-
   const loadStreams = useCallback(async (item: MediaItem, mediaId: string, mediaType: 'movie' | 'series') => {
     if (!provider) return;
     setLoading(true);
@@ -200,7 +184,29 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [provider]);
+  }, [provider, tmdbApiKey]);
+
+  const loadEpisodes = useCallback(async (item: MediaItem) => {
+    if (!provider) return;
+    setEpisodesLoading(true);
+    setEpisodes([]);
+    setActiveEpisode(null);
+    try {
+      const list = await getCloudStreamEpisodes(provider, item.providerMediaId || item.id, tmdbApiKey);
+      setEpisodes(list);
+      if (list.length) {
+        setActiveEpisode(list[0].id);
+        // The first episode is shown as selected, so resolve its streams too.
+        // Previously nothing fetched streams until a chip was clicked, which
+        // left the source panel reporting "0 streams found".
+        void loadStreams(item, list[0].id, 'series');
+      }
+    } catch (error) {
+      setSearchError(error instanceof Error ? error.message : 'Episode list could not be loaded.');
+    } finally {
+      setEpisodesLoading(false);
+    }
+  }, [provider, tmdbApiKey, loadStreams]);
 
   const openMedia = (item: MediaItem) => {
     setSelected(item);
@@ -219,6 +225,15 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setActiveEpisode(episode.id);
     loadStreams(selected, episode.id, 'series');
   };
+
+  const refreshStreams = useCallback(() => {
+    if (!selected) return;
+    if (selected.type === 'series') {
+      if (activeEpisode) loadStreams(selected, activeEpisode, 'series');
+    } else {
+      loadStreams(selected, selected.providerMediaId || selected.id, 'movie');
+    }
+  }, [selected, activeEpisode, loadStreams]);
 
   const cloudstreamHistory = history.filter((entry) => entry.media.source === 'cloudstream');
   const cloudstreamLibrary = watchlist.filter((item) => item.source === 'cloudstream');
@@ -275,6 +290,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
                   loading={loading}
                   errors={errors}
                   providerCount={1}
+                  onRefresh={refreshStreams}
                   preferredLanguage={preferredLanguage}
                   onPlay={(stream) => onPlay(selected, stream)}
                   onOpenExtensions={onOpenExtensions}
