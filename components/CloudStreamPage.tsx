@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Check, ChevronLeft, CircleAlert, ExternalLink, LoaderCircle, Package, RotateCcw, Search, Smartphone, Sparkles,
+  Bookmark, Check, ChevronDown, ChevronLeft, CircleAlert, ExternalLink, Film,
+  Info, LoaderCircle, Package, Play, Plus, RefreshCw, Search, Smartphone, Star,
 } from 'lucide-react';
 import {
   getCloudStreamEpisodes, getCloudStreamHome, getCloudStreamStreams, searchCloudStreamProvider,
@@ -10,7 +11,6 @@ import type {
   CloudStreamProvider, CloudStreamRepository, MediaItem, SourceError, StreamResult, WatchProgress,
 } from '../types';
 import { MediaCard } from './MediaCard';
-import SourcePanel from './SourcePanel';
 
 type CSView = 'home' | 'search';
 
@@ -28,12 +28,15 @@ interface CloudStreamPageProps {
 }
 
 /**
- * CloudStream's JavaScript contract originally only had search/getEpisodes/
- * getStreams. PRAHA now also calls an optional getHome() so the Home tab can
- * show each extension's own live feed instead of seeding it with fixed titles.
- * Extensions without getHome() fall back to broad search terms.
+ * Extensions without getHome() are searched with broad terms for their home
+ * feed. Failures are kept on the row so a dead endpoint no longer looks like
+ * an empty catalog.
  */
 const FALLBACK_BROWSE_TERMS = ['Popular', 'Latest', 'Anime', 'Movies', 'Series'];
+
+/** Bookmark lists shown on the app's home screen. PRAHA stores one list, so
+ * everything saved lands under "Watching"; the other lists exist for parity. */
+const BOOKMARK_LISTS = ['Watching', 'Plan to Watch', 'On Hold', 'Dropped', 'Completed'] as const;
 
 interface BrowseRow {
   provider: CloudStreamProvider;
@@ -44,13 +47,20 @@ interface BrowseRow {
 }
 
 /**
- * A faithful, in-browser replica of the CloudStream app experience.
+ * A same-to-same web replica of the CloudStream Android app
+ * (github.com/recloudstream/cloudstream), driven by the extensions installed
+ * in PRAHA:
  *
- * Mirrors the CloudStream Win app: a "CloudStream" title, a horizontal row of
- * plugin pills (one active extension), a Home screen (Continue Watching +
- * My Library) and a Search screen (plugin + query + results). Opening a title
- * drops into an inline source panel that resolves and PLAYs the extension's
- * own streams — just like the CloudStream app itself.
+ * - Home: full-bleed preview hero with Play / My List / Info, a provider
+ *   selector in the top bar, Continue Watching, bookmark lists with chips,
+ *   then the selected provider's home-page rows.
+ * - Search: a search field with type chips and a poster grid, like the app's
+ *   search screen.
+ * - Result: backdrop header with poster, meta and tags, a season selector and
+ *   episode list for series, and the resolved links underneath.
+ *
+ * Native .cs3 extensions are Kotlin Android packages and cannot execute in a
+ * browser; selecting one offers the official app's deep links instead.
  */
 const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   repositories, history, watchlist, compact, preferredLanguage, tmdbApiKey,
@@ -64,8 +74,10 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   [repositories]);
 
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
+  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [view, setView] = useState<CSView>('home');
   const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'movie' | 'series'>('all');
   const [results, setResults] = useState<MediaItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -77,7 +89,11 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   const [episodes, setEpisodes] = useState<CloudStreamEpisode[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [activeEpisode, setActiveEpisode] = useState<string | null>(null);
+  const [season, setSeason] = useState(1);
   const [browseRows, setBrowseRows] = useState<BrowseRow[]>([]);
+  const [bookmarkList, setBookmarkList] = useState<(typeof BOOKMARK_LISTS)[number]>('Watching');
+  const [heroIndex, setHeroIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const active = useMemo(
     () => providers.find((item) => item.provider.id === activeProviderId) || null,
@@ -98,13 +114,17 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   }, [providers, activeProviderId]);
 
   useEffect(() => {
-    setQuery('');
     setResults([]);
     setSearchError('');
     setSelected(null);
-    setView('home');
+    setHeroIndex(0);
   }, [activeProviderId]);
 
+  useEffect(() => {
+    if (view === 'search') searchInputRef.current?.focus();
+  }, [view]);
+
+  /* ------------------------------- search ------------------------------- */
   useEffect(() => {
     const term = query.trim();
     if (view !== 'search' || !term || !provider || nativeOnly || !provider.code) {
@@ -117,7 +137,7 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setSearchError('');
     const timer = window.setTimeout(async () => {
       try {
-          const items = await searchCloudStreamProvider(provider, term, tmdbApiKey);
+        const items = await searchCloudStreamProvider(provider, term, tmdbApiKey);
         if (!cancelled) setResults(items);
       } catch (error) {
         if (!cancelled) {
@@ -131,9 +151,12 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [query, view, provider, nativeOnly, tmdbApiKey]);
 
-  // Home carousels: prefer each extension's own getHome() feed. Older JS
-  // extensions without getHome() are searched with broad terms. Failures are
-  // kept on the row so a dead endpoint no longer looks like "0 titles".
+  const filteredResults = useMemo(
+    () => (typeFilter === 'all' ? results : results.filter((item) => item.type === typeFilter)),
+    [results, typeFilter],
+  );
+
+  /* ------------------------------ home feeds ----------------------------- */
   const loadBrowse = useCallback(async () => {
     const jsProviders = providers.filter((entry) => entry.provider.enabled && !entry.provider.nativeOnly && entry.provider.code);
     setBrowseRows(jsProviders.map((entry) => ({ provider: entry.provider, repository: entry.repository, items: [], loading: true })));
@@ -170,6 +193,20 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
 
   useEffect(() => { loadBrowse(); }, [loadBrowse]);
 
+  const activeRow = useMemo(
+    () => browseRows.find((row) => row.provider.id === activeProviderId) || null,
+    [browseRows, activeProviderId],
+  );
+  const heroItems = useMemo(() => (activeRow?.items || []).slice(0, 5), [activeRow]);
+  const hero = heroItems[heroIndex % Math.max(1, heroItems.length)];
+
+  useEffect(() => {
+    if (heroItems.length < 2) return;
+    const timer = window.setInterval(() => setHeroIndex((index) => (index + 1) % heroItems.length), 7000);
+    return () => window.clearInterval(timer);
+  }, [heroItems.length]);
+
+  /* ------------------------------ result page ---------------------------- */
   const loadStreams = useCallback(async (item: MediaItem, mediaId: string, mediaType: 'movie' | 'series') => {
     if (!provider) return;
     setLoading(true);
@@ -195,10 +232,9 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
       const list = await getCloudStreamEpisodes(provider, item.providerMediaId || item.id, tmdbApiKey);
       setEpisodes(list);
       if (list.length) {
+        setSeason(list[0].season || 1);
         setActiveEpisode(list[0].id);
         // The first episode is shown as selected, so resolve its streams too.
-        // Previously nothing fetched streams until a chip was clicked, which
-        // left the source panel reporting "0 streams found".
         void loadStreams(item, list[0].id, 'series');
       }
     } catch (error) {
@@ -213,217 +249,368 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
     setStreams([]);
     setErrors([]);
     setActiveEpisode(null);
-    if (item.type === 'series') {
-      loadEpisodes(item);
-    } else {
-      loadStreams(item, item.providerMediaId || item.id, 'movie');
-    }
+    setSeason(1);
+    if (item.type === 'series') void loadEpisodes(item);
+    else void loadStreams(item, item.providerMediaId || item.id, 'movie');
   };
 
   const playEpisode = (episode: CloudStreamEpisode) => {
     if (!selected) return;
     setActiveEpisode(episode.id);
-    loadStreams(selected, episode.id, 'series');
+    void loadStreams(selected, episode.id, 'series');
   };
 
   const refreshStreams = useCallback(() => {
     if (!selected) return;
     if (selected.type === 'series') {
-      if (activeEpisode) loadStreams(selected, activeEpisode, 'series');
+      if (activeEpisode) void loadStreams(selected, activeEpisode, 'series');
     } else {
-      loadStreams(selected, selected.providerMediaId || selected.id, 'movie');
+      void loadStreams(selected, selected.providerMediaId || selected.id, 'movie');
     }
   }, [selected, activeEpisode, loadStreams]);
 
+  const seasons = useMemo(
+    () => [...new Set<number>(episodes.map((episode) => episode.season || 1))].sort((a, b) => a - b),
+    [episodes],
+  );
+  const seasonEpisodes = useMemo(
+    () => episodes.filter((episode) => (episode.season || 1) === season),
+    [episodes, season],
+  );
+
   const cloudstreamHistory = history.filter((entry) => entry.media.source === 'cloudstream');
   const cloudstreamLibrary = watchlist.filter((item) => item.source === 'cloudstream');
+  const inList = (item: MediaItem) => watchlist.some((entry) => entry.id === item.id);
 
-  return (
-    <div className="standard-page cloudstream-page page-enter">
-      <header className="cs-header">
-        <div>
-          <span className="page-kicker"><Package size={14} /> CLOUDSTREAM APP</span>
-          <h1>CloudStream</h1>
-          <p>Your CloudStream extensions, loaded and played like the CloudStream app — in their own tab.</p>
-        </div>
-        {providers.length > 0 && (
-          <div className="cs-segment" role="tablist" aria-label="CloudStream view">
-            <button role="tab" aria-selected={view === 'home'} className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
-            <button role="tab" aria-selected={view === 'search'} className={view === 'search' ? 'active' : ''} onClick={() => setView('search')}>Search</button>
-          </div>
-        )}
-      </header>
-
-      {providers.length === 0 ? (
+  /* -------------------------------- render ------------------------------- */
+  if (providers.length === 0) {
+    return (
+      <div className="standard-page cloudstream-page page-enter">
         <div className="empty-state explore-empty">
           <span><Package size={28} /></span>
           <h2>No CloudStream extensions installed</h2>
           <p>Add a CloudStream repository to load its extensions and start browsing.</p>
-          <button className="button button-primary" onClick={onOpenExtensions}>Manage extensions <ChevronLeft size={16} style={{ transform: 'rotate(180deg)' }} /></button>
+          <button className="button button-primary" onClick={onOpenExtensions}>Manage extensions</button>
         </div>
-      ) : (
-        <>
-          <div className="cs-pills" role="tablist" aria-label="CloudStream extension">
-            {providers.map(({ provider: p, repository }) => (
-              <button key={p.id} className={`cs-pill ${activeProviderId === p.id ? 'active' : ''}`}
-                onClick={() => { setActiveProviderId(p.id); setView('search'); }}
-                title={`${repository.name} · ${p.supportedTypes.join(' & ')}`}>
-                {p.iconUrl ? <img src={p.iconUrl.replace('%size%', '64')} alt="" className="cs-pill-icon" /> : <Package size={15} />}
-                <span>{p.name}</span>
-                {p.nativeOnly && <span className="native-badge">CS3</span>}
-                {activeProviderId === p.id && <Check size={14} />}
-              </button>
-            ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="standard-page cloudstream-page csx page-enter">
+      {/* Top bar, mirroring the app: search, provider selector, reload. */}
+      <div className="csx-topbar">
+        {selected ? (
+          <button className="csx-back" onClick={() => setSelected(null)}><ChevronLeft size={18} /> Back</button>
+        ) : (
+          <button className="csx-searchbar" onClick={() => setView('search')}>
+            <Search size={16} /><span>Search movies, shows, anime…</span>
+          </button>
+        )}
+        <div className="csx-topbar-actions">
+          <div className="csx-provider-wrap">
+            <button className="csx-provider-button" onClick={() => setProviderMenuOpen((open) => !open)} aria-haspopup="listbox" aria-expanded={providerMenuOpen}>
+              {provider?.iconUrl ? <img src={provider.iconUrl.replace('%size%', '64')} alt="" /> : <Package size={15} />}
+              <span>{provider?.name || 'Select provider'}</span>
+              <ChevronDown size={15} />
+            </button>
+            {providerMenuOpen && (
+              <div className="csx-provider-menu" role="listbox" aria-label="CloudStream provider">
+                {providers.map(({ provider: p, repository }) => (
+                  <button key={p.id} role="option" aria-selected={activeProviderId === p.id}
+                    className={activeProviderId === p.id ? 'active' : ''}
+                    onClick={() => { setActiveProviderId(p.id); setProviderMenuOpen(false); setView('home'); setSelected(null); }}>
+                    {p.iconUrl ? <img src={p.iconUrl.replace('%size%', '64')} alt="" /> : <Package size={15} />}
+                    <span><strong>{p.name}</strong><small>{repository.name}</small></span>
+                    {p.nativeOnly && <span className="native-badge">CS3</span>}
+                    {activeProviderId === p.id && <Check size={15} />}
+                  </button>
+                ))}
+                <button className="csx-provider-manage" onClick={() => { setProviderMenuOpen(false); onOpenExtensions(); }}>
+                  <Package size={15} /><span><strong>Manage extensions</strong><small>Repositories &amp; providers</small></span>
+                </button>
+              </div>
+            )}
           </div>
+          <button className="icon-button" onClick={loadBrowse} aria-label="Reload provider" title="Reload provider"><RefreshCw size={16} /></button>
+        </div>
+      </div>
 
-          {!tmdbApiKey && provider?.code?.includes('YOUR_TMDB_API_KEY') && (
-            <p className="explore-note"><CircleAlert size={14} /> {provider.name} needs your TMDB API key before it can load titles. <button className="inline-link" onClick={onOpenSettings}>Add your TMDB key</button></p>
-          )}
+      {!tmdbApiKey && provider?.code?.includes('YOUR_TMDB_API_KEY') && (
+        <p className="explore-note"><CircleAlert size={14} /> {provider.name} needs your TMDB API key before it can load titles. <button className="inline-link" onClick={onOpenSettings}>Add your TMDB key</button></p>
+      )}
 
-          {selected ? (
-            <div className="cs-detail page-enter">
-              <button className="text-button" onClick={() => setSelected(null)}><ChevronLeft size={15} /> Back to {view === 'search' ? 'results' : 'CloudStream'}</button>
-              <div className="source-panel-card">
-                <SourcePanel
-                  media={selected}
-                  streams={streams}
-                  loading={loading}
-                  errors={errors}
-                  providerCount={1}
-                  onRefresh={refreshStreams}
-                  preferredLanguage={preferredLanguage}
-                  onPlay={(stream) => onPlay(selected, stream)}
-                  onOpenExtensions={onOpenExtensions}
-                />
-                {selected.type === 'series' && (
-                  <div className="episode-strip">
-                    {episodesLoading ? <span className="text-button"><LoaderCircle size={13} className="spin" /> Loading episodes…</span> : episodes.map((episode) => (
-                      <button key={episode.id} className={`episode-chip ${episode.id === activeEpisode ? 'active' : ''}`} onClick={() => playEpisode(episode)}>
-                        <span>S{episode.season} E{episode.episode}</span>
-                        <small>{episode.title}</small>
-                      </button>
-                    ))}
-                    {!episodesLoading && !episodes.length && <span className="text-button">No episodes were returned for this series.</span>}
-                  </div>
+      {selected ? (
+        /* ------------------------- Result screen ------------------------- */
+        <div className="csx-result page-enter">
+          <div className="csx-result-hero">
+            {(selected.backdrop || selected.poster) && <img className="csx-result-backdrop" src={selected.backdrop || selected.poster} alt="" />}
+            <div className="csx-result-shade" />
+            <div className="csx-result-head">
+              {selected.poster ? <img className="csx-result-poster" src={selected.poster} alt="" /> : <span className="csx-result-poster csx-no-poster"><Film size={28} /></span>}
+              <div className="csx-result-meta">
+                <span className="page-kicker">{provider?.name}</span>
+                <h1>{selected.title}</h1>
+                <div className="csx-meta-row">
+                  {selected.year && <span>{selected.year}</span>}
+                  <span>{selected.type === 'series' ? 'TV Series' : 'Movie'}</span>
+                  {typeof selected.rating === 'number' && selected.rating > 0 && <span className="csx-rating"><Star size={12} fill="currentColor" /> {selected.rating.toFixed(1)}</span>}
+                </div>
+                {selected.genres.length > 0 && (
+                  <div className="csx-tags">{selected.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
                 )}
+                {selected.overview && <p className="csx-overview">{selected.overview}</p>}
+                <div className="csx-result-actions">
+                  <button className="csx-play" disabled={loading || !streams.length} onClick={() => streams[0] && onPlay(selected, streams[0])}>
+                    <Play size={17} fill="currentColor" /> Play
+                  </button>
+                  <button className="csx-ghost-action" onClick={() => onToggleWatchlist(selected)}>
+                    {inList(selected) ? <Check size={16} /> : <Plus size={16} />} My List
+                  </button>
+                </div>
               </div>
             </div>
-          ) : view === 'home' ? (
-            <div className="cs-home">
+          </div>
+
+          {selected.type === 'series' && (
+            <section className="csx-episodes">
+              <div className="csx-episodes-head">
+                <h2>Episodes</h2>
+                {seasons.length > 1 && (
+                  <label className="csx-season-select">
+                    <select value={season} onChange={(event) => setSeason(Number(event.target.value))} aria-label="Season">
+                      {seasons.map((value) => <option key={value} value={value}>Season {value}</option>)}
+                    </select>
+                    <ChevronDown size={14} />
+                  </label>
+                )}
+              </div>
+              {episodesLoading ? (
+                <span className="text-button"><LoaderCircle size={14} className="spin" /> Loading episodes…</span>
+              ) : seasonEpisodes.length ? (
+                <div className="csx-episode-list">
+                  {seasonEpisodes.map((episode) => (
+                    <button key={episode.id} className={`csx-episode ${episode.id === activeEpisode ? 'active' : ''}`} onClick={() => playEpisode(episode)}>
+                      <span className="csx-episode-play"><Play size={14} fill="currentColor" /></span>
+                      <span className="csx-episode-number">{episode.episode}</span>
+                      <span className="csx-episode-title">{episode.title}</span>
+                      {episode.id === activeEpisode && loading && <LoaderCircle size={14} className="spin" />}
+                    </button>
+                  ))}
+                </div>
+              ) : <span className="text-button">No episodes were returned for this series.</span>}
+            </section>
+          )}
+
+          <section className="csx-links">
+            <div className="csx-links-head">
+              <h2>Links</h2>
+              <span>{loading ? 'Loading…' : `${streams.length} link${streams.length === 1 ? '' : 's'}`}</span>
+              <button className="icon-button" onClick={refreshStreams} disabled={loading} aria-label="Reload links"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+            </div>
+            {loading ? (
+              <div className="csx-link-skeletons">{[0, 1, 2].map((index) => <span key={index} />)}</div>
+            ) : streams.length ? (
+              <div className="csx-link-list">
+                {streams.map((stream) => (
+                  <article className="csx-link" key={stream.id}>
+                    <button className="stream-play" onClick={() => onPlay(selected, stream)} aria-label={`Play ${stream.title}`}><Play size={17} fill="currentColor" /></button>
+                    <div className="csx-link-main">
+                      <strong>{stream.title}</strong>
+                      <small>{stream.sourceName}{stream.language ? ` · ${stream.language}` : ''}</small>
+                    </div>
+                    <span className="quality-badge">{stream.quality || 'AUTO'}</span>
+                    <button className="button button-small button-primary" onClick={() => onPlay(selected, stream)}>Play <Play size={13} fill="currentColor" /></button>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state source-empty">
+                <span><Film size={26} /></span>
+                <h2>No links found</h2>
+                <p>{selected.type === 'series' ? 'Pick another episode, or try another provider.' : 'This provider returned no links for this title. Try another provider.'}</p>
+              </div>
+            )}
+            {errors.length > 0 && !loading && (
+              <details className="source-errors">
+                <summary><CircleAlert size={14} /> {errors.length} source{errors.length === 1 ? '' : 's'} couldn’t respond</summary>
+                {errors.map((error, index) => <p key={`${error.sourceName}-${index}`}><strong>{error.sourceName}</strong>{error.message}</p>)}
+              </details>
+            )}
+          </section>
+        </div>
+      ) : view === 'home' ? (
+        /* -------------------------- Home screen -------------------------- */
+        <div className="csx-home">
+          {nativeOnly ? (
+            <div className="empty-state explore-empty">
+              <span><Package size={26} /></span>
+              <h2>Native CloudStream extension</h2>
+              <p>{provider?.name} is a compiled Kotlin .cs3 package for the Android CloudStream app. A browser cannot execute it, so PRAHA can hand the search and repository to the official app instead.</p>
+              <div className="tmdb-setup-actions">
+                <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={16} /> Search in CloudStream app</a>
+                <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={16} /> Add repository in CloudStream</a>
+                <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
+              </div>
+              <button className="text-button" onClick={onOpenExtensions}>Manage extensions</button>
+            </div>
+          ) : (
+            <>
+              {hero && (
+                <div className="csx-hero">
+                  {(hero.backdrop || hero.poster) && <img src={hero.backdrop || hero.poster} alt="" />}
+                  <div className="csx-hero-shade" />
+                  <div className="csx-hero-copy">
+                    <span className="page-kicker">{provider?.name}</span>
+                    <h1>{hero.title}</h1>
+                    <div className="csx-meta-row">
+                      {hero.year && <span>{hero.year}</span>}
+                      <span>{hero.type === 'series' ? 'TV Series' : 'Movie'}</span>
+                      {typeof hero.rating === 'number' && hero.rating > 0 && <span className="csx-rating"><Star size={12} fill="currentColor" /> {hero.rating.toFixed(1)}</span>}
+                    </div>
+                    {hero.overview && <p>{hero.overview}</p>}
+                    <div className="csx-hero-actions">
+                      <button className="csx-list-action" onClick={() => onToggleWatchlist(hero)}>
+                        {inList(hero) ? <Check size={19} /> : <Plus size={19} />}<small>My List</small>
+                      </button>
+                      <button className="csx-play" onClick={() => openMedia(hero)}><Play size={17} fill="currentColor" /> Play</button>
+                      <button className="csx-list-action" onClick={() => openMedia(hero)}>
+                        <Info size={19} /><small>Info</small>
+                      </button>
+                    </div>
+                  </div>
+                  {heroItems.length > 1 && (
+                    <div className="csx-hero-dots">
+                      {heroItems.map((item, index) => (
+                        <button key={item.id} className={index === heroIndex % heroItems.length ? 'active' : ''} onClick={() => setHeroIndex(index)} aria-label={`Preview ${item.title}`} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {cloudstreamHistory.length > 0 && (
-                <section className="cs-section">
-                  <div className="section-heading"><div><h2>Continue Watching</h2><p>{cloudstreamHistory.length} item{cloudstreamHistory.length === 1 ? '' : 's'}</p></div></div>
-                  <div className="cs-continue-grid">
+                <section className="csx-section">
+                  <h2 className="csx-row-title">Continue Watching</h2>
+                  <div className="media-row">
                     {cloudstreamHistory.map((entry) => (
-                      <button key={entry.media.id} className="cs-continue-card" onClick={() => openMedia(entry.media)}>
-                        <span className="cs-continue-poster">
-                          {entry.media.poster || entry.media.backdrop ? (
-                            <img src={entry.media.poster || entry.media.backdrop} alt="" />
-                          ) : <Package size={18} />}
+                      <button key={entry.media.id} className="csx-continue" onClick={() => openMedia(entry.media)}>
+                        <span className="csx-continue-poster">
+                          {entry.media.poster || entry.media.backdrop ? <img src={entry.media.poster || entry.media.backdrop} alt="" /> : <Package size={18} />}
                         </span>
-                        <div className="cs-continue-body">
+                        <span className="csx-continue-body">
                           <strong>{entry.media.title}</strong>
-                          {entry.episode ? <small>S{entry.season || 1} E{entry.episode}</small> : <small>Movie</small>}
-                          <div className="cs-progress"><span style={{ width: `${Math.min(100, Math.max(0, entry.progress * 100))}%` }} /></div>
-                        </div>
+                          <small>{entry.episode ? `S${entry.season || 1} E${entry.episode}` : 'Movie'}</small>
+                          <span className="cs-progress"><span style={{ width: `${Math.min(100, Math.max(0, entry.progress * 100))}%` }} /></span>
+                        </span>
                       </button>
                     ))}
                   </div>
                 </section>
               )}
 
-              {browseRows.length > 0 && (
-                <section className="cs-section">
-                  <div className="section-heading"><div><h2>Browse extensions</h2><p>Live home feeds from your browser-compatible CloudStream extensions</p></div><button className="button button-secondary" onClick={loadBrowse}><RotateCcw size={15} /> Retry</button></div>
-                  {browseRows.map((row) => (
-                    <div className="cs-carousel" key={row.provider.id}>
-                      <div className="cs-carousel-head">
-                        <h3>{row.provider.name}</h3>
-                        <span>{row.loading ? 'Loading…' : `${row.items.length} titles`}</span>
-                      </div>
-                      <div className="media-row">
-                        {row.loading ? Array.from({ length: 8 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>) : row.items.map((item) => (
-                          <MediaCard key={item.id} item={item} onSelect={openMedia}
-                            onToggleWatchlist={onToggleWatchlist} inWatchlist={watchlist.some((entry) => entry.id === item.id)} compact={compact} />
-                        ))}
-                        {!row.loading && !row.items.length && (row.error ? (
-                          <span className="explore-note"><CircleAlert size={14} /> {row.provider.name}: {row.error}</span>
-                        ) : <span className="text-button">This extension returned no titles for its home feed.</span>)}
-                      </div>
-                    </div>
+              <section className="csx-section">
+                <h2 className="csx-row-title"><Bookmark size={16} /> Bookmarked</h2>
+                <div className="csx-chips">
+                  {BOOKMARK_LISTS.map((list) => (
+                    <button key={list} className={bookmarkList === list ? 'active' : ''} onClick={() => setBookmarkList(list)}>{list}</button>
                   ))}
-                </section>
-              )}
-              {providers.some((entry) => entry.provider.nativeOnly) && (
-                <p className="explore-note"><CircleAlert size={14} /> {providers.filter((entry) => entry.provider.nativeOnly).length} of your CloudStream extensions are native .cs3 packages. CloudStream is an Android app and its Kotlin extensions can't execute in a browser — only the JavaScript extensions above can be browsed and played here. <a className="inline-link" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get the official CloudStream app</a></p>
-              )}
-
-              <section className="cs-section">
-                <div className="section-heading"><div><h2>My Library</h2><p>{cloudstreamLibrary.length} saved</p></div></div>
-                {cloudstreamLibrary.length ? (
-                  <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
+                </div>
+                {bookmarkList === 'Watching' && cloudstreamLibrary.length ? (
+                  <div className="media-row">
                     {cloudstreamLibrary.map((item) => (
                       <MediaCard key={item.id} item={item} onSelect={openMedia}
-                        onToggleWatchlist={onToggleWatchlist} inWatchlist={watchlist.some((entry) => entry.id === item.id)} compact={compact} />
+                        onToggleWatchlist={onToggleWatchlist} inWatchlist compact={compact} />
                     ))}
                   </div>
                 ) : (
-                  <div className="empty-state explore-empty">
-                    <span><Sparkles size={26} /></span>
-                    <h2>Your library is empty</h2>
-                    <p>Search with a CloudStream extension and save titles to watch them here.</p>
-                    <button className="button button-primary" onClick={() => setView('search')}>Search <Search size={16} /></button>
-                  </div>
+                  <p className="csx-empty-note">Nothing in {bookmarkList} yet. Use “My List” on a title to put it here.</p>
                 )}
               </section>
+
+              {activeRow && (
+                <section className="csx-section">
+                  <div className="csx-row-head">
+                    <h2 className="csx-row-title">{provider?.name}</h2>
+                    <span>{activeRow.loading ? 'Loading…' : `${activeRow.items.length} titles`}</span>
+                  </div>
+                  <div className="media-row">
+                    {activeRow.loading ? Array.from({ length: 8 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>) : activeRow.items.map((item) => (
+                      <MediaCard key={item.id} item={item} onSelect={openMedia}
+                        onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
+                    ))}
+                    {!activeRow.loading && !activeRow.items.length && (activeRow.error ? (
+                      <span className="explore-note"><CircleAlert size={14} /> {activeRow.provider.name}: {activeRow.error}</span>
+                    ) : <span className="text-button">This provider returned no titles for its home page.</span>)}
+                  </div>
+                  {!activeRow.loading && activeRow.items.length > 12 && (
+                    <>
+                      <h3 className="csx-row-subtitle">More from {provider?.name}</h3>
+                      <div className="media-row">
+                        {activeRow.items.slice(12).map((item) => (
+                          <MediaCard key={item.id} item={item} onSelect={openMedia}
+                            onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
+              {providers.some((entry) => entry.provider.nativeOnly) && (
+                <p className="explore-note"><CircleAlert size={14} /> {providers.filter((entry) => entry.provider.nativeOnly).length} of your CloudStream extensions are native .cs3 packages. CloudStream is an Android app and its Kotlin extensions can't execute in a browser — pick one above to open it in the official app. <a className="inline-link" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get the official CloudStream app</a></p>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        /* ------------------------- Search screen ------------------------- */
+        <div className="csx-search">
+          {nativeOnly ? (
+            <div className="empty-state explore-empty">
+              <span><Package size={26} /></span>
+              <h2>Native CloudStream extension</h2>
+              <p>{provider?.name} is a compiled Kotlin .cs3 package for the Android CloudStream app. A browser cannot execute it, so PRAHA can hand the search and repository to the official app instead.</p>
+              <div className="tmdb-setup-actions">
+                <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={16} /> Search in CloudStream app</a>
+                <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={16} /> Add repository in CloudStream</a>
+                <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
+              </div>
             </div>
           ) : (
-            <div className="cs-search">
-              {nativeOnly ? (
-                <div className="empty-state explore-empty">
-                  <span><Package size={26} /></span>
-                  <h2>Native CloudStream extension</h2>
-                  <p>{provider?.name} is a compiled Kotlin .cs3 package for the Android CloudStream app. A browser cannot execute it, so PRAHA can hand the search and repository to the official app instead.</p>
-                  <div className="tmdb-setup-actions">
-                    <a className="button button-primary" href={cloudStreamSearchLink}><Smartphone size={16} /> Search in CloudStream app</a>
-                    <a className="button button-secondary" href={cloudStreamRepoLink}><ExternalLink size={16} /> Add repository in CloudStream</a>
-                    <a className="button button-secondary" href="https://github.com/recloudstream/cloudstream/releases" target="_blank" rel="noreferrer">Get CloudStream</a>
-                  </div>
-                  <button className="text-button" onClick={onOpenExtensions}>Manage extensions</button>
+            <>
+              <div className="explore-search csx-search-input">
+                <Search size={17} />
+                <input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)}
+                  placeholder={`Search with ${provider?.name || 'CloudStream'}…`} aria-label="Search" />
+                {query && <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="Clear search">×</button>}
+              </div>
+              <div className="csx-chips">
+                {([['all', 'All'], ['movie', 'Movies'], ['series', 'TV Series']] as const).map(([value, label]) => (
+                  <button key={value} className={typeFilter === value ? 'active' : ''} onClick={() => setTypeFilter(value)}>{label}</button>
+                ))}
+                <span className="csx-search-provider">{provider?.name}</span>
+              </div>
+              {searchError && <p className="explore-note"><CircleAlert size={14} />{searchError}</p>}
+              {searching ? (
+                <div className="media-grid">{Array.from({ length: 12 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>)}</div>
+              ) : filteredResults.length ? (
+                <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
+                  {filteredResults.map((item) => (
+                    <MediaCard key={item.id} item={item} onSelect={openMedia}
+                      onToggleWatchlist={onToggleWatchlist} inWatchlist={inList(item)} compact={compact} />
+                  ))}
                 </div>
               ) : (
-                <>
-                  <form className="cs-search-form" onSubmit={(event) => { event.preventDefault(); setView('search'); }}>
-                    <div className="explore-search">
-                      <Search size={16} />
-                      <input value={query} onChange={(event) => setQuery(event.target.value)}
-                        placeholder={`Search with ${provider?.name || 'CloudStream'}…`} aria-label={`Search with ${provider?.name}`} />
-                      {query && <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="Clear search">×</button>}
-                    </div>
-                  </form>
-                  {searchError && <p className="explore-note"><CircleAlert size={14} />{searchError}</p>}
-
-                  {searching ? (
-                    <div className="media-grid">{Array.from({ length: 12 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>)}</div>
-                  ) : results.length ? (
-                    <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
-                      {results.map((item) => (
-                        <MediaCard key={item.id} item={item} onSelect={openMedia}
-                          onToggleWatchlist={onToggleWatchlist} inWatchlist={watchlist.some((entry) => entry.id === item.id)} compact={compact} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state explore-empty">
-                      <span><Search size={26} /></span>
-                      <h2>{query ? 'No results' : 'Search to find something to watch'}</h2>
-                      <p>{query ? 'Try a different title, or pick another extension.' : `Search this CloudStream extension to browse and play its sources.`}</p>
-                    </div>
-                  )}
-                </>
+                <div className="empty-state explore-empty">
+                  <span><Search size={26} /></span>
+                  <h2>{query ? 'No results' : 'Search to find something to watch'}</h2>
+                  <p>{query ? 'Try a different title, or pick another provider from the top bar.' : `Search ${provider?.name || 'this provider'} to browse and play its sources.`}</p>
+                </div>
               )}
-            </div>
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );
