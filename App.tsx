@@ -249,6 +249,7 @@ const App: React.FC = () => {
       compact={settings.compactCards} preferredLanguage={settings.preferredLanguage}
       tmdbApiKey={settings.tmdbApiKey}
       cloudstreamServerUrl={settings.cloudstreamServerUrl || ''}
+      onServerUrlChange={(url) => setSettings({ ...settings, cloudstreamServerUrl: url })}
       onOpenSettings={() => navigate('settings')}
       onToggleWatchlist={toggleWatchlist} onPlay={playExplorerStream}
       onOpenExtensions={() => navigate('extensions')} />;

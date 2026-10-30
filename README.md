@@ -13,6 +13,14 @@ npm run dev
 
 The Vite server listens on `0.0.0.0:3000`.
 
+To run PRAHA together with the CloudStream plugin server (which executes native `.cs3` providers), use one command — it downloads the server on first run and starts both:
+
+```bash
+npm run dev:full
+```
+
+Requires JDK 21+. PRAHA auto-detects the server on `http://localhost:8080` when the CloudStream tab opens; no URL needs to be pasted. (`npm run server:cloudstream` starts only the plugin server.)
+
 ```bash
 npm run build
 npm run preview

@@ -258,3 +258,58 @@ export function fetchServerLinks(
     socket.onclose = () => finish();
   });
 }
+
+/* ------------------------- auto-discovery on open ------------------------ */
+
+export interface CloudStreamServerDiscovery {
+  url: string;
+  providers: ServerProviderInfo[];
+}
+
+/** Probe one candidate URL quickly; returns null when nothing answers. */
+export async function probeCloudStreamServer(serverUrl: string, timeoutMs = 2500): Promise<CloudStreamServerDiscovery | null> {
+  const base = normalizeCloudStreamServerUrl(serverUrl);
+  if (!base) return null;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${base}/api/providers`, { signal: controller.signal });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const list = Array.isArray(data) ? data : data?.providers || [];
+    const providers: ServerProviderInfo[] = list
+      .filter((entry: any) => entry?.name)
+      .map((entry: any) => ({
+        name: String(entry.name),
+        mainUrl: entry.mainUrl,
+        lang: entry.lang,
+        supportedTypes: Array.isArray(entry.supportedTypes) ? entry.supportedTypes.map(String) : [],
+      }));
+    providersCache.set(base, Promise.resolve(providers));
+    return { url: base, providers };
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/**
+ * Find a running plugin server: the saved URL first, then the server's
+ * default local address (it serves on port 8080). Called when the app opens
+ * so a locally running server connects with zero setup.
+ */
+export async function discoverCloudStreamServer(savedUrl: string): Promise<CloudStreamServerDiscovery | null> {
+  const candidates = [
+    savedUrl,
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+  ]
+    .map((value) => normalizeCloudStreamServerUrl(value))
+    .filter((value, index, all) => value && all.indexOf(value) === index);
+  for (const candidate of candidates) {
+    const found = await probeCloudStreamServer(candidate);
+    if (found) return found;
+  }
+  return null;
+}

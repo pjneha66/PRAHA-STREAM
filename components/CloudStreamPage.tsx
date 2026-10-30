@@ -8,7 +8,8 @@ import {
   type CloudStreamEpisode,
 } from '../services/cloudstreamService';
 import {
-  fetchServerLinks, fetchServerMainPage, loadServerTitle, resolveServerProviderName, searchServerProvider,
+  discoverCloudStreamServer, fetchServerLinks, fetchServerMainPage, loadServerTitle,
+  resolveServerProviderName, searchServerProvider,
   type ServerMainPageRow,
 } from '../services/cloudstreamServerService';
 import type {
@@ -27,6 +28,7 @@ interface CloudStreamPageProps {
   tmdbApiKey: string;
   /** Optional plugin server that executes native .cs3 providers. */
   cloudstreamServerUrl: string;
+  onServerUrlChange: (url: string) => void;
   onOpenSettings: () => void;
   onToggleWatchlist: (item: MediaItem) => void;
   onPlay: (media: MediaItem, stream: StreamResult) => void;
@@ -70,7 +72,7 @@ interface BrowseRow {
  */
 const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   repositories, history, watchlist, compact, preferredLanguage, tmdbApiKey,
-  cloudstreamServerUrl, onOpenSettings, onToggleWatchlist, onPlay, onOpenExtensions,
+  cloudstreamServerUrl, onServerUrlChange, onOpenSettings, onToggleWatchlist, onPlay, onOpenExtensions,
 }) => {
   const providers = useMemo(() => repositories
     .filter((repo) => repo.enabled)
@@ -100,6 +102,9 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   const [bookmarkList, setBookmarkList] = useState<(typeof BOOKMARK_LISTS)[number]>('Watching');
   const [heroIndex, setHeroIndex] = useState(0);
   const [nativeQuery, setNativeQuery] = useState('');
+  const [serverState, setServerState] = useState<'checking' | 'connected' | 'offline'>('checking');
+  const [serverProviderCount, setServerProviderCount] = useState(0);
+  const [probeNonce, setProbeNonce] = useState(0);
   const [remoteRows, setRemoteRows] = useState<ServerMainPageRow[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState('');
@@ -142,6 +147,26 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
   useEffect(() => {
     if (view === 'search') searchInputRef.current?.focus();
   }, [view]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setServerState('checking');
+    (async () => {
+      const found = await discoverCloudStreamServer(cloudstreamServerUrl);
+      if (cancelled) return;
+      if (found) {
+        setServerState('connected');
+        setServerProviderCount(found.providers.length);
+        if (found.url !== cloudstreamServerUrl) onServerUrlChange(found.url);
+      } else {
+        setServerState('offline');
+        setServerProviderCount(0);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Re-probe when the tab's retry is pressed or the saved URL changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probeNonce]);
 
   /* ------------------------------- search ------------------------------- */
   useEffect(() => {
@@ -432,6 +457,14 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
               </div>
             )}
           </div>
+          <button
+            className={`csx-server-pill ${serverState}`}
+            onClick={() => setProbeNonce((value) => value + 1)}
+            title={serverState === 'connected' ? 'CloudStream plugin server connected — click to re-check' : 'CloudStream plugin server not found — start it (npm run dev:full) and click to retry'}
+          >
+            <span className="csx-server-dot" />
+            {serverState === 'checking' ? 'Server…' : serverState === 'connected' ? `Server · ${serverProviderCount}` : 'Server off'}
+          </button>
           <button className="icon-button" onClick={loadBrowse} aria-label="Reload provider" title="Reload provider"><RefreshCw size={16} /></button>
         </div>
       </div>

@@ -979,3 +979,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .csx-native-search .explore-search { flex: 1; }
 .csx-native-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 760px) { .csx-native-hero { flex-direction: column; align-items: flex-start; } .csx-native-search { flex-direction: column; align-items: stretch; } }
+.csx-server-pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.csx-server-pill:hover { border-color: var(--line-strong); color: var(--text); }
+.csx-server-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); flex: 0 0 auto; }
+.csx-server-pill.connected .csx-server-dot { background: #7ee787; box-shadow: 0 0 8px rgba(126,231,135,.7); }
+.csx-server-pill.checking .csx-server-dot { background: #ffd45e; }
+.csx-server-pill.offline .csx-server-dot { background: #ff7b72; }
