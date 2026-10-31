@@ -6,7 +6,6 @@ import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
-import CloudStreamPage from './components/CloudStreamPage';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
@@ -16,24 +15,20 @@ import {
   CINEMETA_ADDON, DEFAULT_DISCOVER_FILTERS, DEFAULT_PROFILE, DEFAULT_SETTINGS,
   EMPTY_HOME_CATALOG, normalizeSettings,
 } from './data/defaults';
-import {
-  buildBuiltinCloudStreamJsRepository, refreshBuiltinCloudStreamJsRepository, BUILTIN_MANIFEST_URL,
-} from './data/cloudstreamJsPlugins';
 import { fetchStremioCatalog, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
-import { findCloudStreamStreamsForMedia } from './services/cloudstreamService';
 import { tmdbService } from './services/tmdbService';
 import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import type {
-  AppSettings, AppView, CloudStreamRepository, DiscoverFilters, HomeCatalog, InstalledAddon,
+  AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
   LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, StreamResult, ToastMessage,
   UserProfile, WatchProgress,
 } from './types';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'discover', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'discover', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -94,10 +89,13 @@ const App: React.FC = () => {
 
   const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
   const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
-  const [cloudstreamRepositories, setCloudstreamRepositories] = usePersistentState<CloudStreamRepository[]>('praha.v2.cloudstream-repositories', []);
   const [nuvioSettings, setNuvioSettings] = usePersistentState<Record<string, Record<string, unknown>>>('praha.v2.nuvio-settings', {});
   const [rawSettings, setSettings] = usePersistentState<AppSettings>('praha.v2.settings', DEFAULT_SETTINGS);
   const settings = useMemo(() => normalizeSettings(rawSettings), [rawSettings]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', settings.accent || 'gold');
+  }, [settings.accent]);
 
   const [profiles, setProfiles] = usePersistentState<UserProfile[]>('praha.v2.profiles', [DEFAULT_PROFILE]);
   const [activeProfileId, setActiveProfileId] = usePersistentState<string>('praha.v2.active-profile', DEFAULT_PROFILE.id);
@@ -314,20 +312,8 @@ const App: React.FC = () => {
 
   const activeSourceCount = useMemo(() =>
     addons.filter((addon) => addon.enabled).length +
-    repositories.filter((repo) => repo.enabled).length +
-    cloudstreamRepositories.filter((repo) => repo.enabled).length,
-  [addons, repositories, cloudstreamRepositories]);
-
-  const builtinJsRepo = useMemo(() => buildBuiltinCloudStreamJsRepository(), []);
-  useEffect(() => {
-    setCloudstreamRepositories((current) => {
-      const existing = current.find((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL);
-      if (!existing) return [builtinJsRepo, ...current];
-      const refreshed = refreshBuiltinCloudStreamJsRepository(existing);
-      const unchanged = JSON.stringify({ ...refreshed, updatedAt: existing.updatedAt }) === JSON.stringify(existing);
-      return unchanged ? current : current.map((repo) => repo.manifestUrl === BUILTIN_MANIFEST_URL ? refreshed : repo);
-    });
-  }, [builtinJsRepo, setCloudstreamRepositories]);
+    repositories.filter((repo) => repo.enabled).length,
+  [addons, repositories]);
 
   const navigate = (next: AppView) => {
     setView(next);
@@ -505,15 +491,14 @@ const App: React.FC = () => {
       }));
       const resolved = { ...player.media, imdbId: ids.imdbId || player.media.imdbId };
 
-      const [stremio, nuvio, cs] = await Promise.all([
+      const [stremio, nuvio] = await Promise.all([
         findStremioStreams(addons, resolved, nextSeason, nextEp),
         ids.tmdbId
           ? findNuvioStreams(repositories, ids.tmdbId, 'series', nextSeason, nextEp, nuvioSettings)
           : Promise.resolve({ streams: [], errors: [] }),
-        findCloudStreamStreamsForMedia(cloudstreamRepositories, resolved, ids.tmdbId, settings.tmdbApiKey, nextSeason, nextEp),
       ]);
 
-      const allStreams = [...stremio.streams, ...nuvio.streams, ...cs.streams];
+      const allStreams = [...stremio.streams, ...nuvio.streams];
       const preferred = allStreams.find((s) => s.sourceName === player.stream.sourceName && !s.url.startsWith('magnet:'))
         || allStreams.find((s) => !s.url.startsWith('magnet:'))
         || allStreams[0];
@@ -539,7 +524,7 @@ const App: React.FC = () => {
     } finally {
       setNextEpisodeLoading(false);
     }
-  }, [player, tmdbReady, addons, repositories, nuvioSettings, cloudstreamRepositories, settings.tmdbApiKey, upsertHistory, notify]);
+  }, [player, tmdbReady, addons, repositories, nuvioSettings, settings.tmdbApiKey, upsertHistory, notify]);
 
   // Profile management
   const createProfile = (name: string, avatarColor: string, isKids: boolean) => {
@@ -581,7 +566,6 @@ const App: React.FC = () => {
       settings,
       addons,
       repositories,
-      cloudstreamRepositories,
       nuvioSettings,
       profiles,
       activeProfileId: activeProfile.id,
@@ -599,7 +583,6 @@ const App: React.FC = () => {
       setSettings(normalizeSettings(restored.settings));
       setAddons(restored.addons);
       setRepositories(restored.repositories);
-      setCloudstreamRepositories(restored.cloudstreamRepositories);
       setNuvioSettings(restored.nuvioSettings || {});
       setProfiles(restored.profiles);
 
@@ -696,33 +679,14 @@ const App: React.FC = () => {
         onOpenExtensions={() => navigate('extensions')}
       />
     );
-  } else if (view === 'cloudstream') {
-    page = (
-      <CloudStreamPage
-        repositories={cloudstreamRepositories}
-        history={history}
-        watchlist={watchlist}
-        compact={settings.compactCards}
-        preferredLanguage={settings.preferredLanguage}
-        tmdbApiKey={settings.tmdbApiKey}
-        cloudstreamServerUrl={settings.cloudstreamServerUrl || ''}
-        onServerUrlChange={(url) => setSettings({ ...settings, cloudstreamServerUrl: url })}
-        onOpenSettings={() => navigate('settings')}
-        onToggleWatchlist={(item) => toggleWatchlist(item, 'watching')}
-        onPlay={playExplorerStream}
-        onOpenExtensions={() => navigate('extensions')}
-      />
-    );
   } else if (view === 'extensions') {
     page = (
       <ExtensionsView
         addons={addons}
         repositories={repositories}
-        cloudstreamRepositories={cloudstreamRepositories}
         nuvioSettings={nuvioSettings}
         setAddons={setAddons}
         setRepositories={setRepositories}
-        setCloudstreamRepositories={setCloudstreamRepositories}
         setNuvioSettings={setNuvioSettings}
         notify={notify}
       />
@@ -738,7 +702,6 @@ const App: React.FC = () => {
         }}
         addons={addons}
         repositories={repositories}
-        cloudstreamRepositories={cloudstreamRepositories}
         profiles={profiles}
         activeProfile={activeProfile}
         onSelectProfile={(id) => {
@@ -795,7 +758,6 @@ const App: React.FC = () => {
           initialEpisode={sourceState.episode}
           addons={addons}
           repositories={repositories}
-          cloudstreamRepositories={cloudstreamRepositories}
           nuvioSettings={nuvioSettings}
           tmdbApiKey={settings.tmdbApiKey}
           preferredLanguage={settings.preferredLanguage}

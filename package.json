@@ -1,7 +1,7 @@
 {
   "name": "praha-stream",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,8 +11,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "ci": "npm run typecheck && npm test && npm run build",
-    "server:cloudstream": "node scripts/cloudstream-server.mjs",
-    "dev:full": "node scripts/cloudstream-server.mjs --dev",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",
     "build:android": "npm run build && npx cap sync android && cd android && ./gradlew assembleRelease"
@@ -39,5 +37,5 @@
     "vite": "^6.2.0",
     "vitest": "^5.0.5"
   },
-  "description": "A local-first Android & web streaming interface for Stremio addons, Nuvio plugins, and CloudStream extensions."
+  "description": "A local-first Android & web streaming interface for Stremio addons and Nuvio plugins."
 }

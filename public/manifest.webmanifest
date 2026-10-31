@@ -1,7 +1,7 @@
 {
   "name": "PRAHA STREAM",
   "short_name": "PRAHA",
-  "description": "One local-first Android & web home for your Stremio addons, Nuvio plugins, and CloudStream extensions.",
+  "description": "One local-first Android & web home for your Stremio addons, Nuvio plugins, movies, and series.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",

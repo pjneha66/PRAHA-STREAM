@@ -48,7 +48,7 @@ const ExploreView: React.FC<ExploreViewProps> = ({
       <div className="page-heading"><div>
         <span className="page-kicker"><LayoutGrid size={14} /> SOURCE BROWSER</span>
         <h1>Explore your sources</h1>
-        <p>Browse, load, and play each source type — CloudStream lives in its own tab.</p>
+        <p>Browse, load, and play catalogs and streams from all your installed extensions.</p>
       </div></div>
 
       <div className="explore-tabs" role="tablist" aria-label="Source type">

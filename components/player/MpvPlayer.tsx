@@ -67,6 +67,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [osd, setOsd] = useState('');
   const [scrub, setScrub] = useState<{ ratio: number; seconds: number } | null>(null);
   const [gestureLabel, setGestureLabel] = useState('');
+  const [gestureHud, setGestureHud] = useState<{ mode: 'volume' | 'brightness'; level: number } | null>(null);
   const [ripple, setRipple] = useState<{ id: number; side: 'left' | 'right'; label: string } | null>(null);
   const [statsOpen, setStatsOpen] = useState(settings.stats);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -350,10 +351,12 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       const next = clamp(gesture.base - (deltaY / 220) * 100, 0, 100);
       engine.setVolume(next);
       setGestureLabel(`Volume ${Math.round(next)}%`);
+      setGestureHud({ mode: 'volume', level: Math.round(next) });
     } else if (gesture.mode === 'brightness') {
       const next = clamp(gesture.base - (deltaY / 220) * 100, 20, 150);
       onSettingsChange({ brightness: next });
       setGestureLabel(`Brightness ${Math.round(next)}%`);
+      setGestureHud({ mode: 'brightness', level: Math.round(((next - 20) / 130) * 100) });
     }
   };
 
@@ -367,6 +370,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     const gesture = gestureRef.current;
     gestureRef.current = null;
     setGestureLabel('');
+    setGestureHud(null);
     if (gesture && gesture.mode !== 'none') { wakeControls(); return; }
 
     const tap = tapRef.current;
@@ -512,6 +516,14 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         </div>
       )}
 
+      {gestureHud && (
+        <div className={`mpv-gesture-bar-container ${gestureHud.mode === 'brightness' ? 'left' : 'right'}`}>
+          <span className="mpv-gesture-bar-label">{gestureHud.level}%</span>
+          <div className="mpv-gesture-bar-track">
+            <div className="mpv-gesture-bar-fill" style={{ height: `${gestureHud.level}%` }} />
+          </div>
+        </div>
+      )}
       {ripple && <div className={`mpv-ripple ${ripple.side}`}><b>{ripple.label}</b></div>}
       {gestureLabel && <div className="mpv-gesture-label">{gestureLabel}</div>}
       {osd && <div className="mpv-osd" role="status">{osd}</div>}

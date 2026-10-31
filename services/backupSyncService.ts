@@ -1,6 +1,6 @@
 import { normalizeSettings } from '../data/defaults';
 import type {
-  AppSettings, CloudStreamRepository, InstalledAddon, MediaItem, NuvioRepository,
+  AppSettings, InstalledAddon, MediaItem, NuvioRepository,
   PrahaBackupBundle, SyncSettings, UserProfile, WatchProgress,
 } from '../types';
 import { nativeFetchText } from './androidBridge';
@@ -9,7 +9,6 @@ export function createBackupBundle(params: {
   settings: AppSettings;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
   nuvioSettings: Record<string, Record<string, unknown>>;
   profiles: UserProfile[];
   activeProfileId: string;
@@ -22,7 +21,6 @@ export function createBackupBundle(params: {
     settings: params.settings,
     addons: params.addons,
     repositories: params.repositories,
-    cloudstreamRepositories: params.cloudstreamRepositories,
     nuvioSettings: params.nuvioSettings,
     profiles: params.profiles,
     activeProfileId: params.activeProfileId,
@@ -56,7 +54,6 @@ export function validateAndParseBackup(rawJson: string): PrahaBackupBundle {
     settings: normalizeSettings(candidate.settings),
     addons: candidate.addons,
     repositories: Array.isArray(candidate.repositories) ? candidate.repositories : [],
-    cloudstreamRepositories: Array.isArray(candidate.cloudstreamRepositories) ? candidate.cloudstreamRepositories : [],
     nuvioSettings: candidate.nuvioSettings && typeof candidate.nuvioSettings === 'object' ? candidate.nuvioSettings : {},
     profiles,
     activeProfileId: candidate.activeProfileId || profiles[0].id,

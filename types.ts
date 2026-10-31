@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
+export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -57,7 +57,7 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio' | 'cloudstream';
+  source: 'tmdb' | 'stremio' | 'nuvio';
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
@@ -201,7 +201,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'cloudstream';
+  sourceType: 'stremio' | 'nuvio';
   quality?: string;
   size?: string;
   language?: string;
@@ -224,48 +224,7 @@ export interface SourceError {
   message: string;
 }
 
-export type SourceKind = 'stremio' | 'nuvio' | 'cloudstream';
-
-export interface CloudStreamPluginEntry {
-  name: string;
-  version?: number | string;
-  url?: string;
-  iconUrl?: string;
-  description?: string;
-  apiVersion?: number;
-  repositoryUrl?: string;
-  fileSize?: number;
-  status?: number;
-  language?: string;
-  authors?: string[];
-  tvTypes?: string[];
-  enabled?: boolean;
-}
-
-export interface CloudStreamProvider extends CloudStreamPluginEntry {
-  id: string;
-  repositoryId: string;
-  enabled: boolean;
-  manifestEnabled: boolean;
-  supportedTypes: string[];
-  installedAt: number;
-  /** Fetched JavaScript source for extensions that can run in the browser. */
-  code?: string;
-  /** True when the extension is a compiled .cs3 package that needs the native app. */
-  nativeOnly?: boolean;
-}
-
-export interface CloudStreamRepository {
-  manifestUrl: string;
-  name: string;
-  description?: string;
-  manifestVersion?: number;
-  pluginListUrls: string[];
-  enabled: boolean;
-  providers: CloudStreamProvider[];
-  installedAt: number;
-  updatedAt: number;
-}
+export type SourceKind = 'stremio' | 'nuvio';
 
 export interface IntroSegment {
   start: number;
@@ -334,15 +293,30 @@ export interface PlayerSettings {
   skipIntro: boolean;
 }
 
+export type AppThemeAccent =
+  | 'gold'
+  | 'jade'
+  | 'rosegold'
+  | 'arcticblue'
+  | 'arctic'
+  | 'graphite'
+  | 'crimson'
+  | 'ocean'
+  | 'emerald'
+  | 'amber'
+  | 'violet'
+  | 'rose'
+  | 'lime'
+  | 'blue'
+  | 'white';
+
 export interface AppSettings {
   autoplay: boolean;
   compactCards: boolean;
   reduceMotion: boolean;
   preferredLanguage: string;
-  accent: 'lime' | 'violet' | 'blue';
+  accent: AppThemeAccent;
   tmdbApiKey: string;
-  /** Optional CloudStream plugin server that executes native .cs3 providers. */
-  cloudstreamServerUrl: string;
   /** Debrid service used to convert magnets/infoHashes into direct HTTP streams. */
   debrid: DebridSettings;
   /** Optional Trakt / Simkl scrobbling credentials. */
@@ -361,7 +335,7 @@ export interface PrahaBackupBundle {
   settings: Partial<AppSettings>;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
+  cloudstreamRepositories?: unknown[];
   nuvioSettings?: Record<string, Record<string, unknown>>;
   profiles: UserProfile[];
   activeProfileId: string;

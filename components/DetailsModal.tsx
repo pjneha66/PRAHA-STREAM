@@ -180,7 +180,7 @@ const DetailsModal: React.FC<{
 
             <div className="details-source-note">
               <Blocks size={15} />
-              <span>Streams & subtitles are fetched live from your Stremio addons, Nuvio plugins, and CloudStream extensions.</span>
+              <span>Streams & subtitles are fetched live from your Stremio addons and Nuvio plugins.</span>
             </div>
           </div>
         </div>

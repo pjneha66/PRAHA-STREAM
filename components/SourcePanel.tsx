@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Blocks, Check, CircleAlert, Copy, Film, Languages, Play, RefreshCw,
+  Blocks, Check, CircleAlert, Copy, Film, HardDrive, Languages, Play, RefreshCw,
   ShieldCheck, Users, X, Zap,
 } from 'lucide-react';
 import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary } from '../types';
@@ -13,6 +13,54 @@ export const qualityOf = (stream: StreamResult) => {
   if (/720/.test(text)) return '720p';
   if (/480/.test(text)) return '480p';
   return stream.quality || 'AUTO';
+};
+
+export interface ParsedBadges {
+  resolution?: string;
+  hdr?: string;
+  audio?: string;
+  codec?: string;
+  source?: string;
+  debrid?: string;
+  size?: string;
+}
+
+export const parseStreamBadges = (stream: StreamResult): ParsedBadges => {
+  const text = `${stream.title || ''} ${stream.provider || ''} ${stream.quality || ''} ${stream.url || ''}`.toUpperCase();
+  const badges: ParsedBadges = {};
+
+  if (/2160P|4K|UHD/.test(text)) badges.resolution = '4K UHD';
+  else if (/1080P|FHD/.test(text)) badges.resolution = '1080p';
+  else if (/720P|HD/.test(text)) badges.resolution = '720p';
+  else if (/480P|SD/.test(text)) badges.resolution = '480p';
+
+  if (/DOLBY VISION|\bDV\b|DOVI/.test(text)) badges.hdr = 'DV';
+  else if (/HDR10\+/.test(text)) badges.hdr = 'HDR10+';
+  else if (/HDR/.test(text)) badges.hdr = 'HDR';
+
+  if (/ATMOS/.test(text)) badges.audio = 'Atmos';
+  else if (/TRUEHD/.test(text)) badges.audio = 'TrueHD';
+  else if (/DTS-HD/.test(text)) badges.audio = 'DTS-HD';
+  else if (/DTS/.test(text)) badges.audio = 'DTS';
+  else if (/5\.1|\bDD\+?|E-AC-3/.test(text)) badges.audio = '5.1';
+  else if (/7\.1/.test(text)) badges.audio = '7.1';
+
+  if (/HEVC|H\.?265|X265/.test(text)) badges.codec = 'HEVC';
+  else if (/AV1/.test(text)) badges.codec = 'AV1';
+  else if (/AVC|H\.?264|X264/.test(text)) badges.codec = 'H.264';
+
+  if (/REMUX/.test(text)) badges.source = 'REMUX';
+  else if (/WEB-?DL|WEBRIP/.test(text)) badges.source = 'WEB-DL';
+  else if (/BLURAY|BLU-RAY|BDRIP/.test(text)) badges.source = 'BluRay';
+
+  if (/\[\+?RD\]|REAL-?DEBRID/.test(text)) badges.debrid = 'RD';
+  else if (/\[\+?TB\]|TORBOX/.test(text)) badges.debrid = 'TB';
+  else if (/\[\+?AD\]|ALLDEBRID/.test(text)) badges.debrid = 'AD';
+  else if (/\[\+?PM\]|PREMIUMIZE/.test(text)) badges.debrid = 'PM';
+  else if (/CACHED|⚡/.test(text)) badges.debrid = 'Cached';
+
+  if (stream.size) badges.size = stream.size;
+  return badges;
 };
 
 interface SourcePanelProps {
@@ -80,7 +128,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
         <div>
           <span className="page-kicker">SOURCE FINDER</span>
           <h2>{media.title}</h2>
-          <p>{media.year || ''} · {media.type === 'movie' ? 'Movie' : 'Series'} <i /> Stremio, Nuvio & CloudStream</p>
+          <p>{media.year || ''} · {media.type === 'movie' ? 'Movie' : 'Series'} <i /> Stremio & Nuvio</p>
         </div>
         {showClose && <button className="modal-close" onClick={onClose} aria-label="Close source finder"><X size={20} /></button>}
       </header>
@@ -107,30 +155,44 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
         <button className="icon-button" onClick={onRefresh} disabled={loading} aria-label="Refresh streams"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button>
       </div>
       <div className="stream-list">
-        {loading ? Array.from({ length: Math.max(3, Math.min(providerCount, 5)) }).map((_, index) => <div className="stream-skeleton" key={index}><span /><div><i /><i /></div></div>) : filtered.map((stream) => (
-          <article className="stream-row" key={stream.id}>
-            <button className="stream-play" onClick={() => onPlay(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
-            <div className="stream-main">
-              <div className="stream-title"><strong>{stream.title}</strong><span className={`quality-badge quality-${qualityOf(stream).replace('p', '')}`}>{qualityOf(stream)}</span></div>
-              <div className="stream-meta">
-                <span className={`stream-origin ${stream.sourceType}`}>{stream.sourceType === 'cloudstream' ? <Zap size={11} /> : stream.sourceType === 'nuvio' ? <Zap size={11} /> : <Blocks size={11} />}{stream.sourceName}</span>
-                {stream.provider && stream.provider !== stream.sourceName && <span>{stream.provider}</span>}
-                {stream.size && <span>{stream.size}</span>}
-                {stream.language && <span><Languages size={12} />{stream.language}</span>}
-                {typeof stream.seeders === 'number' && <span className="seeders"><Users size={12} />{stream.seeders} seeders</span>}
+        {loading ? Array.from({ length: Math.max(3, Math.min(providerCount, 5)) }).map((_, index) => <div className="stream-skeleton" key={index}><span /><div><i /><i /></div></div>) : filtered.map((stream) => {
+          const badges = parseStreamBadges(stream);
+          return (
+            <article className="stream-row" key={stream.id}>
+              <button className="stream-play" onClick={() => onPlay(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
+              <div className="stream-main">
+                <div className="stream-title">
+                  <strong>{stream.title}</strong>
+                  {badges.resolution && <span className="badge-pill badge-res">{badges.resolution}</span>}
+                  {badges.hdr && <span className="badge-pill badge-hdr">{badges.hdr}</span>}
+                  {badges.audio && <span className="badge-pill badge-audio">{badges.audio}</span>}
+                  {badges.codec && <span className="badge-pill badge-codec">{badges.codec}</span>}
+                  {badges.source && <span className="badge-pill badge-source">{badges.source}</span>}
+                  {badges.debrid && <span className="badge-pill badge-debrid">⚡ {badges.debrid}</span>}
+                </div>
+                <div className="stream-meta">
+                  <span className={`stream-origin ${stream.sourceType}`}>
+                    {stream.sourceType === 'nuvio' ? <Zap size={11} /> : <Blocks size={11} />}
+                    {stream.sourceName}
+                  </span>
+                  {stream.provider && stream.provider !== stream.sourceName && <span>{stream.provider}</span>}
+                  {badges.size && <span><HardDrive size={11} />{badges.size}</span>}
+                  {stream.language && <span><Languages size={12} />{stream.language}</span>}
+                  {typeof stream.seeders === 'number' && <span className="seeders"><Users size={12} />{stream.seeders} seeders</span>}
+                </div>
               </div>
-            </div>
-            <div className="stream-actions">
-              <button className="icon-button" onClick={() => copyStream(stream)} aria-label="Copy stream URL">{copied === stream.id ? <Check size={16} /> : <Copy size={16} />}</button>
-              <button className="button button-small button-primary" onClick={() => onPlay(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
-            </div>
-          </article>
-        ))}
+              <div className="stream-actions">
+                <button className="icon-button" onClick={() => copyStream(stream)} aria-label="Copy stream URL">{copied === stream.id ? <Check size={16} /> : <Copy size={16} />}</button>
+                <button className="button button-small button-primary" onClick={() => onPlay(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
+              </div>
+            </article>
+          );
+        })}
         {!loading && !filtered.length && (
           <div className="empty-state source-empty">
             <span><Film size={28} /></span>
             <h2>{providerCount ? 'No streams found for this title' : 'Add a stream provider to press play'}</h2>
-            <p>{providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon, a Nuvio provider, or a CloudStream JavaScript extension to start watching.'}</p>
+            <p>{providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon or a Nuvio provider to start watching.'}</p>
             {onOpenExtensions && <button className="button button-primary" onClick={onOpenExtensions}><Blocks size={17} /> Manage extensions</button>}
           </div>
         )}

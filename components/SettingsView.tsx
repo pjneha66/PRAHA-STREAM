@@ -5,11 +5,10 @@ import {
   Settings, ShieldCheck, Smartphone, Trash2, Tv, Upload, UserPlus, Users,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import { normalizeCloudStreamServerUrl, testCloudStreamServer } from '../services/cloudstreamServerService';
 import { isAndroidApp, isAndroidTv } from '../services/androidBridge';
 import { PLAYER_THEMES } from './player/themes';
 import type {
-  AppSettings, CloudStreamRepository, DebridProvider, InstalledAddon, NuvioRepository,
+  AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
   PlayerSettings, UserProfile,
 } from '../types';
 
@@ -21,13 +20,28 @@ type ApiStatus = 'idle' | 'checking' | 'success' | 'error';
 
 const AVATAR_COLORS = ['#d6f77a', '#a78bfa', '#60a5fa', '#f472b6', '#fbbf24', '#34d399'];
 
+const THEME_ACCENTS: Array<{ id: AppThemeAccent; label: string; color: string }> = [
+  { id: 'gold', label: 'Gold', color: '#FFD45C' },
+  { id: 'jade', label: 'Jade', color: '#7BF08D' },
+  { id: 'rosegold', label: 'Rose Gold', color: '#FFB37A' },
+  { id: 'arcticblue', label: 'Arctic Blue', color: '#4DE3FF' },
+  { id: 'graphite', label: 'Graphite', color: '#F3F5F7' },
+  { id: 'crimson', label: 'Crimson', color: '#FF5252' },
+  { id: 'ocean', label: 'Ocean', color: '#42A5F5' },
+  { id: 'violet', label: 'Violet', color: '#AB47BC' },
+  { id: 'emerald', label: 'Emerald', color: '#66BB6A' },
+  { id: 'amber', label: 'Amber', color: '#FFA726' },
+  { id: 'rose', label: 'Rose', color: '#EC407A' },
+  { id: 'white', label: 'White', color: '#F5F5F5' },
+  { id: 'lime', label: 'Lime', color: '#a2f244' },
+];
+
 const SettingsView: React.FC<{
   settings: AppSettings;
   onChange: (settings: AppSettings) => void;
   onReset: () => void;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
   profiles: UserProfile[];
   activeProfile: UserProfile;
   onSelectProfile: (profileId: string) => void;
@@ -36,7 +50,7 @@ const SettingsView: React.FC<{
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
 }> = ({
-  settings, onChange, onReset, addons, repositories, cloudstreamRepositories,
+  settings, onChange, onReset, addons, repositories,
   profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile,
   onExportBackup, onImportBackup,
 }) => {
@@ -47,10 +61,6 @@ const SettingsView: React.FC<{
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
 
-  const [serverDraft, setServerDraft] = useState(settings.cloudstreamServerUrl || '');
-  const [serverStatus, setServerStatus] = useState<ApiStatus>('idle');
-  const [serverMessage, setServerMessage] = useState('');
-
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileColor, setNewProfileColor] = useState(AVATAR_COLORS[1]);
   const [newProfileKids, setNewProfileKids] = useState(false);
@@ -59,36 +69,6 @@ const SettingsView: React.FC<{
   const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
-  useEffect(() => setServerDraft(settings.cloudstreamServerUrl || ''), [settings.cloudstreamServerUrl]);
-
-  const testAndSaveServer = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const serverUrl = normalizeCloudStreamServerUrl(serverDraft);
-    if (!serverUrl) {
-      setServerStatus('error');
-      setServerMessage('Paste your CloudStream plugin server URL first, e.g. http://192.168.1.20:8080.');
-      return;
-    }
-    setServerStatus('checking');
-    setServerMessage('');
-    try {
-      const providers = await testCloudStreamServer(serverUrl);
-      update('cloudstreamServerUrl', serverUrl);
-      setServerDraft(serverUrl);
-      setServerStatus('success');
-      setServerMessage(`Connected. The server is running ${providers.length} CloudStream provider${providers.length === 1 ? '' : 's'}.`);
-    } catch (error) {
-      setServerStatus('error');
-      setServerMessage(error instanceof Error ? error.message : 'Could not reach the CloudStream server.');
-    }
-  };
-
-  const clearServer = () => {
-    setServerDraft('');
-    setServerStatus('idle');
-    setServerMessage('');
-    update('cloudstreamServerUrl', '');
-  };
 
   const verifyAndSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -251,18 +231,6 @@ const SettingsView: React.FC<{
             )}
           </section>
 
-          {/* CloudStream Server */}
-          <section className="settings-card">
-            <div className="settings-card-heading"><span><Package size={19} /></span><div><h2>CloudStream Server</h2><p>Run native .cs3 providers from a plugin server on your local network or device.</p></div></div>
-            <div className="tmdb-intro"><div><strong>Your providers. Executed for real.</strong><p>Connect a CloudStream Web JVM server to execute Kotlin .cs3 plugins directly inside PRAHA.</p></div><a href="https://github.com/SusyBegula/cloudstream-web-unofficial" target="_blank" rel="noreferrer">Get the server <ExternalLink size={13} /></a></div>
-            <form className="api-key-form" onSubmit={testAndSaveServer}>
-              <label htmlFor="cs-server-url">Plugin server URL</label>
-              <div className="api-key-input"><Package size={16} /><input id="cs-server-url" type="text" value={serverDraft} onChange={(event) => { setServerDraft(event.target.value); setServerStatus('idle'); setServerMessage(''); }} placeholder="http://192.168.1.20:8080" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={serverStatus === 'checking'} /></div>
-              <div className="api-key-actions"><button className="button button-primary" type="submit" disabled={serverStatus === 'checking'}>{serverStatus === 'checking' ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{serverStatus === 'checking' ? 'Testing…' : 'Test & save'}</button>{(settings.cloudstreamServerUrl || serverDraft) && <button className="button button-secondary" type="button" onClick={clearServer} disabled={serverStatus === 'checking'}><Trash2 size={15} /> Clear</button>}<span className={`api-saved-state ${settings.cloudstreamServerUrl ? 'active' : ''}`}><i />{settings.cloudstreamServerUrl ? 'Server connected' : 'No server configured'}</span></div>
-            </form>
-            {serverMessage && <p className={`api-key-message ${serverStatus}`} role="status">{serverStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{serverMessage}</p>}
-          </section>
-
           {/* Backup, Restore & Scrobble Sync */}
           <section className="settings-card">
             <div className="settings-card-heading">
@@ -399,8 +367,28 @@ const SettingsView: React.FC<{
           </section>
 
           <section className="settings-card">
-            <div className="settings-card-heading"><span><Gauge size={19} /></span><div><h2>Appearance</h2><p>A cinematic canvas with your own accent.</p></div></div>
-            <div className="setting-row"><div><strong>Accent color</strong><p>Used for actions, progress, and active navigation.</p></div><div className="accent-options">{(['lime', 'violet', 'blue'] as const).map((accent) => <button key={accent} className={`accent-${accent} ${settings.accent === accent ? 'active' : ''}`} onClick={() => update('accent', accent)} aria-label={`${accent} accent`}>{settings.accent === accent && <Check size={15} />}</button>)}</div></div>
+            <div className="settings-card-heading"><span><Gauge size={19} /></span><div><h2>Appearance & Palette</h2><p>Choose your theme accent palette from Nuvio colors.</p></div></div>
+            <div className="setting-row">
+              <div><strong>Theme Palette</strong><p>Accent colors for buttons, hero highlights, active tabs, and sliders.</p></div>
+              <div className="accent-grid">
+                {THEME_ACCENTS.map((accent) => {
+                  const isSelected = settings.accent === accent.id;
+                  return (
+                    <button
+                      key={accent.id}
+                      type="button"
+                      className={`accent-badge ${isSelected ? 'active' : ''}`}
+                      onClick={() => update('accent', accent.id)}
+                      aria-label={`${accent.label} theme`}
+                    >
+                      <span className="accent-circle" style={{ backgroundColor: accent.color }} />
+                      <span className="accent-name">{accent.label}</span>
+                      {isSelected && <Check size={14} className="accent-check" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </section>
         </div>
 
@@ -412,14 +400,13 @@ const SettingsView: React.FC<{
             <div className="setup-stat"><span>Active profile</span><strong>{activeProfile.name}</strong></div>
             <div className="setup-stat"><span>Stremio addons</span><strong>{addons.length}</strong></div>
             <div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div>
-            <div className="setup-stat"><span>CloudStream extensions</span><strong>{cloudstreamRepositories.reduce((sum, repo) => sum + repo.providers.length, 0)}</strong></div>
             <div className="setup-stat"><span>Debrid</span><strong>{settings.debrid.provider === 'none' ? 'Off' : settings.debrid.provider}</strong></div>
             <div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div>
             <p><Blocks size={14} /> Export a JSON backup anytime to mirror this setup across devices.</p>
           </section>
           <section className="settings-card privacy-card"><span className="settings-side-icon"><ShieldCheck size={21} /></span><h2>Private by design</h2><p>Your library, profiles, history, API keys, and extension settings stay local on your device.</p></section>
           <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset preferences</button>
-          <span className="version-label">PRAHA STREAM · 2.1.0</span>
+          <span className="version-label">PRAHA STREAM · 2.2.0</span>
         </aside>
       </div>
     </div>

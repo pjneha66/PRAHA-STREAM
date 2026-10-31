@@ -110,7 +110,6 @@ describe('backupSyncService & settings normalization', () => {
       settings,
       addons: [CINEMETA_ADDON],
       repositories: [],
-      cloudstreamRepositories: [],
       nuvioSettings: { 'repo:scraper1': { quality: '1080p' } },
       profiles: [DEFAULT_PROFILE],
       activeProfileId: 'default',

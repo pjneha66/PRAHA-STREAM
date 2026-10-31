@@ -43,7 +43,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     <section className="source-banner">
       <div className="source-banner-copy">
         <span className="source-banner-icon"><Blocks size={23} /></span>
-        <div><span>BUILT AROUND YOU</span><h2>One library. Every source.</h2><p>Bring your Stremio addons, Nuvio plugins, and CloudStream extensions together in one Android & web home.</p></div>
+        <div><span>BUILT AROUND YOU</span><h2>One library. Every source.</h2><p>Bring your Stremio addons and Nuvio plugins together in one Android & web home.</p></div>
       </div>
       <div className="source-banner-action">
         <span><i className={activeSources ? 'online' : ''} />{activeSources} active source{activeSources === 1 ? '' : 's'}</span>

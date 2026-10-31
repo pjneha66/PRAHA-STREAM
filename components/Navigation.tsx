@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, Check, Cloud, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, UserPlus,
+  Blocks, Check, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, UserPlus,
 } from 'lucide-react';
 import type { AppView, UserProfile } from '../types';
 
@@ -21,8 +21,15 @@ const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
-  { id: 'cloudstream' as const, label: 'CloudStream', icon: Cloud },
-  { id: 'library' as const, label: 'My library', icon: Library },
+  { id: 'library' as const, label: 'My Library', icon: Library },
+];
+
+const mobileNavItems = [
+  { id: 'home' as const, label: 'Home', icon: Home },
+  { id: 'discover' as const, label: 'Discover', icon: Compass },
+  { id: 'library' as const, label: 'Library', icon: Library },
+  { id: 'extensions' as const, label: 'Addons', icon: Blocks },
+  { id: 'settings' as const, label: 'Settings', icon: Settings },
 ];
 
 const Navigation: React.FC<NavigationProps> = ({
@@ -173,11 +180,24 @@ const Navigation: React.FC<NavigationProps> = ({
       </div>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {[...mainNav, { id: 'extensions' as const, label: 'Sources', icon: Blocks }, { id: 'settings' as const, label: 'Settings', icon: Settings }].map((item) => {
+        {mobileNavItems.map((item) => {
           const Icon = item.icon;
+          const isActive = view === item.id;
           return (
-            <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => onNavigate(item.id)}>
-              <Icon size={20} /><span>{item.label}</span>
+            <button
+              key={item.id}
+              className={`mobile-nav-btn ${isActive ? 'active' : ''}`}
+              onClick={() => onNavigate(item.id)}
+              aria-label={item.label}
+              aria-current={isActive ? 'page' : undefined}
+            >
+              <div className="mobile-nav-icon-wrap">
+                <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} />
+                {item.id === 'extensions' && sourceCount > 0 && (
+                  <span className="mobile-nav-badge">{sourceCount}</span>
+                )}
+              </div>
+              <span className="mobile-nav-label">{item.label}</span>
             </button>
           );
         })}

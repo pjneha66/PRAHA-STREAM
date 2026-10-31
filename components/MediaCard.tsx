@@ -68,7 +68,7 @@ export const ContinueCard: React.FC<{
           <span className="continue-shade" />
           <span className="continue-play"><Play size={17} fill="currentColor" /></span>
           <span className="continue-source">
-            {entry.media.source === 'stremio' ? 'ADDON' : entry.media.source === 'nuvio' ? 'NUVIO' : entry.media.source === 'cloudstream' ? 'CLOUDSTREAM' : 'TMDB'}
+            {entry.media.source === 'stremio' ? 'ADDON' : entry.media.source === 'nuvio' ? 'NUVIO' : 'TMDB'}
           </span>
           <span className="continue-timestamp">{timeLabel}</span>
         </div>

@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { findStremioStreams } from '../services/stremioService';
 import { findNuvioStreams } from '../services/nuvioService';
-import { findCloudStreamStreamsForMedia } from '../services/cloudstreamService';
 import { tmdbService } from '../services/tmdbService';
 import type {
-  CloudStreamRepository, InstalledAddon, MediaItem, NuvioRepository,
+  InstalledAddon, MediaItem, NuvioRepository,
   SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary,
 } from '../types';
 import SourcePanel from './SourcePanel';
@@ -15,7 +14,6 @@ const SourceModal: React.FC<{
   initialEpisode?: number;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
   nuvioSettings: Record<string, Record<string, unknown>>;
   tmdbApiKey?: string;
   preferredLanguage: string;
@@ -28,7 +26,6 @@ const SourceModal: React.FC<{
   initialEpisode = 1,
   addons,
   repositories,
-  cloudstreamRepositories,
   nuvioSettings,
   tmdbApiKey,
   preferredLanguage,
@@ -102,26 +99,18 @@ const SourceModal: React.FC<{
               streams: [],
               errors: repositories.length ? [{ sourceName: 'Nuvio', message: 'A TMDB ID could not be resolved for this title.' }] : [],
             });
-        const cloudstreamJob = findCloudStreamStreamsForMedia(
-          cloudstreamRepositories,
-          resolved,
-          ids.tmdbId,
-          tmdbApiKey,
-          s,
-          ep,
-        );
 
-        const [stremio, nuvio, cs] = await Promise.all([stremioJob, nuvioJob, cloudstreamJob]);
+        const [stremio, nuvio] = await Promise.all([stremioJob, nuvioJob]);
         if (cancelled) return;
         const seen = new Set<string>();
-        const unique = [...stremio.streams, ...nuvio.streams, ...cs.streams].filter((stream) => {
+        const unique = [...stremio.streams, ...nuvio.streams].filter((stream) => {
           const key = stream.url || (stream.ytId ? `youtube:${stream.ytId}` : stream.id);
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
         });
         setStreams(unique);
-        setErrors([...stremio.errors, ...nuvio.errors, ...cs.errors]);
+        setErrors([...stremio.errors, ...nuvio.errors]);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
       } finally { if (!cancelled) setLoading(false); }
@@ -139,10 +128,7 @@ const SourceModal: React.FC<{
 
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
-  const activeCsProviders = cloudstreamRepositories
-    .filter((repo) => repo.enabled)
-    .reduce((sum, repo) => sum + repo.providers.filter((p) => p.enabled && Boolean(p.code) && !p.nativeOnly).length, 0);
-  const providerCount = activeStreamAddons + activeScrapers + activeCsProviders;
+  const providerCount = activeStreamAddons + activeScrapers;
 
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
 

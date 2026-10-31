@@ -16,13 +16,16 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+.agents/
+.dsh/
+.opencode/
+.zcode/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.cloudstream-server/
 
 # macOS
 .DS_Store

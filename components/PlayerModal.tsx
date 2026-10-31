@@ -166,7 +166,7 @@ const PlayerModal: React.FC<{
               </button>
             )}
             <div className="player-source-label">
-              {activeStream.sourceType === 'nuvio' ? 'NUVIO' : activeStream.sourceType === 'cloudstream' ? 'CLOUDSTREAM' : 'STREMIO'} · {activeStream.sourceName}
+              {activeStream.sourceType === 'nuvio' ? 'NUVIO' : 'STREMIO'} · {activeStream.sourceName}
             </div>
             <button className="modal-close" onClick={onClose} aria-label="Close player"><X size={21} /></button>
           </div>

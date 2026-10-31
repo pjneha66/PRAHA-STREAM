@@ -73,9 +73,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   compactCards: false,
   reduceMotion: false,
   preferredLanguage: 'en',
-  accent: 'lime',
+  accent: 'gold',
   tmdbApiKey: '',
-  cloudstreamServerUrl: '',
   debrid: {
     provider: 'none',
     apiKey: '',

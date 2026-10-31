@@ -12,20 +12,17 @@ import {
 import {
   fetchNuvioRepository, getNuvioScraperSettingsSchema, testNuvioScraper,
 } from '../services/nuvioService';
-import { fetchCloudStreamRepository } from '../services/cloudstreamService';
 import type {
-  CloudStreamRepository, InstalledAddon, NuvioRepository, NuvioScraper, NuvioSettingField,
+  InstalledAddon, NuvioRepository, NuvioScraper, NuvioSettingField,
 } from '../types';
 import { Toggle } from './SettingsView';
 
 interface ExtensionsProps {
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
-  cloudstreamRepositories: CloudStreamRepository[];
   nuvioSettings: Record<string, Record<string, unknown>>;
   setAddons: (updater: InstalledAddon[] | ((current: InstalledAddon[]) => InstalledAddon[])) => void;
   setRepositories: (updater: NuvioRepository[] | ((current: NuvioRepository[]) => NuvioRepository[])) => void;
-  setCloudstreamRepositories: (updater: CloudStreamRepository[] | ((current: CloudStreamRepository[]) => CloudStreamRepository[])) => void;
   setNuvioSettings: (updater: Record<string, Record<string, unknown>> | ((current: Record<string, Record<string, unknown>>) => Record<string, Record<string, unknown>>)) => void;
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
 }
@@ -43,10 +40,10 @@ function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
 }
 
 const ExtensionsView: React.FC<ExtensionsProps> = ({
-  addons, repositories, cloudstreamRepositories, nuvioSettings,
-  setAddons, setRepositories, setCloudstreamRepositories, setNuvioSettings, notify,
+  addons, repositories, nuvioSettings,
+  setAddons, setRepositories, setNuvioSettings, notify,
 }) => {
-  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'cloudstream' | 'directory'>('stremio');
+  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'directory'>('stremio');
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState('');
@@ -60,10 +57,8 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
 
   const activeAddons = addons.filter((addon) => addon.enabled).length;
   const activeRepos = repositories.filter((repo) => repo.enabled).length;
-  const activeCsRepos = cloudstreamRepositories.filter((repo) => repo.enabled).length;
   const catalogs = addons.filter((addon) => addon.enabled).reduce((sum, addon) => sum + addon.manifest.catalogs.length, 0);
   const providers = repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0);
-  const csProviders = cloudstreamRepositories.reduce((sum, repo) => sum + repo.providers.length, 0);
 
   useEffect(() => {
     if (tab !== 'directory') return;
@@ -74,7 +69,7 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
     return () => { active = false; };
   }, [tab, addons]);
 
-  const installFromUrl = async (targetUrl: string, kind: 'stremio' | 'nuvio' | 'cloudstream') => {
+  const installFromUrl = async (targetUrl: string, kind: 'stremio' | 'nuvio') => {
     setInstalling(true); setInstallError(''); setBusy(targetUrl);
     try {
       if (kind === 'stremio') {
@@ -84,20 +79,13 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         }
         setAddons((current) => [...current, installed]);
         notify(`${installed.manifest.name} is ready to use.`, 'success');
-      } else if (kind === 'nuvio') {
+      } else {
         const installed = await fetchNuvioRepository(targetUrl);
         if (repositories.some((repo) => repo.manifestUrl === installed.manifestUrl)) {
           throw new Error('That repository is already installed.');
         }
         setRepositories((current) => [...current, installed]);
         notify(`${installed.name} added with ${installed.scrapers.length} provider${installed.scrapers.length === 1 ? '' : 's'}.`, 'success');
-      } else {
-        const installed = await fetchCloudStreamRepository(targetUrl);
-        if (cloudstreamRepositories.some((repo) => repo.manifestUrl === installed.manifestUrl)) {
-          throw new Error('That repository is already installed.');
-        }
-        setCloudstreamRepositories((current) => [...current, installed]);
-        notify(`${installed.name} added with ${installed.providers.length} extension${installed.providers.length === 1 ? '' : 's'}.`, 'success');
       }
       setInstallUrl('');
     } catch (error) {
@@ -134,16 +122,6 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
     try {
       const refreshed = await fetchNuvioRepository(repository.manifestUrl, repository);
       setRepositories((current) => current.map((entry) => entry.manifestUrl === repository.manifestUrl ? refreshed : entry));
-      notify(`${repository.name} is up to date.`, 'success');
-    } catch (error) { notify(error instanceof Error ? error.message : 'Could not refresh repository.', 'error'); }
-    finally { setBusy(''); }
-  };
-
-  const refreshCloudStreamRepository = async (repository: CloudStreamRepository) => {
-    setBusy(repository.manifestUrl);
-    try {
-      const refreshed = await fetchCloudStreamRepository(repository.manifestUrl, repository);
-      setCloudstreamRepositories((current) => current.map((entry) => entry.manifestUrl === repository.manifestUrl ? refreshed : entry));
       notify(`${repository.name} is up to date.`, 'success');
     } catch (error) { notify(error instanceof Error ? error.message : 'Could not refresh repository.', 'error'); }
     finally { setBusy(''); }
@@ -195,33 +173,29 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
       <div className="extension-hero">
         <div className="extension-orbit orbit-one" /><div className="extension-orbit orbit-two" />
         <span className="extension-hero-icon"><WandSparkles size={26} /></span>
-        <div><span className="page-kicker">POWERED BY YOUR SOURCES</span><h1>Make PRAHA your own.</h1><p>Connect Stremio addons, Nuvio scrapers, and CloudStream extensions with native Android CORS bypass and priority ordering.</p></div>
-        <div className="compatibility-badges"><span><Blocks size={16} /> Stremio + Subtitles</span><span><Zap size={16} /> Nuvio compatible</span><span><Package size={16} /> CloudStream compatible</span></div>
+        <div><span className="page-kicker">POWERED BY YOUR SOURCES</span><h1>Make PRAHA your own.</h1><p>Connect Stremio addons and Nuvio scrapers with native Android CORS bypass and priority ordering.</p></div>
+        <div className="compatibility-badges"><span><Blocks size={16} /> Stremio + Subtitles</span><span><Zap size={16} /> Nuvio compatible</span></div>
       </div>
 
       <div className="extension-stats">
-        <div><span className="stat-icon lime"><Plug size={19} /></span><p>Active sources<strong>{activeAddons + activeRepos + activeCsRepos}</strong></p><small>Ready when you are</small></div>
-        <div><span className="stat-icon violet"><Cloud size={19} /></span><p>Available catalogs<strong>{catalogs}</strong></p><small>Across installed addons</small></div>
+        <div><span className="stat-icon lime"><Plug size={19} /></span><p>Active sources<strong>{activeAddons + activeRepos}</strong></p><small>Ready when you are</small></div>
         <div><span className="stat-icon blue"><Zap size={19} /></span><p>Nuvio providers<strong>{providers}</strong></p><small>Individual scrapers</small></div>
-        <div><span className="stat-icon cloudstream"><Layers size={19} /></span><p>CloudStream extensions<strong>{csProviders}</strong></p><small>From installed repos</small></div>
+        <div><span className="stat-icon violet"><Layers size={19} /></span><p>Available catalogs<strong>{catalogs}</strong></p><small>Across installed addons</small></div>
       </div>
 
       <div className="extension-tabs">
         <button className={tab === 'stremio' ? 'active' : ''} onClick={() => { setTab('stremio'); setInstallError(''); }}><Blocks size={18} /><span>Stremio addons<small>Catalogs, subtitles & streams</small></span><b>{addons.length}</b></button>
         <button className={tab === 'nuvio' ? 'active' : ''} onClick={() => { setTab('nuvio'); setInstallError(''); }}><Zap size={18} /><span>Nuvio plugins<small>Repositories & scrapers</small></span><b>{repositories.length}</b></button>
-        <button className={tab === 'cloudstream' ? 'active' : ''} onClick={() => { setTab('cloudstream'); setInstallError(''); }}><Package size={18} /><span>CloudStream<small>Repositories & extensions</small></span><b>{cloudstreamRepositories.length}</b></button>
         <button className={tab === 'directory' ? 'active' : ''} onClick={() => { setTab('directory'); setInstallError(''); }}><Compass size={18} /><span>1-Click Directory<small>Subtitles, anime & catalogs</small></span><b>{CURATED_EXTENSIONS.length}</b></button>
       </div>
 
       {tab !== 'directory' && (
         <section className="install-panel">
-          <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : tab === 'nuvio' ? <Zap size={20} /> : <Package size={20} />}</span><div><h2>Add {tab === 'stremio' ? 'a Stremio addon' : tab === 'nuvio' ? 'a Nuvio repository' : 'a CloudStream repository'}</h2><p>{tab === 'stremio'
+          <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : <Zap size={20} />}</span><div><h2>Add {tab === 'stremio' ? 'a Stremio addon' : 'a Nuvio repository'}</h2><p>{tab === 'stremio'
             ? 'Paste a manifest URL or stremio:// link. Subtitle addons like OpenSubtitles work automatically.'
-            : tab === 'nuvio'
-              ? 'Paste the repository URL. PRAHA fetches its manifest and runs scrapers with Android native HTTP.'
-              : 'Paste a repo.json or plugins.json URL. PRAHA fetches its manifest and extension list.'}</p></div></div>
+            : 'Paste the repository URL. PRAHA fetches its manifest and runs scrapers with Android native HTTP.'}</p></div></div>
           <form onSubmit={install} className="install-form">
-            <div><Search size={17} /><input value={installUrl} onChange={(event) => { setInstallUrl(event.target.value); setInstallError(''); }} placeholder={tab === 'stremio' ? 'https://addon.example/manifest.json' : tab === 'nuvio' ? 'https://github.com/user/nuvio-repository' : 'https://raw.githubusercontent.com/user/repo/builds/repo.json'} aria-label="Extension URL" /></div>
+            <div><Search size={17} /><input value={installUrl} onChange={(event) => { setInstallUrl(event.target.value); setInstallError(''); }} placeholder={tab === 'stremio' ? 'https://addon.example/manifest.json' : 'https://github.com/user/nuvio-repository'} aria-label="Extension URL" /></div>
             <button className="button button-primary" disabled={installing}>{installing ? <RefreshCw size={17} className="spin" /> : <Plug size={17} />}{installing ? 'Installing…' : 'Install'}</button>
           </form>
           {installError && <p className="install-error"><CircleAlert size={15} />{installError}</p>}
@@ -295,10 +269,10 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
       {tab !== 'directory' && (
         <div className="installed-heading">
           <div>
-            <h2>Installed {tab === 'stremio' ? 'addons' : tab === 'nuvio' ? 'repositories' : 'extensions'}</h2>
-            <p>{tab === 'stremio' ? 'Toggle, configure, or reorder sources across PRAHA.' : tab === 'nuvio' ? 'Control each repository, configure scraper settings, and test connections.' : 'Control the whole repository or each extension individually.'}</p>
+            <h2>Installed {tab === 'stremio' ? 'addons' : 'repositories'}</h2>
+            <p>{tab === 'stremio' ? 'Toggle, configure, or reorder sources across PRAHA.' : 'Control each repository, configure scraper settings, and test connections.'}</p>
           </div>
-          <span>{tab === 'stremio' ? addons.length : tab === 'nuvio' ? repositories.length : cloudstreamRepositories.length} total</span>
+          <span>{tab === 'stremio' ? addons.length : repositories.length} total</span>
         </div>
       )}
 
@@ -403,104 +377,7 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         </div>
       )}
 
-      {tab === 'cloudstream' && (
-        <div className="extension-list">
-          {cloudstreamRepositories.map((repository, index) => {
-            const isExpanded = expanded === repository.manifestUrl || repository.providers.length > 0;
-            return (
-              <article className={`extension-card repository-card ${!repository.enabled ? 'disabled' : ''}`} key={repository.manifestUrl}>
-                <div className="extension-card-main">
-                  <div className="extension-logo cloudstream"><Package size={24} /></div>
-                  <div className="extension-info"><div className="extension-title"><h3>{repository.name}</h3><span>v{repository.manifestVersion ?? '—'}</span>{repository.enabled && <span className="active-badge"><i />ACTIVE</span>}</div><p>{repository.description || `CloudStream repository by ${shortUrl(repository.manifestUrl)}`}</p><div className="resource-badges"><span>{repository.providers.length} extensions</span><span>{shortUrl(repository.manifestUrl)}</span></div></div>
-                  <div className="extension-actions">
-                    <button className="icon-button" disabled={index === 0} onClick={() => setCloudstreamRepositories((cur) => moveItem(cur, index, -1))} aria-label="Move repository up"><ArrowUp size={15} /></button>
-                    <button className="icon-button" disabled={index === cloudstreamRepositories.length - 1} onClick={() => setCloudstreamRepositories((cur) => moveItem(cur, index, 1))} aria-label="Move repository down"><ArrowDown size={15} /></button>
-                    <Toggle checked={repository.enabled} onChange={(enabled) => setCloudstreamRepositories((current) => current.map((entry) => entry.manifestUrl === repository.manifestUrl ? { ...entry, enabled } : entry))} label={`Toggle ${repository.name}`} />
-                    <button className="icon-button" onClick={() => refreshCloudStreamRepository(repository)} disabled={busy === repository.manifestUrl} aria-label={`Refresh ${repository.name}`}><RefreshCw size={17} className={busy === repository.manifestUrl ? 'spin' : ''} /></button>
-                    <button className="icon-button danger" onClick={() => { setCloudstreamRepositories((current) => current.filter((entry) => entry.manifestUrl !== repository.manifestUrl)); notify(`${repository.name} removed.`); }} aria-label={`Remove ${repository.name}`}><Trash2 size={17} /></button>
-                  </div>
-                </div>
-                {isExpanded && <div className="scraper-list">{repository.providers.map((provider) => <div className="scraper-row" key={provider.id}><span className="scraper-icon cloudstream">{provider.iconUrl ? <img src={provider.iconUrl.replace('%size%', '64')} alt="" /> : <Package size={16} />}</span><div><strong>{provider.name}<small>v{provider.version ?? '—'}</small></strong><p>{provider.description || provider.tvTypes?.join(' · ')}{provider.language ? ` · ${provider.language.toUpperCase()}` : ''}</p></div><span className={`scraper-status ${provider.enabled ? '' : 'paused'}`}>{provider.enabled ? 'Ready' : 'Paused'}</span><Toggle checked={provider.enabled} onChange={(enabled) => setCloudstreamRepositories((current) => current.map((repo) => repo.manifestUrl === repository.manifestUrl ? { ...repo, providers: repo.providers.map((entry) => entry.id === provider.id ? { ...entry, enabled: enabled && entry.manifestEnabled } : entry) } : repo))} label={`Toggle ${provider.name}`} /></div>)}</div>}
-              </article>
-            );
-          })}
-          {!cloudstreamRepositories.length && <div className="empty-state extension-empty cloudstream-empty"><span><PackageOpen size={27} /></span><h2>Your extension shelf is empty</h2><p>Add a CloudStream repository above. Its extensions appear here with individual controls.</p></div>}
-        </div>
-      )}
-
-      {editingScraper && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setEditingScraper(null)}>
-          <section className="scraper-settings-modal" role="dialog" aria-modal="true" aria-label={`${editingScraper.name} settings`}>
-            <header>
-              <div>
-                <span className="page-kicker">PROVIDER SETTINGS</span>
-                <h3>{editingScraper.name}</h3>
-              </div>
-              <button className="modal-close" onClick={() => setEditingScraper(null)} aria-label="Close"><X size={18} /></button>
-            </header>
-            <div className="scraper-settings-body">
-              {schemaLoading ? (
-                <p>Inspecting provider settings schema…</p>
-              ) : scraperSchema.length > 0 ? (
-                scraperSchema.map((field) => (
-                  <label className="scraper-field" key={field.key}>
-                    <strong>{field.label || field.key}</strong>
-                    {field.description && <small>{field.description}</small>}
-                    {field.type === 'boolean' || field.type === 'toggle' ? (
-                      <Toggle
-                        checked={Boolean(scraperDraft[field.key])}
-                        onChange={(val) => setScraperDraft((cur) => ({ ...cur, [field.key]: val }))}
-                        label={field.label || field.key}
-                      />
-                    ) : field.options?.length ? (
-                      <select
-                        value={String(scraperDraft[field.key] ?? '')}
-                        onChange={(e) => setScraperDraft((cur) => ({ ...cur, [field.key]: e.target.value }))}
-                      >
-                        {field.options.map((opt) => {
-                          const value = typeof opt === 'string' ? opt : opt.value;
-                          const label = typeof opt === 'string' ? opt : opt.label;
-                          return <option key={value} value={value}>{label}</option>;
-                        })}
-                      </select>
-                    ) : (
-                      <input
-                        type={field.type === 'password' ? 'password' : 'text'}
-                        value={String(scraperDraft[field.key] ?? '')}
-                        placeholder={field.placeholder || ''}
-                        onChange={(e) => setScraperDraft((cur) => ({ ...cur, [field.key]: e.target.value }))}
-                      />
-                    )}
-                  </label>
-                ))
-              ) : (
-                <label className="scraper-field">
-                  <strong>Custom provider settings (JSON)</strong>
-                  <small>This scraper did not declare a dynamic form schema. You can still supply key-value JSON passed to <code>SCRAPER_SETTINGS</code>.</small>
-                  <textarea
-                    rows={5}
-                    defaultValue={JSON.stringify(scraperDraft, null, 2)}
-                    onChange={(e) => {
-                      try {
-                        const parsed = JSON.parse(e.target.value);
-                        if (parsed && typeof parsed === 'object') setScraperDraft(parsed);
-                      } catch {
-                        // Wait until valid JSON before updating draft
-                      }
-                    }}
-                  />
-                </label>
-              )}
-            </div>
-            <footer>
-              <button className="button button-secondary" onClick={() => setEditingScraper(null)}>Cancel</button>
-              <button className="button button-primary" onClick={saveScraperSettings}><Check size={15} /> Save settings</button>
-            </footer>
-          </section>
-        </div>
-      )}
-
-      <div className="extension-footer"><div><ShieldCheck size={18} /><p><strong>Android Native Networking</strong>Inside the PRAHA Android APK, Stremio addons, Nuvio scrapers, and CloudStream plugins automatically route blocked requests and custom stream headers through PRAHA’s native Android HTTP & local stream proxy.</p></div><a href={tab === 'nuvio' ? 'https://github.com/NuvioMedia/NuvioMobile' : tab === 'cloudstream' ? 'https://github.com/recloudstream/cloudstream' : 'https://github.com/Stremio/stremio-addon-sdk'} target="_blank" rel="noreferrer">View project docs <ArrowUpRight size={15} /></a></div>
+      <div className="extension-footer"><div><ShieldCheck size={18} /><p><strong>Android Native Networking</strong>Inside the PRAHA Android APK, Stremio addons and Nuvio scrapers automatically route blocked requests and custom stream headers through PRAHA’s native Android HTTP & local stream proxy.</p></div><a href={tab === 'nuvio' ? 'https://github.com/NuvioMedia/NuvioMobile' : 'https://github.com/Stremio/stremio-addon-sdk'} target="_blank" rel="noreferrer">View project docs <ArrowUpRight size={15} /></a></div>
     </div>
   );
 };
