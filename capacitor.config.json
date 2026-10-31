@@ -2,11 +2,18 @@
   "appId": "com.praha.stream",
   "appName": "PRAHA STREAM",
   "webDir": "dist",
+  "backgroundColor": "#090a0c",
   "server": {
     "androidScheme": "https",
     "cleartext": true
   },
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "backgroundColor": "#090a0c"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }

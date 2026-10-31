@@ -1,5 +1,10 @@
 apply plugin: 'com.android.application'
 
+def ksPath = System.getenv("ANDROID_KEYSTORE_PATH") ?: 'release.keystore'
+def ksPass = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: 'prahastream'
+def ksAlias = System.getenv("ANDROID_KEY_ALIAS") ?: 'prahastream'
+def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD") ?: 'prahastream'
+
 android {
     namespace = "com.praha.stream"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,21 +12,19 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "2.0.0"
+        versionCode 2
+        versionName "2.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
     signingConfigs {
         release {
-            storeFile file('release.keystore')
-            storePassword 'prahastream'
-            keyAlias 'prahastream'
-            keyPassword 'prahastream'
+            storeFile file(ksPath)
+            storePassword ksPass
+            keyAlias ksAlias
+            keyPassword ksKeyPass
         }
     }
     buildTypes {
@@ -29,6 +32,33 @@ android {
             signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+tasks.register('ensureReleaseKeystore') {
+    doLast {
+        def ksFile = file(ksPath)
+        if (!ksFile.exists()) {
+            ksFile.parentFile.mkdirs()
+            def javaHome = System.getProperty("java.home")
+            def keytoolBin = file("${javaHome}/bin/keytool").exists() ? "${javaHome}/bin/keytool" : "keytool"
+            def pb = new ProcessBuilder(
+                keytoolBin, '-genkeypair', '-v',
+                '-keystore', ksFile.absolutePath,
+                '-alias', ksAlias,
+                '-keyalg', 'RSA',
+                '-keysize', '2048',
+                '-validity', '10000',
+                '-storepass', ksPass,
+                '-keypass', ksKeyPass,
+                '-dname', 'CN=PRAHA STREAM, OU=Android, O=PRAHA, L=Mumbai, S=MH, C=IN'
+            )
+            pb.inheritIO()
+            def proc = pb.start()
+            if (proc.waitFor() != 0) {
+                throw new GradleException("Failed to generate release keystore")
+            }
         }
     }
 }
@@ -84,7 +114,12 @@ tasks.register('copyApkToDist') {
     }
 }
 afterEvaluate {
-    tasks.named('assembleRelease').configure { finalizedBy('copyApkToDist') }
+    tasks.matching { it.name.contains("Release") && it.name.startsWith("validateSigning") }.configureEach {
+        dependsOn('ensureReleaseKeystore')
+    }
+    tasks.named('assembleRelease').configure {
+        dependsOn('ensureReleaseKeystore')
+        finalizedBy('copyApkToDist')
+    }
     tasks.named('assembleDebug').configure { finalizedBy('copyApkToDist') }
 }
-

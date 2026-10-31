@@ -1,0 +1,18 @@
+{
+  "name": "PRAHA STREAM",
+  "short_name": "PRAHA",
+  "description": "One local-first Android & web home for your Stremio addons, Nuvio plugins, and CloudStream extensions.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#090a0c",
+  "theme_color": "#090a0c",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

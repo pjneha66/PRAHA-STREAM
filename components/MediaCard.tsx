@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Play, Plus, Star } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Play, Plus, Star, X } from 'lucide-react';
 import type { MediaItem, WatchProgress } from '../types';
+import { formatTime } from './player/format';
 
 export const Artwork: React.FC<{ src?: string; alt: string; className?: string }> = ({ src, alt, className = '' }) => {
   const [failed, setFailed] = useState(false);
@@ -45,21 +46,55 @@ export const MediaCard: React.FC<MediaCardProps> = ({ item, onSelect, onToggleWa
 export const ContinueCard: React.FC<{
   entry: WatchProgress;
   onPlay: (item: MediaItem) => void;
-}> = ({ entry, onPlay }) => (
-  <button className="continue-card" onClick={() => onPlay(entry.media)}>
-    <div className="continue-art">
-      <Artwork src={entry.media.backdrop || entry.media.poster} alt="" />
-      <span className="continue-shade" />
-      <span className="continue-play"><Play size={17} fill="currentColor" /></span>
-      <span className="continue-source">{entry.media.source === 'stremio' ? 'ADDON' : entry.media.source === 'nuvio' ? 'NUVIO' : entry.media.source === 'cloudstream' ? 'CLOUDSTREAM' : 'TMDB'}</span>
-    </div>
-    <div className="continue-copy">
-      <strong>{entry.media.title}</strong>
-      <span>{entry.media.type === 'series' && entry.season ? `S${entry.season} E${entry.episode || 1}` : entry.media.genres.slice(0, 2).join(' • ') || entry.media.year}</span>
-    </div>
-    <div className="progress-track"><span style={{ width: `${entry.progress}%` }} /></div>
-  </button>
-);
+  onResumeEntry?: (entry: WatchProgress) => void;
+  onRemove?: (entry: WatchProgress) => void;
+}> = ({ entry, onPlay, onResumeEntry, onRemove }) => {
+  const episodeLabel = entry.media.type === 'series' && entry.season
+    ? `S${entry.season} E${entry.episode || 1}${entry.episodeTitle ? ` · ${entry.episodeTitle}` : ''}`
+    : entry.media.genres.slice(0, 2).join(' • ') || entry.media.year || '';
+
+  const timeLabel = entry.currentTime && entry.duration
+    ? `${formatTime(entry.currentTime)} / ${formatTime(entry.duration)}`
+    : `${Math.max(1, Math.min(100, Math.round(entry.progress)))}%`;
+
+  return (
+    <article className="continue-card-wrap">
+      <button
+        className="continue-card"
+        onClick={() => (onResumeEntry ? onResumeEntry(entry) : onPlay(entry.media))}
+      >
+        <div className="continue-art">
+          <Artwork src={entry.media.backdrop || entry.media.poster} alt="" />
+          <span className="continue-shade" />
+          <span className="continue-play"><Play size={17} fill="currentColor" /></span>
+          <span className="continue-source">
+            {entry.media.source === 'stremio' ? 'ADDON' : entry.media.source === 'nuvio' ? 'NUVIO' : entry.media.source === 'cloudstream' ? 'CLOUDSTREAM' : 'TMDB'}
+          </span>
+          <span className="continue-timestamp">{timeLabel}</span>
+        </div>
+        <div className="continue-copy">
+          <strong>{entry.media.title}</strong>
+          <span>{episodeLabel}</span>
+        </div>
+        <div className="progress-track"><span style={{ width: `${Math.max(2, Math.min(100, entry.progress))}%` }} /></div>
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          className="continue-remove"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove(entry);
+          }}
+          aria-label={`Remove ${entry.media.title} from Continue Watching`}
+          title="Remove from Continue Watching"
+        >
+          <X size={13} />
+        </button>
+      )}
+    </article>
+  );
+};
 
 export const MediaRow: React.FC<{
   title: string;

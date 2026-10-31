@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
-import type { PlayerSettings, StreamSubtitle } from '../../types';
+import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
+import { enterNativeAndroidPip, setImmersiveFullscreen } from '../../services/androidBridge';
 import { clamp } from './format';
 
 export interface LevelOption {
@@ -27,6 +28,7 @@ export interface PlayerStats {
   bitrate?: number;
   levelLabel: string;
   readyState: number;
+  engineName: string;
 }
 
 interface EngineOptions {
@@ -35,23 +37,60 @@ interface EngineOptions {
   autoplay: boolean;
   volume: number;
   speed: number;
+  landscapeLock?: boolean;
+  initialTime?: number;
+  mediaMeta?: {
+    media: MediaItem;
+    season?: number;
+    episode?: number;
+  };
+  onProgress?: (currentTime: number, duration: number) => void;
+  onEnded?: () => void;
+  onNextEpisode?: () => void;
   onFatalError: (message: string) => void;
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
 }
 
-const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url);
+const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url);
+const isDashUrl = (url: string) => /\.mpd($|\?)/i.test(url) || /[?&]format=mpd\b/i.test(url);
+const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
 
 /**
- * Wires a stream URL to a <video> element the way mpv does: quality variants,
- * audio tracks, subtitle tracks, statistics, and A-B looping all live here so
- * the UI layer only has to render state and call controls.
+ * Wires a stream URL to a <video> element the way mpv does: HLS (`hls.js`),
+ * DASH (`dashjs`), MPEG-TS (`mpegts.js`), native HTML5 video, MediaSession OS
+ * lock-screen controls, RemotePlayback Cast, resume-from-timestamp, quality
+ * variants, audio/subtitle tracks, statistics, and A-B looping.
  */
-export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalError, onSettingsChange }: EngineOptions) {
+export function useMpvEngine({
+  url,
+  subtitles,
+  autoplay,
+  volume,
+  speed,
+  landscapeLock = true,
+  initialTime = 0,
+  mediaMeta,
+  onProgress,
+  onEnded,
+  onNextEpisode,
+  onFatalError,
+  onSettingsChange,
+}: EngineOptions) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const dashRef = useRef<{ reset: () => void; setQualityFor?: (type: string, index: number, force?: boolean) => void; setAutoSwitchQualityFor?: (type: string, enable: boolean) => void } | null>(null);
+  const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef<'network' | 'media' | null>(null);
   const frameTimesRef = useRef<number[]>([]);
   const rafRef = useRef<number | null>(null);
+  const initialSeekDoneRef = useRef(false);
+  const lastProgressSentRef = useRef(0);
+  const engineNameRef = useRef('HTML5');
+
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
 
   const [ready, setReady] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -69,25 +108,32 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
   const [textTracks, setTextTracks] = useState<TrackOption[]>([]);
   const [currentText, setCurrentText] = useState('');
   const [stats, setStats] = useState<PlayerStats | null>(null);
+  const [canCast, setCanCast] = useState(false);
   const [loop, setLoop] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const loopRef = useRef(loop);
   loopRef.current = loop;
 
-  /** Attach the source: hls.js for HLS playlists, the media element for the rest. */
+  /** Attach the source: hls.js for HLS, dashjs for MPD, mpegts.js for TS/FLV, or native <video>. */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !url) return;
+    let disposed = false;
+
     setReady(false);
     setLevels([]);
     setAudioTracks([]);
     setCurrentLevel(-1);
     recoveredRef.current = null;
     frameTimesRef.current = [];
+    initialSeekDoneRef.current = false;
+    engineNameRef.current = 'HTML5';
 
     if (isHlsUrl(url) && Hls.isSupported()) {
+      engineNameRef.current = 'hls.js';
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 60 });
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (disposed) return;
         setLevels(hls.levels.map((level, index) => ({
           id: index,
           label: level.height ? `${level.height}p` : level.width ? `${level.width}px` : `Variant ${index + 1}`,
@@ -111,7 +157,7 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
       });
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_, data) => setCurrentAudio(`audio:${data.id}`));
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) return;
+        if (!data.fatal || disposed) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recoveredRef.current !== 'network') {
           recoveredRef.current = 'network';
           hls.startLoad();
@@ -123,25 +169,91 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
           return;
         }
         hls.destroy();
-        onFatalError('This HLS source could not be loaded. It may require custom headers, or it blocks browser playback.');
+        onFatalError('This HLS source could not be loaded. Try another stream or open it in an external player.');
       });
       hls.loadSource(url);
       hls.attachMedia(video);
+    } else if (isDashUrl(url)) {
+      engineNameRef.current = 'dash.js';
+      import('dashjs').then((dashModule) => {
+        if (disposed) return;
+        const dash = dashModule.MediaPlayer().create();
+        dash.initialize(video, url, autoplay);
+        dashRef.current = dash as unknown as typeof dashRef.current;
+        dash.on('streamInitialized', () => {
+          if (disposed) return;
+          const dashAny = dash as unknown as { getBitrateInfoListFor?: (type: string) => Array<{ qualityIndex: number; height?: number; bitrate?: number }> };
+          const bitrates = dashAny.getBitrateInfoListFor?.('video') || [];
+          setLevels(bitrates.map((info, idx) => ({
+            id: info.qualityIndex ?? idx,
+            label: info.height ? `${info.height}p` : `Variant ${idx + 1}`,
+            bitrate: info.bitrate,
+          })));
+        });
+        dash.on('error', () => {
+          if (!disposed) onFatalError('This DASH (.mpd) stream could not be loaded.');
+        });
+      }).catch(() => {
+        if (!disposed) {
+          video.src = url;
+          if (autoplay) video.play().catch(() => undefined);
+        }
+      });
+    } else if (isMpegTsUrl(url)) {
+      engineNameRef.current = 'mpegts.js';
+      import('mpegts.js').then((mpegtsModule) => {
+        if (disposed) return;
+        const mpegts = mpegtsModule.default;
+        if (mpegts.isSupported()) {
+          const type = /\.flv($|\?)/i.test(url) ? 'flv' : 'mpegts';
+          const player = mpegts.createPlayer({ type, url, isLive: false });
+          player.attachMediaElement(video);
+          player.load();
+          if (autoplay) Promise.resolve(player.play()).catch(() => undefined);
+          mpegtsRef.current = player;
+        } else {
+          video.src = url;
+          if (autoplay) video.play().catch(() => undefined);
+        }
+      }).catch(() => {
+        if (!disposed) {
+          video.src = url;
+          if (autoplay) video.play().catch(() => undefined);
+        }
+      });
     } else {
       video.src = url;
       if (autoplay) video.play().catch(() => undefined);
     }
 
+    // Detect RemotePlayback (Chromecast / AirPlay) support
+    const remote = (video as HTMLVideoElement & { remote?: { watchAvailability?: (cb: (avail: boolean) => void) => Promise<number> } }).remote;
+    if (remote?.watchAvailability) {
+      remote.watchAvailability((available) => {
+        if (!disposed) setCanCast(available);
+      }).catch(() => {
+        if (!disposed) setCanCast(true);
+      });
+    }
+
     return () => {
+      disposed = true;
+      if (video.currentTime > 1 && Number.isFinite(video.duration) && video.duration > 0) {
+        onProgressRef.current?.(video.currentTime, video.duration);
+      }
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      dashRef.current?.reset();
+      dashRef.current = null;
+      mpegtsRef.current?.destroy();
+      mpegtsRef.current = null;
       video.pause();
       video.removeAttribute('src');
       video.load();
     };
   }, [url, autoplay, onFatalError]);
 
-  /** Keep volume, speed, and brightness in sync with saved settings. */
+  /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -156,10 +268,19 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
     setRate(speed);
   }, [speed]);
 
-  /** Mirror the element's playback state into React. */
+  /** Mirror the element's playback state, resume timestamp, and progress callbacks. */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    const emitProgress = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastProgressSentRef.current < 3000) return;
+      if (video.currentTime > 1 && Number.isFinite(video.duration) && video.duration > 0) {
+        lastProgressSentRef.current = now;
+        onProgressRef.current?.(video.currentTime, video.duration);
+      }
+    };
 
     const syncBuffered = () => {
       const ranges = video.buffered;
@@ -171,10 +292,19 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
         }
       }
     };
-    const syncTime = () => setCurrentTime(video.currentTime);
+    const syncTime = () => {
+      setCurrentTime(video.currentTime);
+      emitProgress(false);
+    };
     const syncDuration = () => {
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+      const dur = Number.isFinite(video.duration) ? video.duration : 0;
+      setDuration(dur);
       setReady(true);
+      if (!initialSeekDoneRef.current && initialTime > 3 && dur > 0 && initialTime < dur - 12) {
+        initialSeekDoneRef.current = true;
+        video.currentTime = initialTime;
+        setCurrentTime(initialTime);
+      }
     };
     const syncTextTracks = () => {
       const list = video.textTracks;
@@ -185,7 +315,7 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
         const hlsIndex = index - subtitles.length;
         const isHls = hlsIndex >= 0 && hlsRef.current?.subtitleTracks.length ? hlsIndex : undefined;
         options.push({
-          id: isHls !== undefined ? `hls:${isHls}` : `text:${index}`,
+          id: isHls !== undefined ? `hls:${hlsIndex}` : `text:${index}`,
           label: track.label || track.language || `Subtitles ${index + 1}`,
           language: track.language || undefined,
           hlsIndex: isHls,
@@ -200,11 +330,19 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
       setMuted(video.muted);
     };
     const syncRate = () => setRate(video.playbackRate);
+    const handlePlay = () => setPlaying(true);
+    const handlePlaying = () => { setPlaying(true); setWaiting(false); };
+    const handlePause = () => { setPlaying(false); emitProgress(true); };
+    const handleWaiting = () => setWaiting(true);
+    const handleCanPlay = () => { setReady(true); setWaiting(false); };
+    const handleEnded = () => {
+      setPlaying(false);
+      emitProgress(true);
+      onEndedRef.current?.();
+    };
 
     syncDuration();
     syncTextTracks();
-    // Autoplay can start before these listeners are attached, so mirror the
-    // element's current state instead of waiting for an event we already missed.
     setPlaying(!video.paused);
     setWaiting(video.readyState < 3);
 
@@ -212,12 +350,12 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
     video.addEventListener('durationchange', syncDuration);
     video.addEventListener('timeupdate', syncTime);
     video.addEventListener('progress', syncBuffered);
-    video.addEventListener('play', () => setPlaying(true));
-    video.addEventListener('playing', () => { setPlaying(true); setWaiting(false); });
-    video.addEventListener('pause', () => setPlaying(false));
-    video.addEventListener('waiting', () => setWaiting(true));
-    video.addEventListener('canplay', () => { setReady(true); setWaiting(false); });
-    video.addEventListener('ended', () => setPlaying(false));
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('playing', handlePlaying);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('ended', handleEnded);
     video.addEventListener('volumechange', syncVolume);
     video.addEventListener('ratechange', syncRate);
     video.textTracks.addEventListener('addtrack', syncTextTracks);
@@ -229,13 +367,69 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
       video.removeEventListener('durationchange', syncDuration);
       video.removeEventListener('timeupdate', syncTime);
       video.removeEventListener('progress', syncBuffered);
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('playing', handlePlaying);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('ended', handleEnded);
       video.removeEventListener('volumechange', syncVolume);
       video.removeEventListener('ratechange', syncRate);
       video.textTracks.removeEventListener('addtrack', syncTextTracks);
       video.textTracks.removeEventListener('removetrack', syncTextTracks);
       video.textTracks.removeEventListener('change', syncTextTracks);
     };
-  }, [subtitles.length]);
+  }, [subtitles.length, initialTime]);
+
+  /** MediaSession API for Android notification shade, lock screen, headsets & TV remotes. */
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !mediaMeta) return;
+    const { media, season, episode } = mediaMeta;
+    const subtitle = media.type === 'series' && season
+      ? `Season ${season} · Episode ${episode || 1}`
+      : media.year || 'PRAHA STREAM';
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: media.title,
+        artist: subtitle,
+        album: 'PRAHA STREAM',
+        artwork: media.poster ? [{ src: media.poster, sizes: '512x512', type: 'image/jpeg' }] : [],
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => videoRef.current?.play().catch(() => undefined));
+      navigator.mediaSession.setActionHandler('pause', () => videoRef.current?.pause());
+      navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+        if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - (details.seekOffset || 10));
+      });
+      navigator.mediaSession.setActionHandler('seekforward', (details) => {
+        if (videoRef.current) videoRef.current.currentTime += details.seekOffset || 10;
+      });
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (videoRef.current && typeof details.seekTime === 'number') videoRef.current.currentTime = details.seekTime;
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', onNextEpisode || null);
+    } catch {
+      // Ignore partial MediaSession implementations.
+    }
+
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+      } catch { /* ignore */ }
+    };
+  }, [mediaMeta, onNextEpisode]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !duration) return;
+    try {
+      navigator.mediaSession.setPositionState?.({
+        duration,
+        playbackRate: rate || 1,
+        position: clamp(currentTime, 0, duration),
+      });
+    } catch { /* ignore */ }
+  }, [currentTime, duration, rate]);
 
   // A-B loop and frame-rate sampling run on the same animation frame.
   useEffect(() => {
@@ -271,6 +465,7 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
           bitrate: level?.bitrate || undefined,
           levelLabel: level ? (level.height ? `${level.height}p` : 'variant') : 'source',
           readyState: video.readyState,
+          engineName: engineNameRef.current,
         });
       }
       rafRef.current = requestAnimationFrame(tick);
@@ -342,10 +537,20 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
   }, [onSettingsChange]);
 
   const setLevel = useCallback((id: number) => {
-    const hls = hlsRef.current;
-    if (!hls) return;
-    hls.currentLevel = id;
-    setCurrentLevel(id);
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = id;
+      setCurrentLevel(id);
+      return;
+    }
+    if (dashRef.current) {
+      if (id === -1) {
+        dashRef.current.setAutoSwitchQualityFor?.('video', true);
+      } else {
+        dashRef.current.setAutoSwitchQualityFor?.('video', false);
+        dashRef.current.setQualityFor?.('video', id, true);
+      }
+      setCurrentLevel(id);
+    }
   }, []);
 
   const selectAudio = useCallback((id: string) => {
@@ -389,20 +594,36 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
   const toggleFullscreen = useCallback(() => {
     const stage = videoRef.current?.parentElement;
     if (!stage) return;
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => undefined);
-    else stage.requestFullscreen().catch(() => undefined);
-  }, []);
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => undefined);
+      setImmersiveFullscreen(false, landscapeLock);
+    } else {
+      stage.requestFullscreen().catch(() => undefined);
+      setImmersiveFullscreen(true, landscapeLock);
+    }
+  }, [landscapeLock]);
 
   const togglePip = useCallback(async () => {
+    if (enterNativeAndroidPip()) return;
     const video = videoRef.current;
     if (!video) return;
     try {
       if (document.pictureInPictureElement) await document.exitPictureInPicture();
       else await video.requestPictureInPicture();
     } catch {
-      onFatalError('Picture-in-picture is not available for this stream in this browser.');
+      onFatalError('Picture-in-picture is not available for this stream.');
     }
   }, [onFatalError]);
+
+  const promptCast = useCallback(async () => {
+    const remote = (videoRef.current as (HTMLVideoElement & { remote?: { prompt?: () => Promise<void> } }) | null)?.remote;
+    if (!remote?.prompt) return;
+    try {
+      await remote.prompt();
+    } catch {
+      // User dismissed Cast picker.
+    }
+  }, []);
 
   /** Save the current frame. Blocked by the browser when the source has no CORS headers. */
   const saveFrame = useCallback(() => {
@@ -442,10 +663,10 @@ export function useMpvEngine({ url, subtitles, autoplay, volume, speed, onFatalE
   return {
     videoRef, ready, waiting, playing, currentTime, duration, buffered,
     volume: currentVolume, muted, rate, levels, currentLevel,
-    audioTracks, currentAudio, textTracks, currentText, stats, loop,
+    audioTracks, currentAudio, textTracks, currentText, stats, loop, canCast,
     play, pause, toggle, seekTo, seekBy, seekToPercent, stepFrame,
     setVolume, toggleMute, setSpeed, setLevel,
     selectAudio, cycleAudio, selectText, cycleText,
-    toggleFullscreen, togglePip, saveFrame, toggleLoop,
+    toggleFullscreen, togglePip, promptCast, saveFrame, toggleLoop,
   };
 }

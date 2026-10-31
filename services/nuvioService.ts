@@ -1,16 +1,14 @@
-import type { NuvioManifestScraper, NuvioRepository, NuvioScraper, SourceError, StreamResult } from '../types';
+import type {
+  NuvioManifestScraper, NuvioRepository, NuvioScraper, NuvioSettingField,
+  SourceError, StreamResult,
+} from '../types';
+import { nativeFetchText } from './androidBridge';
 import { getTmdbApiKey } from './tmdbConfig';
 
-async function fetchText(url: string, timeout = 20000) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${new URL(url).hostname}.`);
-    return await response.text();
-  } finally {
-    window.clearTimeout(timer);
-  }
+async function fetchText(url: string, timeoutMs = 20000) {
+  const response = await nativeFetchText(url, { timeoutMs });
+  if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${new URL(url).hostname}.`);
+  return response.data;
 }
 
 export function normalizeNuvioRepositoryUrl(rawUrl: string) {
@@ -76,18 +74,48 @@ export async function fetchNuvioRepository(rawUrl: string, previous?: NuvioRepos
   };
 }
 
-function runWorker(scraper: NuvioScraper, args: Record<string, unknown>, mode = 'streams'): Promise<any> {
+function runWorker(
+  scraper: NuvioScraper,
+  args: Record<string, unknown>,
+  mode: 'streams' | 'settings' = 'streams',
+  scraperSettings: Record<string, unknown> = {},
+): Promise<any> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./nuvioWorker.ts', import.meta.url), { type: 'module' });
     const timer = window.setTimeout(() => {
       worker.terminate();
       reject(new Error('The scraper timed out after 30 seconds.'));
     }, 30000);
-    worker.onmessage = (event) => {
+    worker.onmessage = async (event) => {
+      const msg = event.data;
+      if (msg?.type === 'fetch-proxy') {
+        try {
+          const res = await nativeFetchText(msg.url, {
+            method: msg.method,
+            headers: msg.headers,
+            body: msg.body,
+            timeoutMs: 18000,
+          });
+          worker.postMessage({
+            type: 'fetch-proxy-response',
+            reqId: msg.reqId,
+            status: res.status,
+            data: res.data,
+          });
+        } catch (err) {
+          worker.postMessage({
+            type: 'fetch-proxy-response',
+            reqId: msg.reqId,
+            error: err instanceof Error ? err.message : 'Proxy fetch failed',
+          });
+        }
+        return;
+      }
+
       window.clearTimeout(timer);
       worker.terminate();
-      if (event.data.ok) resolve(event.data.result);
-      else reject(new Error(event.data.error || 'The scraper failed.'));
+      if (msg.ok) resolve(msg.result);
+      else reject(new Error(msg.error || 'The scraper failed.'));
     };
     worker.onerror = (event) => {
       window.clearTimeout(timer);
@@ -98,7 +126,7 @@ function runWorker(scraper: NuvioScraper, args: Record<string, unknown>, mode = 
       code: scraper.code,
       args,
       scraperId: scraper.id,
-      settings: {},
+      settings: scraperSettings,
       tmdbApiKey: getTmdbApiKey(),
       mode,
     });
@@ -109,11 +137,11 @@ function normalizeResults(raw: any[], scraper: NuvioScraper, repositoryName: str
   if (!Array.isArray(raw)) return [];
   return raw.reduce<StreamResult[]>((results, item, index) => {
     const url = typeof item?.url === 'string' ? item.url : item?.url?.url;
-    if (!url) return results;
+    if (!url && !item?.infoHash) return results;
     results.push({
       id: `${scraper.id}-${index}-${item.infoHash || url}`,
       title: item.title || item.name || 'Stream',
-      url,
+      url: url || `magnet:?xt=urn:btih:${item.infoHash}`,
       sourceName: repositoryName,
       sourceType: 'nuvio',
       quality: item.quality,
@@ -123,6 +151,7 @@ function normalizeResults(raw: any[], scraper: NuvioScraper, repositoryName: str
       seeders: Number(item.seeders) || undefined,
       peers: Number(item.peers) || undefined,
       infoHash: item.infoHash,
+      referer: item.referer,
       headers: item.headers,
       subtitles: item.subtitles,
     });
@@ -136,6 +165,7 @@ export async function findNuvioStreams(
   mediaType: 'movie' | 'series',
   season?: number,
   episode?: number,
+  scraperSettingsMap: Record<string, Record<string, unknown>> = {},
 ): Promise<{ streams: StreamResult[]; errors: SourceError[] }> {
   const type = normalizeType(mediaType);
   const jobs: Array<{ scraper: NuvioScraper; repositoryName: string }> = [];
@@ -144,7 +174,12 @@ export async function findNuvioStreams(
       .forEach((scraper) => jobs.push({ scraper, repositoryName: repo.name }));
   });
   const results = await Promise.allSettled(jobs.map(async ({ scraper, repositoryName }) => {
-    const raw = await runWorker(scraper, { tmdbId, mediaType: type, season: season ?? null, episode: episode ?? null });
+    const raw = await runWorker(
+      scraper,
+      { tmdbId, mediaType: type, season: season ?? null, episode: episode ?? null },
+      'streams',
+      scraperSettingsMap[scraper.id] || {},
+    );
     return normalizeResults(raw, scraper, repositoryName);
   }));
   const streams: StreamResult[] = [];
@@ -156,10 +191,33 @@ export async function findNuvioStreams(
   return { streams, errors };
 }
 
-export async function testNuvioScraper(scraper: NuvioScraper, repositoryName: string) {
+export async function getNuvioScraperSettingsSchema(
+  scraper: NuvioScraper,
+  currentSettings: Record<string, unknown> = {},
+): Promise<NuvioSettingField[]> {
+  const raw = await runWorker(scraper, {}, 'settings', currentSettings);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === 'object' && (item.key || item.name))
+    .map((item) => ({
+      key: String(item.key || item.name),
+      label: item.label || item.title || item.name || String(item.key),
+      type: item.type || 'text',
+      defaultValue: item.default ?? item.defaultValue ?? '',
+      placeholder: item.placeholder,
+      description: item.description,
+      options: Array.isArray(item.options) ? item.options : undefined,
+    }));
+}
+
+export async function testNuvioScraper(
+  scraper: NuvioScraper,
+  repositoryName: string,
+  scraperSettings: Record<string, unknown> = {},
+) {
   const mediaType = scraper.supportedTypes.map(normalizeType).includes('movie') ? 'movie' : 'tv';
   const raw = await runWorker(scraper, {
     tmdbId: '603', mediaType, season: mediaType === 'tv' ? 1 : null, episode: mediaType === 'tv' ? 1 : null,
-  });
+  }, 'streams', scraperSettings);
   return normalizeResults(raw, scraper, repositoryName);
 }

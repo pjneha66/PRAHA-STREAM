@@ -729,16 +729,29 @@ const CloudStreamPage: React.FC<CloudStreamPageProps> = ({
                     <button key={list} className={bookmarkList === list ? 'active' : ''} onClick={() => setBookmarkList(list)}>{list}</button>
                   ))}
                 </div>
-                {bookmarkList === 'Watching' && cloudstreamLibrary.length ? (
-                  <div className="media-row">
-                    {cloudstreamLibrary.map((item) => (
-                      <MediaCard key={item.id} item={item} onSelect={openMedia}
-                        onToggleWatchlist={onToggleWatchlist} inWatchlist compact={compact} />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="csx-empty-note">Nothing in {bookmarkList} yet. Use “My List” on a title to put it here.</p>
-                )}
+                {(() => {
+                  const statusMap: Record<(typeof BOOKMARK_LISTS)[number], string> = {
+                    Watching: 'watching',
+                    'Plan to Watch': 'plan',
+                    'On Hold': 'hold',
+                    Dropped: 'dropped',
+                    Completed: 'completed',
+                  };
+                  const targetStatus = statusMap[bookmarkList];
+                  const matchingItems = cloudstreamLibrary.filter((item) =>
+                    (item.libraryStatus || 'watching') === targetStatus,
+                  );
+                  return matchingItems.length ? (
+                    <div className="media-row">
+                      {matchingItems.map((item) => (
+                        <MediaCard key={item.id} item={item} onSelect={openMedia}
+                          onToggleWatchlist={onToggleWatchlist} inWatchlist compact={compact} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="csx-empty-note">Nothing in {bookmarkList} yet. Use “My List” or set a status in Details to place titles here.</p>
+                  );
+                })()}
               </section>
 
               {activeRow && (

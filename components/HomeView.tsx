@@ -17,6 +17,8 @@ interface HomeViewProps {
   repositories: NuvioRepository[];
   onSelect: (item: MediaItem) => void;
   onPlay: (item: MediaItem) => void;
+  onResumeEntry: (entry: WatchProgress) => void;
+  onRemoveHistory: (entry: WatchProgress) => void;
   onToggleWatchlist: (item: MediaItem) => void;
   onOpenExtensions: () => void;
   onOpenLibrary: () => void;
@@ -27,7 +29,8 @@ interface HomeViewProps {
 
 const HomeView: React.FC<HomeViewProps> = ({
   catalog, loading, error, tmdbReady, history, watchlist, addons, repositories,
-  onSelect, onPlay, onToggleWatchlist, onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact,
+  onSelect, onPlay, onResumeEntry, onRemoveHistory, onToggleWatchlist,
+  onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact,
 }) => {
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const spotlight = catalog.hero;
@@ -40,7 +43,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     <section className="source-banner">
       <div className="source-banner-copy">
         <span className="source-banner-icon"><Blocks size={23} /></span>
-        <div><span>BUILT AROUND YOU</span><h2>One library. Every source.</h2><p>Bring your Stremio addons and Nuvio plugins together in a single, beautifully organized home.</p></div>
+        <div><span>BUILT AROUND YOU</span><h2>One library. Every source.</h2><p>Bring your Stremio addons, Nuvio plugins, and CloudStream extensions together in one Android & web home.</p></div>
       </div>
       <div className="source-banner-action">
         <span><i className={activeSources ? 'online' : ''} />{activeSources} active source{activeSources === 1 ? '' : 's'}</span>
@@ -57,7 +60,7 @@ const HomeView: React.FC<HomeViewProps> = ({
           <div className="hero-content">
             <div className="hero-eyebrow"><span /> LIVE FROM TMDB</div>
             <h1>Your catalog, streamed from TMDB.</h1>
-            <p>PRAHA no longer ships a bundled list of movies and shows. Trending titles, posters, ratings, genres, and artwork are fetched live from TMDB with your own API key.</p>
+            <p>PRAHA ships no bundled list of movies and shows. Trending titles, posters, ratings, genres, trailers, and episode guides are fetched live from TMDB with your own API key.</p>
             <div className="hero-actions">
               <button className="button button-primary" onClick={onOpenSettings}><Info size={18} /> Add your TMDB key</button>
               <button className="button button-glass" onClick={onOpenExtensions}><Blocks size={18} /> Manage sources</button>
@@ -99,7 +102,6 @@ const HomeView: React.FC<HomeViewProps> = ({
     );
   }
 
-  // Key present and TMDB answered, but every catalogue came back empty.
   if (!spotlight.length && !catalog.trending.length && !catalog.movies.length) {
     return (
       <div className="home-view page-enter">
@@ -156,27 +158,35 @@ const HomeView: React.FC<HomeViewProps> = ({
       {history.length > 0 && (
         <section className="media-section continue-section">
           <div className="section-heading">
-            <div><h2>Pick up where you left off</h2><p>Your next chapter is waiting.</p></div>
+            <div><h2>Pick up where you left off</h2><p>Resume at your exact timestamp or jump to the next episode.</p></div>
             <button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button>
           </div>
           <div className="continue-row">
-            {history.slice(0, 4).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} />)}
+            {history.slice(0, 6).map((entry) => (
+              <ContinueCard
+                key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`}
+                entry={entry}
+                onPlay={onPlay}
+                onResumeEntry={onResumeEntry}
+                onRemove={onRemoveHistory}
+              />
+            ))}
           </div>
         </section>
       )}
 
-      <MediaRow title="Trending this week" subtitle="Live from TMDB — what everyone is pressing play on." items={catalog.trending.slice(0, 16)}
+      <MediaRow title="Trending this week" subtitle="Live from TMDB — what everyone is pressing play on." items={catalog.trending.slice(0, 20)}
         onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
 
-      <MediaRow title="Popular movies" subtitle="TMDB’s most-watched films right now." items={catalog.movies.slice(0, 16)}
+      <MediaRow title="Popular movies" subtitle="TMDB’s most-watched films right now." items={catalog.movies.slice(0, 20)}
         onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
 
       {sourceBanner}
 
-      <MediaRow title="Popular series" subtitle="Binge-worthy shows trending on TMDB." items={catalog.series.slice(0, 16)}
+      <MediaRow title="Popular series" subtitle="Binge-worthy shows trending on TMDB." items={catalog.series.slice(0, 20)}
         onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
 
-      <MediaRow title="Top rated of all time" subtitle="The highest-rated films in the TMDB database." items={catalog.topRated.slice(0, 16)}
+      <MediaRow title="Top rated of all time" subtitle="The highest-rated films in the TMDB database." items={catalog.topRated.slice(0, 20)}
         onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
     </div>
   );
