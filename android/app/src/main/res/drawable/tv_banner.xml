@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#090A0C"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#14181E"
+        android:pathData="M16,16h288v148h-288z" />
+    <!-- PRAHA lime mark -->
+    <path
+        android:fillColor="#D6F77A"
+        android:pathData="M132,46 L188,46 C194.63,46 200,51.37 200,58 L200,114 C200,120.63 194.63,126 188,126 L132,126 C125.37,126 120,120.63 120,114 L120,58 C120,51.37 125.37,46 132,46 Z" />
+    <path
+        android:fillColor="#14190B"
+        android:pathData="M148,66 L180,86 L148,106 Z" />
+    <!-- Accent bar underneath -->
+    <path
+        android:fillColor="#D6F77A"
+        android:pathData="M110,142h100v4h-100z" />
+</vector>

@@ -1,6 +1,38 @@
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
 
+export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
+
+export interface MediaCastMember {
+  id: number;
+  name: string;
+  character?: string;
+  job?: string;
+  profile?: string;
+}
+
+export interface TmdbSeasonSummary {
+  id: number;
+  seasonNumber: number;
+  name: string;
+  episodeCount: number;
+  poster?: string;
+  airDate?: string;
+  overview?: string;
+}
+
+export interface TmdbEpisodeInfo {
+  id: number;
+  season: number;
+  episode: number;
+  title: string;
+  overview: string;
+  still?: string;
+  airDate?: string;
+  runtime?: number;
+  rating?: number;
+}
+
 /** Home screen rows. Every entry is loaded from TMDB at runtime — nothing is bundled. */
 export interface HomeCatalog {
   hero: MediaItem[];
@@ -29,14 +61,35 @@ export interface MediaItem {
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
+  /** Enriched TMDB details */
+  trailerKey?: string;
+  trailerName?: string;
+  director?: string;
+  cast?: MediaCastMember[];
+  recommendations?: MediaItem[];
+  seasons?: TmdbSeasonSummary[];
+  numberOfSeasons?: number;
+  libraryStatus?: LibraryStatus;
 }
 
 export interface WatchProgress {
   media: MediaItem;
   progress: number;
+  currentTime?: number;
+  duration?: number;
   watchedAt: number;
   season?: number;
   episode?: number;
+  episodeTitle?: string;
+  lastStream?: StreamResult;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  avatarColor: string;
+  isKids?: boolean;
+  createdAt: number;
 }
 
 export interface StremioResource {
@@ -83,6 +136,18 @@ export interface InstalledAddon {
   updatedAt: number;
 }
 
+export interface NuvioSettingField {
+  key: string;
+  label?: string;
+  name?: string;
+  type?: 'text' | 'password' | 'boolean' | 'toggle' | 'select' | 'number' | string;
+  default?: unknown;
+  defaultValue?: unknown;
+  placeholder?: string;
+  description?: string;
+  options?: Array<{ label: string; value: string } | string>;
+}
+
 export interface NuvioManifestScraper {
   id: string;
   name: string;
@@ -124,6 +189,7 @@ export interface NuvioRepository {
 }
 
 export interface StreamSubtitle {
+  id?: string;
   url: string;
   language: string;
   name?: string;
@@ -143,6 +209,7 @@ export interface StreamResult {
   seeders?: number;
   peers?: number;
   infoHash?: string;
+  fileIdx?: number;
   headers?: Record<string, string>;
   referer?: string;
   format?: string;
@@ -200,6 +267,36 @@ export interface CloudStreamRepository {
   updatedAt: number;
 }
 
+export interface IntroSegment {
+  start: number;
+  end: number;
+  label: 'Skip Intro' | 'Skip Outro' | 'Skip Recap';
+}
+
+export type DebridProvider = 'none' | 'realdebrid' | 'alldebrid' | 'torbox';
+
+export interface DebridSettings {
+  provider: DebridProvider;
+  apiKey: string;
+}
+
+export interface SyncSettings {
+  traktClientId?: string;
+  traktToken?: string;
+  simklClientId?: string;
+  simklToken?: string;
+}
+
+export interface DiscoverFilters {
+  type: 'all' | MediaType;
+  source: 'all' | 'tmdb' | 'stremio';
+  genre: string;
+  year: string;
+  minRating: number;
+  sortBy: 'popularity.desc' | 'vote_average.desc' | 'primary_release_date.desc' | 'revenue.desc';
+  language: string;
+}
+
 export type PlayerThemeId =
   | 'mpvrx' | 'amoled' | 'catppuccin' | 'nord' | 'tokyo' | 'dracula' | 'gruvbox' | 'rosepine';
 
@@ -215,6 +312,10 @@ export interface PlayerSettings {
   subtitleSize: number;
   /** Subtitle text color. */
   subtitleColor: string;
+  /** Subtitle timing offset in seconds (e.g. -0.5 or +1.0). */
+  subtitleOffset: number;
+  /** Subtitle background opacity (0 - 100). */
+  subtitleBgOpacity: number;
   /** Show the mpv-style statistics overlay on startup. */
   stats: boolean;
   /** Enable touch gestures (double-tap seek, swipe volume/brightness, long-press speed). */
@@ -225,6 +326,12 @@ export interface PlayerSettings {
   speed: number;
   /** Brightness in percent, applied as a CSS filter. */
   brightness: number;
+  /** Automatically queue and prompt next episode for series. */
+  autoNextEpisode: boolean;
+  /** Lock screen orientation to landscape in fullscreen on Android. */
+  landscapeLock: boolean;
+  /** Show Skip Intro / Skip Outro button when segment timestamps are detected. */
+  skipIntro: boolean;
 }
 
 export interface AppSettings {
@@ -236,7 +343,32 @@ export interface AppSettings {
   tmdbApiKey: string;
   /** Optional CloudStream plugin server that executes native .cs3 providers. */
   cloudstreamServerUrl: string;
+  /** Debrid service used to convert magnets/infoHashes into direct HTTP streams. */
+  debrid: DebridSettings;
+  /** Optional Trakt / Simkl scrobbling credentials. */
+  sync: SyncSettings;
+  /** Enhanced D-Pad / Android TV spatial remote navigation. */
+  dpadNavigation: boolean;
+  /** Route header-protected streams through native Android proxy when running in APK. */
+  preferNativeProxy: boolean;
   player: PlayerSettings;
+}
+
+export interface PrahaBackupBundle {
+  app: 'praha-stream';
+  version: number;
+  exportedAt: number;
+  settings: Partial<AppSettings>;
+  addons: InstalledAddon[];
+  repositories: NuvioRepository[];
+  cloudstreamRepositories: CloudStreamRepository[];
+  nuvioSettings?: Record<string, Record<string, unknown>>;
+  profiles: UserProfile[];
+  activeProfileId: string;
+  profileData: Record<string, {
+    watchlist: MediaItem[];
+    history: WatchProgress[];
+  }>;
 }
 
 export interface ToastMessage {

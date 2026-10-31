@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, Cloud, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles,
+  Blocks, Check, Cloud, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, UserPlus,
 } from 'lucide-react';
-import type { AppView } from '../types';
+import type { AppView, UserProfile } from '../types';
 
 interface NavigationProps {
   view: AppView;
@@ -11,6 +11,9 @@ interface NavigationProps {
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   sourceCount: number;
+  profiles: UserProfile[];
+  activeProfile: UserProfile;
+  onSelectProfile: (profileId: string) => void;
   children: React.ReactNode;
 }
 
@@ -23,9 +26,11 @@ const mainNav = [
 ];
 
 const Navigation: React.FC<NavigationProps> = ({
-  view, onNavigate, query, onQueryChange, onSearch, sourceCount, children,
+  view, onNavigate, query, onQueryChange, onSearch, sourceCount,
+  profiles, activeProfile, onSelectProfile, children,
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -58,6 +63,8 @@ const Navigation: React.FC<NavigationProps> = ({
     );
   };
 
+  const initial = (activeProfile.name || 'P').trim().charAt(0).toUpperCase();
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -81,11 +88,52 @@ const Navigation: React.FC<NavigationProps> = ({
             <p>{sourceCount || 'No'} active source{sourceCount === 1 ? '' : 's'}</p>
             <button onClick={() => onNavigate('extensions')}>Manage sources <Plus size={14} /></button>
           </div>
-          <button className="profile-chip" onClick={() => onNavigate('settings')}>
-            <span className="avatar">P</span>
-            <span><strong>Guest</strong><small>Local profile</small></span>
-            <Settings size={15} />
-          </button>
+
+          <div className="profile-switcher-wrap">
+            <button
+              className="profile-chip"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+              aria-expanded={profileMenuOpen}
+            >
+              <span className="avatar" style={{ background: activeProfile.avatarColor, color: '#11150c' }}>{initial}</span>
+              <span>
+                <strong>{activeProfile.name}</strong>
+                <small>{activeProfile.isKids ? 'Kids profile' : `${profiles.length} local profile${profiles.length === 1 ? '' : 's'}`}</small>
+              </span>
+              <Settings size={15} />
+            </button>
+
+            {profileMenuOpen && (
+              <div className="profile-popover" role="menu">
+                <p>Switch profile</p>
+                {profiles.map((prof) => (
+                  <button
+                    key={prof.id}
+                    className={prof.id === activeProfile.id ? 'active' : ''}
+                    onClick={() => {
+                      onSelectProfile(prof.id);
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <span className="avatar small" style={{ background: prof.avatarColor, color: '#11150c' }}>
+                      {prof.name.charAt(0).toUpperCase()}
+                    </span>
+                    <b>{prof.name}</b>
+                    {prof.id === activeProfile.id && <Check size={14} />}
+                  </button>
+                ))}
+                <button
+                  className="profile-manage-link"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    onNavigate('settings');
+                  }}
+                >
+                  <UserPlus size={14} /> Manage profiles & backup
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -112,7 +160,14 @@ const Navigation: React.FC<NavigationProps> = ({
             <span>{sourceCount} source{sourceCount === 1 ? '' : 's'}</span>
             <Plus size={16} />
           </button>
-          <button className="top-avatar" onClick={() => onNavigate('settings')} aria-label="Open settings">P</button>
+          <button
+            className="top-avatar"
+            style={{ background: activeProfile.avatarColor, color: '#11150c' }}
+            onClick={() => onNavigate('settings')}
+            aria-label={`Profile: ${activeProfile.name}`}
+          >
+            {initial}
+          </button>
         </header>
         <main className="main-content">{children}</main>
       </div>

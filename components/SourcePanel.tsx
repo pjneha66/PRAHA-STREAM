@@ -3,7 +3,7 @@ import {
   Blocks, Check, CircleAlert, Copy, Film, Languages, Play, RefreshCw,
   ShieldCheck, Users, X, Zap,
 } from 'lucide-react';
-import type { MediaItem, SourceError, StreamResult } from '../types';
+import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary } from '../types';
 import { Artwork } from './MediaCard';
 
 export const qualityOf = (stream: StreamResult) => {
@@ -22,6 +22,8 @@ interface SourcePanelProps {
   errors: SourceError[];
   season?: number;
   episode?: number;
+  seasons?: TmdbSeasonSummary[];
+  episodes?: TmdbEpisodeInfo[];
   onSeasonChange?: (value: number) => void;
   onEpisodeChange?: (value: number) => void;
   onRefresh?: () => void;
@@ -34,8 +36,9 @@ interface SourcePanelProps {
 }
 
 const SourcePanel: React.FC<SourcePanelProps> = ({
-  media, streams, loading, errors, season, episode, onSeasonChange, onEpisodeChange,
-  onRefresh, providerCount, preferredLanguage, onPlay, onOpenExtensions, showClose, onClose,
+  media, streams, loading, errors, season, episode, seasons, episodes,
+  onSeasonChange, onEpisodeChange, onRefresh, providerCount, preferredLanguage,
+  onPlay, onOpenExtensions, showClose, onClose,
 }) => {
   const [quality, setQuality] = useState('all');
   const [copied, setCopied] = useState('');
@@ -55,18 +58,47 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
     window.setTimeout(() => setCopied(''), 1500);
   };
 
+  const seasonOptions = useMemo(() => {
+    if (seasons && seasons.length) return seasons.map((s) => ({ value: s.seasonNumber, label: `${s.seasonNumber} · ${s.name}` }));
+    const count = media.numberOfSeasons || 10;
+    return Array.from({ length: count }, (_, idx) => ({ value: idx + 1, label: `Season ${idx + 1}` }));
+  }, [seasons, media.numberOfSeasons]);
+
+  const episodeOptions = useMemo(() => {
+    if (episodes && episodes.length) {
+      return episodes.map((ep) => ({ value: ep.episode, label: `${ep.episode} · ${ep.title}` }));
+    }
+    const matchingSeason = seasons?.find((s) => s.seasonNumber === (season ?? 1));
+    const count = matchingSeason?.episodeCount || 24;
+    return Array.from({ length: count }, (_, idx) => ({ value: idx + 1, label: `Episode ${idx + 1}` }));
+  }, [episodes, seasons, season]);
+
   return (
     <>
       <header className="source-header">
         <div className="source-title-art"><Artwork src={media.poster} alt="" /></div>
-        <div><span className="page-kicker">SOURCE FINDER</span><h2>{media.title}</h2><p>{media.year || ''} · {media.type === 'movie' ? 'Movie' : 'Series'} <i /> Searching your library of sources</p></div>
+        <div>
+          <span className="page-kicker">SOURCE FINDER</span>
+          <h2>{media.title}</h2>
+          <p>{media.year || ''} · {media.type === 'movie' ? 'Movie' : 'Series'} <i /> Stremio, Nuvio & CloudStream</p>
+        </div>
         {showClose && <button className="modal-close" onClick={onClose} aria-label="Close source finder"><X size={20} /></button>}
       </header>
       {media.type === 'series' && onSeasonChange && (
         <div className="episode-picker">
           <span>Watching</span>
-          <label>Season<select value={season ?? 1} onChange={(event) => onSeasonChange(Number(event.target.value))}>{Array.from({ length: 10 }, (_, index) => <option key={index + 1}>{index + 1}</option>)}</select></label>
-          <label>Episode<select value={episode ?? 1} onChange={(event) => onEpisodeChange(Number(event.target.value))}>{Array.from({ length: 12 }, (_, index) => <option key={index + 1}>{index + 1}</option>)}</select></label>
+          <label>
+            Season
+            <select value={season ?? 1} onChange={(event) => onSeasonChange(Number(event.target.value))}>
+              {seasonOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Episode
+            <select value={episode ?? 1} onChange={(event) => onEpisodeChange?.(Number(event.target.value))}>
+              {episodeOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+          </label>
         </div>
       )}
       <div className="source-toolbar">

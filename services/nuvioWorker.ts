@@ -4,13 +4,84 @@ import * as cheerio from 'cheerio';
 import CryptoJS from 'crypto-js';
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
+const originalFetch = worker.fetch.bind(worker);
+
+interface PendingProxyRequest {
+  resolve: (response: Response) => void;
+  reject: (error: Error) => void;
+}
+
+const pendingProxy = new Map<string, PendingProxyRequest>();
+
+function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const method = init?.method || (typeof input === 'object' && 'method' in input ? input.method : 'GET') || 'GET';
+  const headers: Record<string, string> = {};
+  if (init?.headers) {
+    new Headers(init.headers).forEach((value, key) => {
+      headers[key] = value;
+    });
+  }
+  const body = typeof init?.body === 'string' ? init.body : undefined;
+  const reqId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return new Promise<Response>((resolve, reject) => {
+    pendingProxy.set(reqId, { resolve, reject });
+    worker.postMessage({ type: 'fetch-proxy', reqId, url, method, headers, body });
+  });
+}
+
+/**
+ * Intercepts worker `fetch`: attempts standard worker fetch first, and if CORS
+ * or forbidden headers (`Referer`, `User-Agent`, `Origin`) block it, delegates
+ * to the main thread where Android's native HTTP bridge resolves it cleanly.
+ */
+const smartFetch: typeof fetch = async (input, init) => {
+  let hasForbiddenHeader = false;
+  if (init?.headers) {
+    try {
+      const entries = init.headers instanceof Headers
+        ? Array.from(init.headers.keys())
+        : Array.isArray(init.headers)
+          ? init.headers.map(([k]) => k)
+          : Object.keys(init.headers);
+      hasForbiddenHeader = entries.some((k) => /^(referer|origin|user-agent|cookie|host)$/i.test(k));
+    } catch {
+      hasForbiddenHeader = false;
+    }
+  }
+  if (!hasForbiddenHeader) {
+    try {
+      return await originalFetch(input, init);
+    } catch {
+      return proxyFetchViaMainThread(input, init);
+    }
+  }
+  return proxyFetchViaMainThread(input, init);
+};
+
+Object.defineProperty(worker, 'fetch', { value: smartFetch, writable: true, configurable: true });
 
 worker.onmessage = async (event) => {
-  const { code, args, scraperId, settings, tmdbApiKey, mode } = event.data;
+  const payload = event.data;
+  if (payload?.type === 'fetch-proxy-response') {
+    const pending = pendingProxy.get(payload.reqId);
+    if (!pending) return;
+    pendingProxy.delete(payload.reqId);
+    if (payload.error) {
+      pending.reject(new Error(payload.error));
+    } else {
+      pending.resolve(new Response(payload.data ?? '', {
+        status: payload.status || 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      }));
+    }
+    return;
+  }
+
+  const { code, args, scraperId, settings, tmdbApiKey, mode } = payload;
   try {
     const module = { exports: {} as Record<string, unknown> };
-    // Same getter-only `self` trap as the CloudStream worker: install the
-    // plugin globals with defineProperty instead of assignment.
     const setGlobal = (name: string, value: unknown) => {
       Object.defineProperty(worker, name, { value, writable: true, configurable: true });
     };
@@ -36,7 +107,7 @@ worker.onmessage = async (event) => {
     if (mode === 'settings') {
       const onSettings = exported.onSettings || context.localOnSettings || (worker as any).onSettings;
       const layout = typeof onSettings === 'function' ? await onSettings() : [];
-      worker.postMessage({ ok: true, result: layout });
+      worker.postMessage({ ok: true, result: Array.isArray(layout) ? layout : [] });
       return;
     }
 

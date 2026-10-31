@@ -1,4 +1,4 @@
-import type { AppSettings, HomeCatalog, InstalledAddon, PlayerSettings } from '../types';
+import type { AppSettings, DiscoverFilters, HomeCatalog, InstalledAddon, PlayerSettings, UserProfile } from '../types';
 
 /** Empty starting point for the TMDB-driven home screen. */
 export const EMPTY_HOME_CATALOG: HomeCatalog = { hero: [], trending: [], movies: [], series: [], topRated: [] };
@@ -31,6 +31,24 @@ export const CINEMETA_ADDON: InstalledAddon = {
   },
 };
 
+export const DEFAULT_PROFILE: UserProfile = {
+  id: 'default',
+  name: 'Main Profile',
+  avatarColor: '#d6f77a',
+  isKids: false,
+  createdAt: Date.now(),
+};
+
+export const DEFAULT_DISCOVER_FILTERS: DiscoverFilters = {
+  type: 'all',
+  source: 'all',
+  genre: 'all',
+  year: 'all',
+  minRating: 0,
+  sortBy: 'popularity.desc',
+  language: 'all',
+};
+
 /** mpvRx-style player defaults. Everything is user-adjustable in Settings → Player. */
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   theme: 'mpvrx',
@@ -38,11 +56,16 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   oscTimeout: 2600,
   subtitleSize: 100,
   subtitleColor: '#ffffff',
+  subtitleOffset: 0,
+  subtitleBgOpacity: 55,
   stats: false,
   gestures: true,
   volume: 100,
   speed: 1,
   brightness: 100,
+  autoNextEpisode: true,
+  landscapeLock: true,
+  skipIntro: true,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -53,5 +76,38 @@ export const DEFAULT_SETTINGS: AppSettings = {
   accent: 'lime',
   tmdbApiKey: '',
   cloudstreamServerUrl: '',
+  debrid: {
+    provider: 'none',
+    apiKey: '',
+  },
+  sync: {
+    traktClientId: '',
+    traktToken: '',
+    simklClientId: '',
+    simklToken: '',
+  },
+  dpadNavigation: false,
+  preferNativeProxy: true,
   player: DEFAULT_PLAYER_SETTINGS,
 };
+
+/** Ensure older saved settings smoothly merge new defaults. */
+export function normalizeSettings(raw: Partial<AppSettings> | null | undefined): AppSettings {
+  const base = raw || {};
+  return {
+    ...DEFAULT_SETTINGS,
+    ...base,
+    debrid: {
+      ...DEFAULT_SETTINGS.debrid,
+      ...(base.debrid || {}),
+    },
+    sync: {
+      ...DEFAULT_SETTINGS.sync,
+      ...(base.sync || {}),
+    },
+    player: {
+      ...DEFAULT_PLAYER_SETTINGS,
+      ...(base.player || {}),
+    },
+  };
+}

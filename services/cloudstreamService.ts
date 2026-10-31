@@ -1,32 +1,15 @@
 import type {
   CloudStreamPluginEntry, CloudStreamProvider, CloudStreamRepository,
-  MediaItem, StreamResult,
+  MediaItem, SourceError, StreamResult,
 } from '../types';
+import { nativeFetchText } from './androidBridge';
 
-async function fetchText(url: string, timeout = 20000) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${new URL(url).hostname}.`);
-    return await response.text();
-  } finally {
-    window.clearTimeout(timer);
-  }
+async function fetchText(url: string, timeoutMs = 20000) {
+  const response = await nativeFetchText(url, { timeoutMs });
+  if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${new URL(url).hostname}.`);
+  return response.data;
 }
 
-/**
- * CloudStream repositories are described by a `repo.json` manifest (a
- * repository-of-repositories) that lists one or more `plugins.json` files,
- * each of which is a flat array of extension entries. A direct
- * `plugins.json` URL is also accepted, and the legacy v2 `{ addons: [...] }`
- * shape is supported for older repositories.
- *
- * Extensions are compiled Kotlin `.cs3` packages by default and can only run
- * inside the native CloudStream app. Repositories that publish JavaScript
- * extensions (CloudStream JS) expose `search()`, `getEpisodes()` and
- * `getStreams()`, which PRAHA runs in a web worker.
- */
 export function normalizeCloudStreamRepositoryUrl(rawUrl: string) {
   let value = rawUrl.trim();
   if (!value) throw new Error('Paste a CloudStream repository URL to continue.');
@@ -42,7 +25,6 @@ const normalizeUrl = (raw: string) => {
   let value = String(raw).trim();
   if (!value) return value;
   if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
-  // GitHub "blob" pages need to become raw file links before they are fetchable.
   value = value.replace(/\/blob\//, '/raw/');
   try {
     const url = new URL(value);
@@ -73,7 +55,6 @@ const normalizeTypes = (tvTypes?: string[]) => {
   return [...types];
 };
 
-/** Read the `// @plugin-info { ... }` header that CloudStream JS plugins carry. */
 const parsePluginInfo = (code: string): Partial<CloudStreamPluginEntry> => {
   const match = code.match(/@plugin-info\s*(\{[\s\S]*?\})/);
   if (!match) return {};
@@ -101,7 +82,6 @@ const buildProviders = async (
   entries: CloudStreamPluginEntry[],
   previous?: CloudStreamRepository,
 ): Promise<CloudStreamProvider[]> => {
-  // Fetch JavaScript extension sources in parallel (skip native .cs3 packages).
   const jobs = entries
     .map((entry, index) => ({ entry, index }))
     .filter((item) => item.entry?.name)
@@ -242,11 +222,36 @@ function runWorker(provider: CloudStreamProvider, args: Record<string, unknown>,
       worker.terminate();
       reject(new Error('The extension timed out after 30 seconds.'));
     }, 30000);
-    worker.onmessage = (event) => {
+    worker.onmessage = async (event) => {
+      const msg = event.data;
+      if (msg?.type === 'fetch-proxy') {
+        try {
+          const res = await nativeFetchText(msg.url, {
+            method: msg.method,
+            headers: msg.headers,
+            body: msg.body,
+            timeoutMs: 18000,
+          });
+          worker.postMessage({
+            type: 'fetch-proxy-response',
+            reqId: msg.reqId,
+            status: res.status,
+            data: res.data,
+          });
+        } catch (err) {
+          worker.postMessage({
+            type: 'fetch-proxy-response',
+            reqId: msg.reqId,
+            error: err instanceof Error ? err.message : 'Proxy fetch failed',
+          });
+        }
+        return;
+      }
+
       window.clearTimeout(timer);
       worker.terminate();
-      if (event.data.ok) resolve(event.data.result);
-      else reject(new Error(event.data.error || 'The extension failed.'));
+      if (msg.ok) resolve(msg.result);
+      else reject(new Error(msg.error || 'The extension failed.'));
     };
     worker.onerror = (event) => {
       window.clearTimeout(timer);
@@ -309,6 +314,7 @@ export function normalizeCloudStreamStreams(raw: any[], provider: CloudStreamPro
       size: item.size,
       language: item.language,
       provider: item.provider || provider.name,
+      referer: item.referer,
       headers: item.headers,
       format: item.format,
       subtitles: item.subtitles,
@@ -346,4 +352,71 @@ export async function getCloudStreamStreams(
 ) {
   const raw = await runWorker(provider, { mediaId, mediaType, tmdbId, season, episode }, 'streams', tmdbApiKey);
   return normalizeCloudStreamStreams(raw, provider);
+}
+
+/**
+ * Searches enabled CloudStream JS providers inside the unified SourceModal
+ * so CloudStream extensions contribute streams alongside Stremio & Nuvio.
+ */
+export async function findCloudStreamStreamsForMedia(
+  repositories: CloudStreamRepository[],
+  media: MediaItem,
+  tmdbId?: string,
+  tmdbApiKey?: string,
+  season?: number,
+  episode?: number,
+): Promise<{ streams: StreamResult[]; errors: SourceError[] }> {
+  const providers = repositories
+    .filter((repo) => repo.enabled)
+    .flatMap((repo) => repo.providers.filter((provider) =>
+      provider.enabled && Boolean(provider.code) && !provider.nativeOnly && provider.supportedTypes.includes(media.type),
+    ));
+
+  if (!providers.length) return { streams: [], errors: [] };
+
+  const normTitle = media.title.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const results = await Promise.allSettled(providers.map(async (provider) => {
+    // 1. Try direct TMDB-based stream lookup if supported by the plugin
+    if (tmdbId) {
+      const direct = await getCloudStreamStreams(
+        provider,
+        media.type === 'series' ? `tv:${tmdbId}:${season || 1}:${episode || 1}` : `movie:${tmdbId}`,
+        media.type,
+        tmdbApiKey,
+        tmdbId,
+        season,
+        episode,
+      ).catch(() => []);
+      if (direct.length) return direct;
+    }
+
+    // 2. Fallback: search by title, match best entry, and load streams
+    const searchHits = await searchCloudStreamProvider(provider, media.title, tmdbApiKey);
+    const match = searchHits.find((hit) => {
+      const hitNorm = hit.title.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const yearMatch = !media.year || !hit.year || hit.year === media.year;
+      return hitNorm === normTitle && yearMatch;
+    }) || searchHits[0];
+
+    if (!match?.providerMediaId) return [];
+
+    if (media.type === 'series') {
+      const eps = await getCloudStreamEpisodes(provider, match.providerMediaId, tmdbApiKey).catch(() => []);
+      const targetEp = eps.find((ep) => ep.season === (season || 1) && ep.episode === (episode || 1))
+        || eps.find((ep) => ep.episode === (episode || 1));
+      if (targetEp) {
+        return getCloudStreamStreams(provider, targetEp.id, 'series', tmdbApiKey, tmdbId, season, episode);
+      }
+    }
+
+    return getCloudStreamStreams(provider, match.providerMediaId, media.type, tmdbApiKey, tmdbId, season, episode);
+  }));
+
+  const streams: StreamResult[] = [];
+  const errors: SourceError[] = [];
+  results.forEach((res, idx) => {
+    if (res.status === 'fulfilled') streams.push(...res.value);
+    else errors.push({ sourceName: providers[idx].name, message: res.reason?.message || 'CloudStream extension failed.' });
+  });
+  return { streams, errors };
 }

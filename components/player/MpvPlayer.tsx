@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AudioLines, Captions, CaptionsOff, Check, ChevronLeft, ChevronRight, CirclePlay, CircleX,
-  Gauge, Keyboard, Maximize, Minimize, Pause, PictureInPicture2, Play, Repeat, Repeat1, Scissors,
-  Settings2, SkipBack, SkipForward, SlidersHorizontal, Sun, Volume1, Volume2, VolumeX, X,
+  Activity, AudioLines, Captions, CaptionsOff, Cast, Check, ChevronLeft, ChevronRight,
+  CirclePlay, CircleX, FastForward, Gauge, Keyboard, Maximize, Minimize, Pause,
+  PictureInPicture2, Play, Repeat, Repeat1, RotateCcw, Scissors, Settings2,
+  SkipBack, SkipForward, SlidersHorizontal, Sun, Upload, Volume1, Volume2, VolumeX, X,
 } from 'lucide-react';
-import type { PlayerSettings, StreamResult } from '../../types';
+import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
+import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
+import { setImmersiveFullscreen } from '../../services/androidBridge';
 import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
@@ -15,21 +18,42 @@ type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'settings' | 'help' | nul
 
 interface MpvPlayerProps {
   stream: StreamResult;
+  effectiveUrl: string;
+  externalSubtitles?: StreamSubtitle[];
+  introSegments?: IntroSegment[];
+  initialTime?: number;
+  media?: MediaItem;
+  season?: number;
+  episode?: number;
+  nextEpisodeLabel?: string;
+  onNextEpisode?: () => void;
+  onProgress?: (currentTime: number, duration: number) => void;
   autoplay: boolean;
   settings: PlayerSettings;
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
   onRequestClose: () => void;
 }
 
-/**
- * In-browser player modelled on mpvRx: an auto-hiding on-screen controller,
- * mpv key bindings, an OSD for transient state, quality/audio/subtitle menus,
- * a statistics overlay, and touch gestures (double-tap seek, swipe
- * volume/brightness, long-press speed boost).
- */
-const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSettingsChange, onRequestClose }) => {
+const MpvPlayer: React.FC<MpvPlayerProps> = ({
+  stream,
+  effectiveUrl,
+  externalSubtitles = [],
+  introSegments = [],
+  initialTime = 0,
+  media,
+  season,
+  episode,
+  nextEpisodeLabel,
+  onNextEpisode,
+  onProgress,
+  autoplay,
+  settings,
+  onSettingsChange,
+  onRequestClose,
+}) => {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const seekRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const hideTimer = useRef<number | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const speedBoostRef = useRef<number | null>(null);
@@ -46,8 +70,54 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
   const [ripple, setRipple] = useState<{ id: number; side: 'left' | 'right'; label: string } | null>(null);
   const [statsOpen, setStatsOpen] = useState(settings.stats);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [localSubs, setLocalSubs] = useState<StreamSubtitle[]>([]);
+  const [preparedSubtitles, setPreparedSubtitles] = useState<StreamSubtitle[]>([]);
+  const [resumeBanner, setResumeBanner] = useState(initialTime > 5);
+  const [upNextDismissed, setUpNextDismissed] = useState(false);
 
-  const subtitles = useMemo(() => stream.subtitles || [], [stream.subtitles]);
+  const rawSubtitles = useMemo(() => {
+    const merged: StreamSubtitle[] = [];
+    const seen = new Set<string>();
+    [...(stream.subtitles || []), ...externalSubtitles, ...localSubs].forEach((sub) => {
+      if (!sub?.url || seen.has(sub.url)) return;
+      seen.add(sub.url);
+      merged.push(sub);
+    });
+    return merged;
+  }, [stream.subtitles, externalSubtitles, localSubs]);
+
+  // Convert SRT/ASS tracks to WebVTT and apply user timing offset (`subtitleOffset`)
+  useEffect(() => {
+    let active = true;
+    const createdUrls: string[] = [];
+    (async () => {
+      const converted = await Promise.all(rawSubtitles.slice(0, 30).map(async (sub) => {
+        try {
+          const vttUrl = await prepareSubtitleUrl(sub, settings.subtitleOffset || 0);
+          if (vttUrl.startsWith('blob:') && vttUrl !== sub.url) createdUrls.push(vttUrl);
+          return { ...sub, url: vttUrl };
+        } catch {
+          return sub;
+        }
+      }));
+      if (active) setPreparedSubtitles(converted.filter((s) => Boolean(s.url)));
+    })();
+    return () => {
+      active = false;
+      createdUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [rawSubtitles, settings.subtitleOffset]);
+
+  useEffect(() => {
+    setResumeBanner(initialTime > 5);
+    if (initialTime <= 5) return;
+    const timer = window.setTimeout(() => setResumeBanner(false), 7500);
+    return () => window.clearTimeout(timer);
+  }, [initialTime, effectiveUrl]);
+
+  useEffect(() => {
+    setUpNextDismissed(false);
+  }, [effectiveUrl, season, episode]);
 
   const flash = useCallback((message: string) => {
     setOsd(message);
@@ -57,24 +127,37 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
 
   const onFatalError = useCallback((message: string) => setFatal(message), []);
 
+  const handleEnded = useCallback(() => {
+    if (settings.autoNextEpisode && onNextEpisode) {
+      onNextEpisode();
+    }
+  }, [settings.autoNextEpisode, onNextEpisode]);
+
+  const mediaMeta = useMemo(() => (media ? { media, season, episode } : undefined), [media, season, episode]);
+
   const engine = useMpvEngine({
-    url: stream.url,
-    subtitles,
+    url: effectiveUrl,
+    subtitles: preparedSubtitles,
     autoplay,
     volume: settings.volume,
     speed: settings.speed,
+    landscapeLock: settings.landscapeLock,
+    initialTime,
+    mediaMeta,
+    onProgress,
+    onEnded: handleEnded,
+    onNextEpisode,
     onFatalError,
     onSettingsChange,
   });
   const {
     videoRef, ready, waiting, playing, currentTime, duration, buffered, volume, muted, rate,
-    levels, currentLevel, audioTracks, currentAudio, textTracks, currentText, stats, loop,
+    levels, currentLevel, audioTracks, currentAudio, textTracks, currentText, stats, loop, canCast,
   } = engine;
 
   const theme = getTheme(settings.theme);
   const themeVars = useMemo(() => theme.vars as React.CSSProperties, [theme]);
 
-  /** Auto-hide the controller like mpv's OSC. */
   const wakeControls = useCallback(() => {
     setControlsVisible(true);
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
@@ -95,10 +178,17 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
   }, [menu]);
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const onChange = () => {
+      const full = Boolean(document.fullscreenElement);
+      setIsFullscreen(full);
+      if (!full) setImmersiveFullscreen(false, settings.landscapeLock);
+    };
     document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      setImmersiveFullscreen(false, false);
+    };
+  }, [settings.landscapeLock]);
 
   const seek = useCallback((seconds: number, label?: string) => {
     engine.seekBy(seconds);
@@ -116,13 +206,19 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
     flash(`Speed ${formatSpeed(clamp(Number(next.toFixed(2)), 0.25, 4))}`);
   }, [engine, flash]);
 
+  const shiftSubtitleDelay = useCallback((delta: number) => {
+    const next = clamp(Number(((settings.subtitleOffset || 0) + delta).toFixed(2)), -10, 10);
+    onSettingsChange({ subtitleOffset: next });
+    flash(`Sub delay ${next > 0 ? '+' : ''}${next}s`);
+  }, [settings.subtitleOffset, onSettingsChange, flash]);
+
   const jumpRatio = useCallback((ratio: number) => {
     if (!duration) return;
     engine.seekTo(duration * ratio);
     flash(formatTime(duration * ratio));
   }, [duration, engine, flash]);
 
-  /** Keyboard map, mirroring the most useful mpv bindings. */
+  /** Keyboard map, mirroring mpv bindings + Z/X subtitle sync & N next episode. */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -147,6 +243,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
         case 'ArrowRight': seek(event.shiftKey ? 60 : step); break;
         case 'ArrowUp': event.preventDefault(); changeVolume(volume + 5); break;
         case 'ArrowDown': event.preventDefault(); changeVolume(volume - 5); break;
+        case 'n': case 'N': if (onNextEpisode) onNextEpisode(); break;
         case ',': engine.stepFrame(-1); flash('Frame −'); break;
         case '.': engine.stepFrame(1); flash('Frame +'); break;
         case '[': changeSpeed(rate - 0.1); break;
@@ -156,6 +253,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
         case 'Backspace': changeSpeed(1); break;
         case 'm': case 'M': engine.toggleMute(); flash(muted ? 'Unmute' : 'Mute'); break;
         case 'j': case 'J': engine.cycleText(key === 'J' ? -1 : 1); flash('Subtitle track'); break;
+        case 'z': case 'Z': shiftSubtitleDelay(-0.25); break;
+        case 'x': case 'X': shiftSubtitleDelay(0.25); break;
         case '#': engine.cycleAudio(); flash('Audio track'); break;
         case 'c': case 'C':
           engine.selectText(currentText ? '' : (textTracks[0]?.id || ''));
@@ -176,9 +275,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [engine, flash, jumpRatio, loop, menu, muted, currentText, textTracks, onRequestClose, playing, rate, settings.seekStep, settings.subtitleSize, onSettingsChange, changeSpeed, changeVolume, seek, volume, wakeControls]);
+  }, [engine, flash, jumpRatio, loop, menu, muted, currentText, textTracks, onRequestClose, onNextEpisode, playing, rate, settings.seekStep, settings.subtitleSize, onSettingsChange, changeSpeed, changeVolume, shiftSubtitleDelay, seek, volume, wakeControls]);
 
-  /** Seek bar interaction (click, drag, hover preview). */
   const ratioFromEvent = (clientX: number) => {
     const bar = seekRef.current;
     if (!bar) return 0;
@@ -200,7 +298,6 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
     wakeControls();
   };
 
-  /** Touch gestures, mirroring mpvRx's tap zones and swipe controls. */
   const zoneOf = (clientX: number): 'left' | 'center' | 'right' => {
     const stage = stageRef.current;
     if (!stage) return 'center';
@@ -283,6 +380,34 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
     showRipple(tap.zone === 'left' ? 'left' : 'right', `${delta > 0 ? '+' : '−'}${settings.seekStep}s`);
   };
 
+  const onUploadSubtitles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = await parseLocalSubtitleFile(file);
+      setLocalSubs((current) => [parsed, ...current]);
+      flash(`Loaded ${file.name}`);
+    } catch {
+      flash('Could not parse subtitle file');
+    }
+  };
+
+  const activeIntroSegment = useMemo(() => {
+    if (!settings.skipIntro) return null;
+    return introSegments.find((seg) => currentTime >= seg.start && currentTime < seg.end - 1) || null;
+  }, [introSegments, currentTime, settings.skipIntro]);
+
+  const showUpNext = Boolean(
+    settings.autoNextEpisode &&
+    onNextEpisode &&
+    nextEpisodeLabel &&
+    !upNextDismissed &&
+    duration > 180 &&
+    duration - currentTime <= 28 &&
+    duration - currentTime > 0,
+  );
+
   const progressRatio = duration ? currentTime / duration : 0;
   const bufferedRatio = duration ? buffered / duration : 0;
   const activeLevelLabel = currentLevel === -1
@@ -309,15 +434,23 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".srt,.vtt,.ass,.ssa,text/vtt,application/x-subrip"
+        hidden
+        onChange={onUploadSubtitles}
+      />
+
       <video
         ref={videoRef}
         playsInline
         style={{ filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)` }}
-        onError={() => setFatal('This source could not be played in the browser. Try another stream or open it externally.')}
+        onError={() => setFatal('This source could not be played directly. Try another stream or open it in VLC / mpv-android below.')}
       >
-        {subtitles.map((subtitle, index) => (
+        {preparedSubtitles.map((subtitle, index) => (
           <track
-            key={`${subtitle.url}-${index}`}
+            key={`${subtitle.id || subtitle.name || index}-${subtitle.url}`}
             kind="subtitles"
             src={subtitle.url}
             label={subtitle.name || subtitle.language}
@@ -327,12 +460,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
         ))}
       </video>
 
-      {/* Subtitle styling follows mpvRx's subtitle size and color controls. */}
       <style>{`
         .mpv-stage video::cue {
           font-size: ${settings.subtitleSize}%;
           color: ${settings.subtitleColor};
-          background: rgba(0,0,0,.55);
+          background: rgba(0,0,0,${((settings.subtitleBgOpacity ?? 55) / 100).toFixed(2)});
           text-shadow: 0 1px 3px rgba(0,0,0,.9);
         }
       `}</style>
@@ -343,15 +475,52 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
         {playing ? <Pause size={30} /> : <Play size={30} fill="currentColor" />}
       </button>
 
+      {resumeBanner && initialTime > 5 && (
+        <div className="mpv-floating-pill mpv-resume-pill" onClick={(e) => e.stopPropagation()}>
+          <span>Resumed at <strong>{formatTime(initialTime)}</strong></span>
+          <button onClick={() => { engine.seekTo(0); setResumeBanner(false); flash('Restarted'); }}>
+            <RotateCcw size={13} /> Start over
+          </button>
+        </div>
+      )}
+
+      {activeIntroSegment && (
+        <button
+          className="mpv-floating-pill mpv-skip-intro"
+          onClick={(e) => {
+            e.stopPropagation();
+            engine.seekTo(activeIntroSegment.end);
+            flash('Skipped intro');
+          }}
+        >
+          <FastForward size={15} /> {activeIntroSegment.label}
+        </button>
+      )}
+
+      {showUpNext && onNextEpisode && (
+        <div className="mpv-floating-pill mpv-upnext-card" onClick={(e) => e.stopPropagation()}>
+          <div>
+            <small>UP NEXT IN {Math.max(1, Math.ceil(duration - currentTime))}s</small>
+            <strong>{nextEpisodeLabel}</strong>
+          </div>
+          <button className="mpv-upnext-play" onClick={onNextEpisode}>
+            <Play size={14} fill="currentColor" /> Play now
+          </button>
+          <button className="mpv-upnext-dismiss" onClick={() => setUpNextDismissed(true)} aria-label="Dismiss Up Next">
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {ripple && <div className={`mpv-ripple ${ripple.side}`}><b>{ripple.label}</b></div>}
       {gestureLabel && <div className="mpv-gesture-label">{gestureLabel}</div>}
-
       {osd && <div className="mpv-osd" role="status">{osd}</div>}
 
       {statsOpen && stats && (
         <div className="mpv-stats">
           <h4><Activity size={13} /> Statistics</h4>
           <dl>
+            <div><dt>Engine</dt><dd>{stats.engineName}</dd></div>
             <div><dt>Video</dt><dd>{stats.width && stats.height ? `${stats.width}×${stats.height}` : '—'}</dd></div>
             <div><dt>FPS</dt><dd>{stats.fps ? `${stats.fps}` : '—'}</dd></div>
             <div><dt>Frames</dt><dd>{stats.totalFrames} total · {stats.droppedFrames} dropped</dd></div>
@@ -359,7 +528,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
             <div><dt>Bitrate</dt><dd>{formatBitrate(stats.bitrate)}</dd></div>
             <div><dt>Buffer</dt><dd>{formatTime(stats.buffered)} ahead</dd></div>
             <div><dt>Host</dt><dd>{streamHost(stream.url)}</dd></div>
-            <div><dt>Subtitles</dt><dd>{activeSubtitle ? activeSubtitle.label : 'off'}</dd></div>
+            <div><dt>Subtitles</dt><dd>{activeSubtitle ? activeSubtitle.label : 'off'}{settings.subtitleOffset ? ` (${settings.subtitleOffset > 0 ? '+' : ''}${settings.subtitleOffset}s)` : ''}</dd></div>
             <div><dt>Audio</dt><dd>{activeAudio ? activeAudio.label : 'default'}{muted ? ' (muted)' : ''}</dd></div>
             <div><dt>Speed</dt><dd>{formatSpeed(rate)}</dd></div>
           </dl>
@@ -426,6 +595,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
             <button onClick={engine.toggle} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={19} /> : <Play size={19} fill="currentColor" />}</button>
             <button onClick={() => seek(-settings.seekStep)} aria-label={`Back ${settings.seekStep} seconds`}><SkipBack size={17} /></button>
             <button onClick={() => seek(settings.seekStep)} aria-label={`Forward ${settings.seekStep} seconds`}><SkipForward size={17} /></button>
+            {media?.type === 'series' && (
+              <button className="mpv-chip" onClick={() => seek(85, '+85s Intro')} title="Skip 85s opening">
+                <FastForward size={14} /> <span>+85s</span>
+              </button>
+            )}
             <div className="mpv-volume">
               <button onClick={engine.toggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>
                 {muted || volume === 0 ? <VolumeX size={17} /> : volume < 55 ? <Volume1 size={17} /> : <Volume2 size={17} />}
@@ -441,25 +615,33 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
           </div>
 
           <div className="mpv-right">
+            {onNextEpisode && nextEpisodeLabel && (
+              <button className="mpv-chip" onClick={onNextEpisode} title={`Next: ${nextEpisodeLabel}`}>
+                <FastForward size={15} /> <span>{nextEpisodeLabel}</span>
+              </button>
+            )}
             <button className={`mpv-chip ${loop.a !== null ? 'active' : ''}`} onClick={engine.toggleLoop} aria-label="A-B loop">
               {loop.b !== null ? <Repeat1 size={15} /> : <Repeat size={15} />}
             </button>
             <button className={`mpv-chip ${menu === 'speed' ? 'active' : ''}`} onClick={() => setMenu(menu === 'speed' ? null : 'speed')}>
-              <Gauge size={15} /> {formatSpeed(rate)}
+              <Gauge size={15} /> <span>{formatSpeed(rate)}</span>
             </button>
             {levels.length > 1 && (
               <button className={`mpv-chip ${menu === 'quality' ? 'active' : ''}`} onClick={() => setMenu(menu === 'quality' ? null : 'quality')}>
-                <SlidersHorizontal size={15} /> {activeLevelLabel}
+                <SlidersHorizontal size={15} /> <span>{activeLevelLabel}</span>
               </button>
             )}
             {audioTracks.length > 1 && (
               <button className={`mpv-chip ${menu === 'audio' ? 'active' : ''}`} onClick={() => setMenu(menu === 'audio' ? null : 'audio')}>
-                <AudioLines size={15} /> {activeAudio?.label || 'Audio'}
+                <AudioLines size={15} /> <span>{activeAudio?.label || 'Audio'}</span>
               </button>
             )}
             <button className={`mpv-chip ${menu === 'subs' ? 'active' : ''}`} onClick={() => setMenu(menu === 'subs' ? null : 'subs')}>
-              {currentText ? <Captions size={15} /> : <CaptionsOff size={15} />} {activeSubtitle?.label || 'Off'}
+              {currentText ? <Captions size={15} /> : <CaptionsOff size={15} />} <span>{activeSubtitle?.label || (preparedSubtitles.length ? `${preparedSubtitles.length} Subs` : 'Off')}</span>
             </button>
+            {canCast && (
+              <button className="mpv-chip" onClick={engine.promptCast} aria-label="Cast to device"><Cast size={15} /></button>
+            )}
             <button className={`mpv-chip ${menu === 'settings' ? 'active' : ''}`} onClick={() => setMenu(menu === 'settings' ? null : 'settings')} aria-label="Player settings"><Settings2 size={15} /></button>
             <button className={`mpv-chip ${statsOpen ? 'active' : ''}`} onClick={() => setStatsOpen((open) => !open)} aria-label="Statistics"><Activity size={15} /></button>
             <button className="mpv-chip" onClick={engine.saveFrame} aria-label="Save frame"><Scissors size={15} /></button>
@@ -501,6 +683,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
         </Menu>
 
         <Menu id="subs" title="Subtitles">
+          <div className="mpv-sub-upload-row">
+            <button className="mpv-upload-btn" onClick={() => fileInputRef.current?.click()}>
+              <Upload size={13} /> Load .srt / .vtt / .ass file
+            </button>
+          </div>
           <div className="mpv-list">
             <button className={!currentText ? 'active' : ''} onClick={() => { engine.selectText(''); setMenu(null); }}>Off{!currentText && <Check size={14} />}</button>
             {textTracks.map((track) => (
@@ -510,10 +697,23 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
             ))}
           </div>
           <div className="mpv-menu-extra">
+            <div className="mpv-delay-row">
+              <span>Sync offset: <strong>{settings.subtitleOffset > 0 ? `+${settings.subtitleOffset}` : settings.subtitleOffset || 0}s</strong></span>
+              <div>
+                <button onClick={() => shiftSubtitleDelay(-0.25)}>−0.25s</button>
+                <button onClick={() => onSettingsChange({ subtitleOffset: 0 })}>0s</button>
+                <button onClick={() => shiftSubtitleDelay(0.25)}>+0.25s</button>
+              </div>
+            </div>
             <label>
               <span>Size {settings.subtitleSize}%</span>
               <input type="range" min={50} max={300} step={10} value={settings.subtitleSize}
                 onChange={(event) => onSettingsChange({ subtitleSize: Number(event.target.value) })} />
+            </label>
+            <label>
+              <span>Background opacity {settings.subtitleBgOpacity ?? 55}%</span>
+              <input type="range" min={0} max={100} step={5} value={settings.subtitleBgOpacity ?? 55}
+                onChange={(event) => onSettingsChange({ subtitleBgOpacity: Number(event.target.value) })} />
             </label>
             <label>
               <span>Color</span>
@@ -533,6 +733,24 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({ stream, autoplay, settings, onSet
               <span>Seek step {settings.seekStep}s</span>
               <input type="range" min={5} max={60} step={5} value={settings.seekStep}
                 onChange={(event) => onSettingsChange({ seekStep: Number(event.target.value) })} />
+            </label>
+            <label className="mpv-toggle">
+              <span>Auto-play next episode</span>
+              <button role="switch" aria-checked={settings.autoNextEpisode} onClick={() => onSettingsChange({ autoNextEpisode: !settings.autoNextEpisode })}>
+                {settings.autoNextEpisode ? <Check size={13} /> : null}
+              </button>
+            </label>
+            <label className="mpv-toggle">
+              <span>Auto-landscape fullscreen</span>
+              <button role="switch" aria-checked={settings.landscapeLock} onClick={() => onSettingsChange({ landscapeLock: !settings.landscapeLock })}>
+                {settings.landscapeLock ? <Check size={13} /> : null}
+              </button>
+            </label>
+            <label className="mpv-toggle">
+              <span>Skip Intro prompts</span>
+              <button role="switch" aria-checked={settings.skipIntro} onClick={() => onSettingsChange({ skipIntro: !settings.skipIntro })}>
+                {settings.skipIntro ? <Check size={13} /> : null}
+              </button>
             </label>
             <label className="mpv-toggle">
               <span>Touch gestures</span>
