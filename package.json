@@ -37,7 +37,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vitest": "^4.1.4"
+    "vitest": "^5.0.5"
   },
   "description": "A local-first Android & web streaming interface for Stremio addons, Nuvio plugins, and CloudStream extensions."
 }
