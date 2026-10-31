@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -19,5 +20,9 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 900,
+  },
+  test: {
+    include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/._*', '**/.git/**'],
   },
 });
