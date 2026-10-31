@@ -26,6 +26,29 @@ npm run build
 npm run preview
 ```
 
+## Android APK
+
+PRAHA STREAM is fully packaged for Android via Capacitor with hardware-accelerated WebView playback, full-screen player gesture controls, and cleartext network support for local servers and HTTP stream endpoints.
+
+### Download Release APK
+Download the latest prebuilt `praha-stream-v2.0.0.apk` directly from the [GitHub Releases](https://github.com/pjneha66/PRAHA-STREAM/releases) page.
+
+### Build Android APK locally
+```bash
+# Install dependencies
+npm install
+
+# Build web assets and sync to native Android wrapper
+npm run build
+npx cap sync android
+
+# Build release APK using Gradle
+cd android
+./gradlew assembleRelease
+# The verified APK is automatically output to ../dist-apk/praha-stream-v2.0.0.apk
+```
+
+
 ## Source support
 
 ### Stremio
