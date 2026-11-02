@@ -7,6 +7,7 @@ import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
+import AnimeView from './components/AnimeView';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
@@ -19,6 +20,8 @@ import {
 import { fetchStremioCatalog, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
 import { tmdbService } from './services/tmdbService';
+import { animeService } from './services/animeService';
+import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
 import type { HomeRowSettings } from './services/homeCache';
 import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
@@ -31,7 +34,7 @@ import type {
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'discover', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'anime', 'discover', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -79,6 +82,7 @@ const App: React.FC = () => {
   const [catalog, setCatalog] = useState<HomeCatalog>(() => { try { return readHomeCache(window.localStorage) || EMPTY_HOME_CATALOG; } catch { return EMPTY_HOME_CATALOG; } });
   const [catalogState, setCatalogState] = useState<LoadState>('idle');
   const [catalogError, setCatalogError] = useState('');
+  const [imdxSpotlight, setImdxSpotlight] = useState<MediaItem[]>([]);
   const [discoverItems, setDiscoverItems] = useState<MediaItem[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
@@ -131,6 +135,9 @@ const App: React.FC = () => {
   useSpatialNavigation(settings.dpadNavigation, Boolean(player));
 
   const tmdbReady = Boolean(settings.tmdbApiKey?.trim());
+  const imdxEnabled = imdxService.isEnabled(settings.imdx);
+  const imdxBaseUrl = settings.imdx.baseUrl;
+  const imdxApiKey = settings.imdx.apiKey;
 
   const notify = useCallback((message: string, tone: 'default' | 'success' | 'error' = 'default') => {
     setToast({ id: Date.now(), message, tone });
@@ -217,6 +224,38 @@ const App: React.FC = () => {
       setCatalog(EMPTY_HOME_CATALOG);
       setCatalogState('idle');
       setCatalogError('');
+      // Without a TMDB key the optional IMDx provider can still supply a catalog.
+      if (imdxEnabled) {
+        let active = true;
+        setCatalogState('loading');
+        Promise.all([
+          imdxService.list(settings.imdx, ['MOVIE']).catch(() => [] as MediaItem[]),
+          imdxService.list(settings.imdx, ['TV_SERIES']).catch(() => [] as MediaItem[]),
+        ]).then(([movies, series]) => {
+          if (!active) return;
+          if (!movies.length && !series.length) {
+            setCatalogError('IMDx returned no titles. Check the IMDx card in Settings, or add a TMDB key.');
+            setCatalogState('error');
+            return;
+          }
+          setCatalog({
+            hero: uniqueMedia([...series, ...movies]).filter((item) => item.poster).slice(0, 5),
+            trending: uniqueMedia([...series, ...movies]).slice(0, 20),
+            movies: uniqueMedia(movies).slice(0, 20),
+            series: uniqueMedia(series).slice(0, 20),
+            topRated: uniqueMedia([...movies, ...series])
+              .filter((item) => (item.rating || 0) >= 7)
+              .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+              .slice(0, 20),
+          });
+          setCatalogState('ready');
+        }).catch((error) => {
+          if (!active) return;
+          setCatalogError(error instanceof Error ? error.message : 'IMDx could not be reached.');
+          setCatalogState('error');
+        });
+        return () => { active = false; };
+      }
       return;
     }
     let active = true;
@@ -255,9 +294,25 @@ const App: React.FC = () => {
       }
     })();
     return () => { active = false; };
-  }, [tmdbReady]);
+  }, [tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   useEffect(() => loadCatalog(), [loadCatalog]);
+
+  // Optional IMDx (Tiffara) spotlight row. Runs alongside TMDB — it never replaces it.
+  useEffect(() => {
+    if (!imdxEnabled) {
+      setImdxSpotlight([]);
+      return;
+    }
+    let active = true;
+    Promise.all([
+      imdxService.list(settings.imdx, ['MOVIE']).catch(() => [] as MediaItem[]),
+      imdxService.list(settings.imdx, ['TV_SERIES']).catch(() => [] as MediaItem[]),
+    ]).then(([movies, series]) => {
+      if (active) setImdxSpotlight(uniqueMedia([...movies, ...series]).slice(0, 20));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   // Discover search & filtered TMDB /discover + Stremio catalogs
   useEffect(() => {
@@ -270,13 +325,25 @@ const App: React.FC = () => {
       const term = query.trim();
       try {
         if (term) {
-          const [tmdb, stremio] = await Promise.all([
+          const imdxOn = imdxEnabled;
+          const [tmdb, stremio, anime, imdx] = await Promise.all([
             tmdbReady ? tmdbService.search(term, 1).catch(() => []) : Promise.resolve([]),
             searchStremioAddons(addons, term).catch(() => []),
+            animeService.search(term, 1, 20).then((result) => result.items).catch(() => []),
+            imdxOn ? imdxService.search(term, settings.imdx).catch(() => []) : Promise.resolve([]),
           ]);
           if (active) {
-            setDiscoverItems(uniqueMedia([...tmdb, ...stremio]));
-            setDiscoverHasMore(tmdb.length >= 16);
+            setDiscoverItems(uniqueMedia([...tmdb, ...imdx, ...anime, ...stremio]));
+            setDiscoverHasMore(tmdb.length >= 16 || anime.length >= 20 || imdx.length >= 12);
+          }
+        } else if (discoverFilters.source === 'imdx' && imdxService.isEnabled(settings.imdx)) {
+          const [movies, series] = await Promise.all([
+            imdxService.list(settings.imdx, ['MOVIE']).catch(() => []),
+            imdxService.list(settings.imdx, ['TV_SERIES']).catch(() => []),
+          ]);
+          if (active) {
+            setDiscoverItems(uniqueMedia([...movies, ...series]));
+            setDiscoverHasMore(false);
           }
         } else {
           const catalogJobs = discoverFilters.source !== 'tmdb'
@@ -303,19 +370,22 @@ const App: React.FC = () => {
       }
     }, query ? 380 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [view, query, discoverFilters, addons, tmdbReady]);
+  }, [view, query, discoverFilters, addons, tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   const loadMoreDiscover = useCallback(async () => {
-    if (!tmdbReady || discoverLoadingMore || !discoverHasMore) return;
+    if (discoverLoadingMore || !discoverHasMore) return;
     const nextPage = discoverPage + 1;
     setDiscoverLoadingMore(true);
     try {
       const term = query.trim();
       if (term) {
-        const more = await tmdbService.search(term, nextPage);
-        setDiscoverItems((prev) => uniqueMedia([...prev, ...more]));
+        const [tmdb, anime] = await Promise.all([
+          tmdbReady ? tmdbService.search(term, nextPage).catch(() => []) : Promise.resolve([]),
+          animeService.search(term, nextPage, 20).then((result) => result.items).catch(() => []),
+        ]);
+        setDiscoverItems((prev) => uniqueMedia([...prev, ...tmdb, ...anime]));
         setDiscoverPage(nextPage);
-        setDiscoverHasMore(more.length >= 16);
+        setDiscoverHasMore(tmdb.length >= 16 || anime.length >= 20);
       } else {
         const more = await tmdbService.discover(discoverFilters, nextPage);
         setDiscoverItems((prev) => uniqueMedia([...prev, ...more.items]));
@@ -362,6 +432,27 @@ const App: React.FC = () => {
 
   const openDetails = (item: MediaItem) => {
     setSelected(item);
+    const applyEnrichment = (enriched: MediaItem | null) => {
+      if (enriched) setSelected((current) => (current?.id === item.id ? enriched : current));
+    };
+    const enrichWithImdx = (fallback?: MediaItem) => {
+      if (!imdxService.isEnabled(settings.imdx)) return;
+      imdxService.enrich(fallback || item, settings.imdx).then(applyEnrichment).catch(() => undefined);
+    };
+
+    if (item.source === 'anicore' || item.anime?.slug) {
+      animeService.enrich(item)
+        .then((enriched) => {
+          applyEnrichment(enriched);
+          if (!enriched.overview || !enriched.cast?.length) enrichWithImdx(enriched);
+        })
+        .catch(() => undefined);
+      return;
+    }
+    if (item.source === 'imdx') {
+      enrichWithImdx();
+      return;
+    }
     if (item.source === 'stremio' && item.addonUrl) {
       const addon = addons.find((entry) => entry.manifestUrl === item.addonUrl);
       if (addon) {
@@ -374,9 +465,14 @@ const App: React.FC = () => {
     }
     if (tmdbReady && (item.tmdbId || item.imdbId || item.id.startsWith('tt'))) {
       tmdbService.enrich(item)
-        .then((enriched) => setSelected((current) => (current?.id === item.id ? enriched : current)))
-        .catch(() => undefined);
+        .then((enriched) => {
+          applyEnrichment(enriched);
+          if (!enriched.cast?.length && !enriched.trailerKey) enrichWithImdx(enriched);
+        })
+        .catch(() => enrichWithImdx());
+      return;
     }
+    enrichWithImdx();
   };
 
   const openEmbeddedPlayers = (media: MediaItem, season?: number, episode?: number) => {
@@ -502,6 +598,9 @@ const App: React.FC = () => {
       let nextEp = player.episode + 1;
       let nextTitle: string | undefined;
 
+      const animeSlug = player.media.anime?.slug
+        || (player.media.source === 'anicore' ? player.media.id.slice('anicore:'.length) : '');
+
       if (tmdbReady && player.media.tmdbId) {
         const seasonEps = await tmdbService.getSeason(player.media.tmdbId, player.season).catch(() => []);
         if (seasonEps.length && nextEp > seasonEps.length) {
@@ -511,6 +610,18 @@ const App: React.FC = () => {
         const targetList = nextSeason === player.season
           ? seasonEps
           : await tmdbService.getSeason(player.media.tmdbId, nextSeason).catch(() => []);
+        nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
+      } else if (animeSlug) {
+        // Anime episode guides live in AniCore, so Up Next works without a TMDB key.
+        const animeEpisodes = await animeService.getEpisodes(animeSlug).catch(() => []);
+        const seasonEps = animeEpisodes.filter((entry) => entry.season === player.season);
+        if (seasonEps.length && nextEp > seasonEps.length) {
+          nextSeason = player.season + 1;
+          nextEp = 1;
+        }
+        const targetList = nextSeason === player.season
+          ? seasonEps
+          : animeEpisodes.filter((entry) => entry.season === nextSeason);
         nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
       }
 
@@ -670,6 +781,23 @@ const App: React.FC = () => {
         compact={settings.compactCards}
         homeRows={homeRows}
         onHomeRowsChange={setHomeRows}
+        imdxSpotlight={imdxSpotlight}
+        imdxEnabled={imdxEnabled}
+      />
+    );
+  } else if (view === 'anime') {
+    page = (
+      <AnimeView
+        query={query}
+        watchlist={watchlist}
+        compact={settings.compactCards}
+        imdx={settings.imdx}
+        onSelect={openDetails}
+        onPlay={(item) => openSources(item)}
+        onEmbeddedPlayers={openEmbeddedPlayers}
+        onToggleWatchlist={(item) => toggleWatchlist(item)}
+        onOpenSettings={() => navigate('settings')}
+        onClearSearch={() => setQuery('')}
       />
     );
   } else if (view === 'discover') {
@@ -686,6 +814,7 @@ const App: React.FC = () => {
         onLoadMore={loadMoreDiscover}
         watchlist={watchlist}
         tmdbReady={tmdbReady}
+        imdxEnabled={imdxEnabled}
         onSelect={openDetails}
         onToggleWatchlist={(item) => toggleWatchlist(item)}
         onClearSearch={() => setQuery('')}

@@ -69,9 +69,26 @@ npm run build
 
 ### Rich TMDB Metadata, Discover Filters, Profiles & Backup
 - **Rich Details Modal**: Inline YouTube trailers, real TMDB season & episode guides with thumbnails/air dates/watched bars, cast & director strip, and *More Like This* recommendations.
-- **Advanced Discover**: Filter TMDB’s `/discover` catalog by Genre, Year, Minimum Rating, Original Language, and Sort Order with *Load More* pagination.
+- **Advanced Discover**: Filter TMDB’s `/discover` catalog by Genre, Year, Minimum Rating, Original Language, and Sort Order with *Load More* pagination. Search also merges AniCore anime and the optional IMDx provider.
+- **Anime tab (AniCore + Anikura)**: A dedicated index of 32,000+ shows with trending, seasonal, top-rated, airing and film rows, format/score/genre filters, full episode guides, and per-episode Anikura comment threads.
+- **Optional IMDx (Tiffara) metadata**: IMDb-style titles, ratings, plots, cast and episodes from `api.tiffara.com`, switched on in Settings. TMDB remains the primary catalog and your TMDB key is never replaced.
 - **Household Profiles & Library Statuses**: Multiple local profiles with separate watchlists (`Watching`, `Plan to Watch`, `On Hold`, `Completed`, `Dropped`) and histories.
 - **Full JSON Backup & Trakt / Simkl Scrobbling**: Export/share or import a single `.json` bundle containing all addons, repositories, profiles, library items, watch history, and settings—plus optional Trakt.tv and Simkl watch-history scrobbling.
+
+### Anime tab, Anikura discussions and optional IMDx metadata
+
+The **Anime** tab reads two key-free public APIs directly from the device:
+
+- **AniCore** (`https://anicore.dpdns.org/v1`) — a five-way index (Kitsu, TVDB, TMDB, AniList, MAL) with `GET /anime` browse/search, `/anime/{slug}` details, `/anime/{slug}/episodes` episode guides, characters and recommendations. PRAHA uses its `externalIds` to hand the right TMDB/IMDb id to your Stremio and Nuvio sources.
+- **Anikura** (`https://anikura.club/api/v1`) — `GET /catalog` for catalog lookups and `GET /comments?…&episode=` for episode discussion. Comments are gathered by Anikura from MyAnimeList forums, Anikoto and Reanime and belong to their authors.
+
+Open any anime's details modal to load its AniCore episode guide and Anikura discussion for a chosen episode; those threads are also available for TMDB/Stremio titles once AniCore can match the title. Both APIs are requested only while the Anime tab or a discussion panel is open, responses are cached in memory for ten minutes, and no credentials are sent.
+
+**IMDx / Tiffara** is disabled by default. When enabled in **Settings → IMDx · Tiffara**, PRAHA adds IMDb-style search results to Discover and the Anime tab, an extra *Popular on IMDx* home row, richer plots/cast/episode stills in details (used when TMDB has no data), and — if no TMDB key is configured — a fallback home catalog. The base URL is editable (`https://api.tiffara.com` by default) and an optional `x-api-key` can be supplied for self-hosted deployments. Turning IMDx off does not affect TMDB.
+
+**WebCORS:** the APIs are browser-friendly but a corporate proxy, ad blocker or strict privacy extension can still block them; PRAHA then shows a clear error with a retry. Inside the Android APK, requests automatically fall back to PRAHA's native HTTP bridge, so neither CORS nor header restrictions apply. For local development behind a CORS-limited network, start Vite with `VITE_API_PROXY=1 npm run dev` to relay `/anicore`, `/anikura` and `/imdx` through the dev server (`vite.config.ts`); `ANICORE_PROXY_TARGET`, `ANIKURA_PROXY_TARGET` and `IMDX_PROXY_TARGET` point those relays at a mirror, a self-hosted instance or local fixtures. The three upstream hosts learn the sandbox's IP when the relay is used, and requests are made only when you open the corresponding screen.
+
+The anime and metadata code is covered by `tests/anime-flow.test.ts` (request shapes and mappers), `tests/anime-ui.test.tsx` (server-rendered shells) and `tests/app.integration.test.tsx`, which mounts the whole app in jsdom with stubbed provider responses and walks the Anime tab, details modal, Anikura discussion and the IMDx settings card.
 
 ### Player recovery and diagnostics
 

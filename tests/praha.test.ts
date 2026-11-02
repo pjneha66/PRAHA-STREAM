@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CINEMETA_ADDON, DEFAULT_PROFILE, DEFAULT_SETTINGS, normalizeSettings } from '../data/defaults';
 import { buildAndroidIntentUrl, extractStreamHeaders } from '../services/androidBridge';
 import { createBackupBundle, validateAndParseBackup } from '../services/backupSyncService';
@@ -332,3 +332,224 @@ it('bundles the Android protected-player host list and denies popup windows', as
   expect(activity).toContain('setAllowFileAccess(false)');
   expect(activity).toContain('filter.blocks(uri.getHost())');
 });
+
+describe('animeService (AniCore + Anikura)', () => {
+  it('parses AniCore date payloads and scales its 0–100 scores to a 0–10 rating', async () => {
+    const { parseAniCoreYear, anicoreScore, currentAnimeSeason } = await import('../services/animeService');
+    expect(parseAniCoreYear('{"year":2013,"month":4,"day":7}')).toBe('2013');
+    expect(parseAniCoreYear('2024-03-22')).toBe('2024');
+    expect(parseAniCoreYear(null)).toBeUndefined();
+    expect(anicoreScore(85.4)).toBe(8.5);
+    expect(anicoreScore(0)).toBeUndefined();
+    expect(currentAnimeSeason(new Date('2026-01-15T00:00:00Z'))).toEqual({ season: 'WINTER', year: 2026 });
+    expect(currentAnimeSeason(new Date('2026-10-02T00:00:00Z'))).toEqual({ season: 'FALL', year: 2026 });
+  });
+
+  it('maps an AniCore record into a MediaItem with every cross-source id', async () => {
+    const { mapAniCoreItem, animeReference } = await import('../services/animeService');
+    const entry = {
+      id: 46474,
+      slug: 'sousou-no-frieren',
+      title: 'Sousou no Frieren',
+      titleEnglish: 'Frieren: Beyond Journey’s End',
+      format: 'TV',
+      status: 'FINISHED',
+      seasonYear: 2023,
+      episodeCount: 28,
+      durationMinutes: 24,
+      images: { poster: 'https://img/poster.jpg', banner: 'https://img/banner.jpg' },
+      trailer: { youtubeId: 'qgQunxD0qCk' },
+      scores: { average: 91.7 },
+      genres: [{ name: 'Adventure' }, { name: 'Fantasy' }, { name: 'Drama' }, { name: 'Award Winning' }, { name: 'Shounen' }],
+      studios: [{ name: 'Madhouse' }],
+      externalIds: { mal: 52991, anilist: 154587, kitsu: 46474, tvdb: 424536, tmdb: 209867 },
+      sources: ['kitsu', 'anilist', 'mal'],
+    };
+    const item = mapAniCoreItem(entry);
+    expect(item?.id).toBe('anicore:sousou-no-frieren');
+    expect(item?.source).toBe('anicore');
+    expect(item?.type).toBe('series');
+    expect(item?.rating).toBe(9.2);
+    expect(item?.tmdbId).toBe(209867);
+    expect(item?.genres).toHaveLength(4);
+    expect(item?.trailerKey).toBe('qgQunxD0qCk');
+    expect(item?.anime?.malId).toBe(52991);
+    expect(item?.anime?.anilistId).toBe(154587);
+    expect(item?.anime?.studios).toEqual(['Madhouse']);
+    expect(animeReference({ slug: 'x', format: 'MOVIE' })).toMatchObject({ slug: 'x', format: 'MOVIE' });
+
+    const movie = mapAniCoreItem({ ...entry, format: 'MOVIE', images: { poster: 'p' } });
+    expect(movie?.type).toBe('movie');
+    expect(movie?.runtime).toBe('24m');
+    expect(mapAniCoreItem({ slug: 'no-art' } as never)).toBeNull();
+  });
+
+  it('groups AniCore episodes into seasons and maps them for the details modal', async () => {
+    const { mapAniCoreEpisodes, seasonsFromEpisodes } = await import('../services/animeService');
+    const episodes = mapAniCoreEpisodes('one-piece', [
+      { id: 2, number: 2, seasonNumber: 1, title: 'The Man in the Straw Hat', synopsis: 'Luffy sets sail.', thumbnail: 'https://img/2.jpg', airDate: '1999-10-27' },
+      { id: 1, number: 1, seasonNumber: 1, title: 'I Am Luffy', synopsis: '', thumbnail: 'https://img/1.jpg' },
+      { id: 3, number: 1, seasonNumber: 2, title: 'Season two opener' },
+    ]);
+    expect(episodes.map((episode) => [episode.season, episode.episode, episode.title])).toEqual([
+      [1, 1, 'I Am Luffy'],
+      [1, 2, 'The Man in the Straw Hat'],
+      [2, 1, 'Season two opener'],
+    ]);
+    expect(episodes[1].runtime).toBeUndefined();
+    expect(episodes[1].still).toBe('https://img/2.jpg');
+    expect(seasonsFromEpisodes('one-piece', episodes)).toEqual([
+      { id: 1, seasonNumber: 1, name: 'Season 1', episodeCount: 2 },
+      { id: 2, seasonNumber: 2, name: 'Season 2', episodeCount: 1 },
+    ]);
+  });
+
+  it('picks the strongest Anikura identifier available for a title', async () => {
+    const { anikuraIds, hasAnikuraId } = await import('../services/animeService');
+    expect(anikuraIds({ id: 'anicore:x', title: 'X', type: 'series', overview: '', poster: '', genres: [], source: 'anicore', anime: { slug: 'x', malId: 1, anilistId: 2 } } as never)).toEqual({ mal: 1 });
+    expect(anikuraIds({ id: 'tmdb:10', tmdbId: 10, title: 'X', type: 'series', overview: '', poster: '', genres: [], source: 'tmdb' } as never)).toEqual({ tmdb: 10 });
+    expect(hasAnikuraId({ id: 'x', title: 'X', type: 'movie', overview: '', poster: '', genres: [], source: 'tmdb' } as never)).toBe(false);
+  });
+});
+
+describe('imdxService (IMDx / Tiffara)', () => {
+  it('maps IMDb-style titles, types and runtimes', async () => {
+    const { mapImdxTitle, imdxMediaType, imdxRuntimeLabel } = await import('../services/imdxService');
+    expect(imdxMediaType('tvSeries')).toBe('series');
+    expect(imdxMediaType('tvMiniSeries')).toBe('series');
+    expect(imdxMediaType('tvMovie')).toBe('movie');
+    expect(imdxMediaType('movie')).toBe('movie');
+    expect(imdxRuntimeLabel(1500)).toBe('25m');
+    expect(imdxRuntimeLabel(9000)).toBe('2h 30m');
+    expect(imdxRuntimeLabel(0)).toBeUndefined();
+
+    const item = mapImdxTitle({
+      id: 'tt22248376',
+      type: 'tvSeries',
+      primaryTitle: "Frieren: Beyond Journey's End",
+      primaryImage: { url: 'https://img/frieren.jpg' },
+      startYear: 2023,
+      rating: { aggregateRating: 8.9 },
+      genres: ['Animation', 'Adventure'],
+      runtimeSeconds: 1500,
+    });
+    expect(item?.id).toBe('imdx:tt22248376');
+    expect(item?.imdbId).toBe('tt22248376');
+    expect(item?.source).toBe('imdx');
+    expect(item?.type).toBe('series');
+    expect(item?.rating).toBe(8.9);
+    expect(item?.runtime).toBe('25m');
+    expect(item?.poster).toBe('https://img/frieren.jpg');
+    expect(mapImdxTitle({ id: 'tt1' } as never)).toBeNull();
+  });
+
+  it('maps IMDb episodes and validates custom base URLs', async () => {
+    const { mapImdxEpisodes, normalizeImdxBaseUrl, IMDX_DEFAULT_BASE } = await import('../services/imdxService');
+    const episodes = mapImdxEpisodes([
+      { id: 'tt2', title: 'Bôken no owari', season: '1', episodeNumber: 1, runtimeSeconds: 1560, plot: 'Pilot', primaryImage: { url: 'https://img/ep1.jpg' }, rating: { aggregateRating: 8.4 }, releaseDate: { year: 2023, month: 9, day: 29 } },
+      { id: 'tt3', title: 'Second', season: '2', episodeNumber: 1 },
+    ]);
+    expect(episodes[0]).toMatchObject({ season: 1, episode: 1, title: 'Bôken no owari', runtime: 26, rating: 8.4, airDate: '2023-09-29', still: 'https://img/ep1.jpg' });
+    expect(episodes[1].season).toBe(2);
+
+    expect(normalizeImdxBaseUrl('https://api.tiffara.com/')).toBe('https://api.tiffara.com');
+    expect(normalizeImdxBaseUrl()).toBe(IMDX_DEFAULT_BASE);
+    expect(normalizeImdxBaseUrl('http://localhost:8080/')).toBe('http://localhost:8080');
+    expect(() => normalizeImdxBaseUrl('ftp://example.com')).toThrow();
+    expect(() => normalizeImdxBaseUrl('https://user:pass@example.com')).toThrow();
+  });
+
+  it('keeps IMDx optional while preserving the TMDB key in settings', async () => {
+    const { normalizeSettings, DEFAULT_IMDX_SETTINGS } = await import('../data/defaults');
+    const legacy = normalizeSettings({ tmdbApiKey: 'keep-me' });
+    expect(legacy.tmdbApiKey).toBe('keep-me');
+    expect(legacy.imdx).toEqual(DEFAULT_IMDX_SETTINGS);
+    expect(legacy.imdx.enabled).toBe(false);
+
+    const custom = normalizeSettings({ tmdbApiKey: 'keep-me', imdx: { enabled: true, baseUrl: '  ', apiKey: 'abc' } });
+    expect(custom.imdx).toEqual({ enabled: true, baseUrl: DEFAULT_IMDX_SETTINGS.baseUrl, apiKey: 'abc' });
+    expect(custom.tmdbApiKey).toBe('keep-me');
+  });
+});
+
+
+describe('metadata providers over HTTP', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const respond = (body: unknown, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  }) as unknown as Response;
+
+  it('queries AniCore, Anikura and IMDx with their documented URLs and maps the payloads', async () => {
+    const { animeService, anikuraService, clearAnimeCache } = await import('../services/animeService');
+    const { imdxService } = await import('../services/imdxService');
+    clearAnimeCache();
+
+    const requested: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes('anicore.dpdns.org/v1/anime?') && url.includes('search=frieren')) {
+        return respond({
+          pageInfo: { page: 1, perPage: 24, total: 6, lastPage: 1, hasNextPage: false },
+          items: [{ id: 46474, slug: 'sousou-no-frieren', title: 'Sousou no Frieren', titleEnglish: 'Frieren: Beyond Journey’s End', format: 'TV', seasonYear: 2023, images: { poster: 'https://img/f.jpg' }, scores: { average: 91.7 }, genres: [{ name: 'Fantasy' }], externalIds: { mal: 52991, tmdb: 209867 } }],
+        });
+      }
+      if (url.includes('anicore.dpdns.org/v1/anime/sousou-no-frieren/episodes')) {
+        return respond({ pageInfo: { hasNextPage: false }, items: [{ id: 1, number: 1, seasonNumber: 1, title: 'The Journey’s End', thumbnail: 'https://img/e1.jpg' }] });
+      }
+      if (url.includes('anikura.club/api/v1/comments')) {
+        return respond({
+          ok: true,
+          series: { id: 1, title: 'Frieren', watch_url: 'https://anikura.club/watch/1' },
+          page: { total: 2 },
+          comments: [{ id: 'c1', body: 'Wonderful premiere', like_count: 4, author: { name: 'kirito', avatar: 'https://img/a.png' } }],
+        });
+      }
+      if (url.includes('api.tiffara.com/search/titles')) {
+        return respond({ titles: [{ id: 'tt22248376', type: 'tvSeries', primaryTitle: 'Frieren', primaryImage: { url: 'https://img/i.jpg' }, startYear: 2023, rating: { aggregateRating: 8.9 } }] });
+      }
+      if (url.includes('api.tiffara.com/titles/tt0133093')) return respond({ id: 'tt0133093', primaryTitle: 'The Matrix' });
+      return respond({ error: 'not_found' }, 404);
+    }));
+
+    const search = await animeService.search('frieren');
+    expect(search.items[0].id).toBe('anicore:sousou-no-frieren');
+    expect(search.items[0].anime?.malId).toBe(52991);
+
+    const episodes = await animeService.getEpisodes('sousou-no-frieren');
+    expect(episodes[0]).toMatchObject({ season: 1, episode: 1, title: 'The Journey’s End' });
+
+    const comments = await anikuraService.getComments({ mal: 52991 }, 1, { limit: 12 });
+    expect(comments.comments[0].body).toBe('Wonderful premiere');
+    expect(comments.series?.watch_url).toBe('https://anikura.club/watch/1');
+    expect(comments.total).toBe(2);
+
+    const imdx = await imdxService.search('frieren', { enabled: true, baseUrl: 'https://api.tiffara.com', apiKey: '' });
+    expect(imdx[0].id).toBe('imdx:tt22248376');
+    expect(imdx[0].rating).toBe(8.9);
+
+    await expect(imdxService.verify({ enabled: true, baseUrl: 'https://api.tiffara.com', apiKey: '' })).resolves.toBe(true);
+
+    expect(requested.some((url) => url.includes('anicore.dpdns.org/v1/anime?') && url.includes('sort=search') === false)).toBe(true);
+    expect(requested.some((url) => url.includes('episode=1') && url.includes('mal=52991'))).toBe(true);
+  });
+
+  it('surfaces provider failures instead of silently returning empty search results', async () => {
+    const { animeService, clearAnimeCache } = await import('../services/animeService');
+    const { imdxService } = await import('../services/imdxService');
+    clearAnimeCache();
+    vi.stubGlobal('fetch', vi.fn(async () => respond({ error: 'server_error', message: 'Index is rebuilding' }, 503)));
+
+    await expect(animeService.search('frieren')).rejects.toThrow(/Index is rebuilding/);
+    await expect(imdxService.search('frieren', { enabled: true, baseUrl: 'https://api.tiffara.com' })).rejects.toThrow(/Index is rebuilding/);
+    await expect(anikuraServiceSafe()).resolves.toEqual({ comments: [], total: 0 });
+  });
+});
+
+async function anikuraServiceSafe() {
+  const { anikuraService } = await import('../services/animeService');
+  return anikuraService.getComments({ mal: 1 }, 1);
+}

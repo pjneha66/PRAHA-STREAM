@@ -22,6 +22,7 @@ const DiscoverView: React.FC<{
   onLoadMore: () => void;
   watchlist: MediaItem[];
   tmdbReady: boolean;
+  imdxEnabled?: boolean;
   onSelect: (item: MediaItem) => void;
   onToggleWatchlist: (item: MediaItem) => void;
   onClearSearch: () => void;
@@ -29,8 +30,9 @@ const DiscoverView: React.FC<{
   compact: boolean;
 }> = ({
   items, loading, loadingMore, hasMore, error, query, filters, onFiltersChange, onLoadMore,
-  watchlist, tmdbReady, onSelect, onToggleWatchlist, onClearSearch, onOpenSettings, compact,
+  watchlist, tmdbReady, imdxEnabled = false, onSelect, onToggleWatchlist, onClearSearch, onOpenSettings, compact,
 }) => {
+  const metadataReady = tmdbReady || imdxEnabled;
   const update = <K extends keyof DiscoverFilters>(key: K, value: DiscoverFilters[K]) => {
     onFiltersChange({ ...filters, [key]: value });
   };
@@ -47,6 +49,7 @@ const DiscoverView: React.FC<{
   const filtered = useMemo(() => items.filter((item) => {
     if (filters.type !== 'all' && item.type !== filters.type) return false;
     if (filters.source === 'tmdb' && item.source !== 'tmdb') return false;
+    if (filters.source === 'imdx' && item.source !== 'imdx') return false;
     if (filters.source === 'stremio' && item.source === 'tmdb') return false;
     if (query && filters.minRating > 0 && (item.rating || 0) < filters.minRating) return false;
     if (query && filters.year !== 'all' && item.year !== filters.year) return false;
@@ -59,7 +62,7 @@ const DiscoverView: React.FC<{
         <div>
           <span className="page-kicker"><Compass size={14} /> EXPLORE THE CATALOG</span>
           <h1>{query ? `Results for “${query}”` : 'Find your next obsession.'}</h1>
-          <p>{query ? `${filtered.length} titles from TMDB and your installed sources.` : 'Filter by genre, year, rating, and language across TMDB and your addons.'}</p>
+          <p>{query ? `${filtered.length} titles from TMDB, AniCore, IMDb-style IMDx results and your installed sources.` : 'Filter by genre, year, rating, and language across TMDB, AniCore, IMDx and your addons.'}</p>
         </div>
       </div>
 
@@ -122,6 +125,7 @@ const DiscoverView: React.FC<{
             <select aria-label="Source filter" value={filters.source} onChange={(e) => update('source', e.target.value as DiscoverFilters['source'])}>
               <option value="all">All sources</option>
               <option value="tmdb">TMDB catalog</option>
+              <option value="imdx">IMDx · Tiffara</option>
               <option value="stremio">Your sources</option>
             </select>
           </label>
@@ -134,12 +138,12 @@ const DiscoverView: React.FC<{
         </div>
       </div>
 
-      {!tmdbReady && filters.source !== 'stremio' ? (
+      {!metadataReady && !filtered.length && !loading && filters.source !== 'stremio' && filters.source !== 'imdx' ? (
         <TmdbSetupCard
-          title={query ? 'Search needs your TMDB key' : 'Discover needs your TMDB key'}
+          title={query ? 'Search needs a metadata source' : 'Discover needs a metadata source'}
           message={query
-            ? 'PRAHA searches TMDB and your installed Stremio addons. Add your free personal API key to search the full TMDB catalog of movies and series.'
-            : 'Browse TMDB’s trending, popular, and filtered catalogues, plus the catalogs of the addons you install. Add your free personal API key to get started.'}
+            ? 'PRAHA searches TMDB, AniCore and your installed Stremio addons. Add your free personal TMDB API key — or switch on the optional IMDx (Tiffara) provider in the Settings → Metadata card.'
+            : 'Browse TMDB’s trending, popular, and filtered catalogues, the AniCore anime index, and the catalogs of the addons you install. Add your free personal TMDB key — or enable IMDx (Tiffara) — to get started.'}
           onOpenSettings={onOpenSettings}
         />
       ) : loading ? (

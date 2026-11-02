@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, Check, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, UserPlus,
+  Blocks, Check, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, Tv, UserPlus,
 } from 'lucide-react';
 import type { AppView, UserProfile } from '../types';
 
@@ -19,6 +19,7 @@ interface NavigationProps {
 
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
+  { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
   { id: 'library' as const, label: 'My Library', icon: Library },
@@ -26,6 +27,7 @@ const mainNav = [
 
 const mobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
+  { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'library' as const, label: 'Library', icon: Library },
   { id: 'extensions' as const, label: 'Addons', icon: Blocks },
@@ -155,8 +157,8 @@ const Navigation: React.FC<NavigationProps> = ({
               ref={searchRef}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Search movies, shows, and sources…"
-              aria-label="Search movies and shows"
+              placeholder="Search movies, shows, anime, and sources…"
+              aria-label="Search movies, shows, and anime"
             />
             {query ? (
               <button type="button" className="search-clear" onClick={() => onQueryChange('')} aria-label="Clear search">×</button>

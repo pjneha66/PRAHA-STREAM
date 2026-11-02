@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Database, Download, ExternalLink, Eye, EyeOff, Gauge,
   KeyRound, Keyboard, LoaderCircle, Magnet, MonitorPlay, Package, RefreshCw, RotateCcw,
-  Settings, ShieldCheck, Smartphone, Trash2, Tv, Upload, UserPlus, Users,
+  Settings, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, Upload, UserPlus, Users,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
+import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
 import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
 import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
@@ -59,6 +60,11 @@ const SettingsView: React.FC<{
 
   const [apiDraft, setApiDraft] = useState(settings.tmdbApiKey || '');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [imdxBaseDraft, setImdxBaseDraft] = useState(settings.imdx.baseUrl);
+  const [imdxKeyDraft, setImdxKeyDraft] = useState(settings.imdx.apiKey || '');
+  const [showImdxKey, setShowImdxKey] = useState(false);
+  const [imdxStatus, setImdxStatus] = useState<ApiStatus>('idle');
+  const [imdxMessage, setImdxMessage] = useState('');
   const [dnsOpenError, setDnsOpenError] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
@@ -71,6 +77,25 @@ const SettingsView: React.FC<{
   const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
+  useEffect(() => { setImdxBaseDraft(settings.imdx.baseUrl); setImdxKeyDraft(settings.imdx.apiKey || ''); }, [settings.imdx.baseUrl, settings.imdx.apiKey]);
+
+  const updateImdx = (patch: Partial<AppSettings['imdx']>) => onChange({ ...settings, imdx: { ...settings.imdx, ...patch } });
+
+  const verifyImdx = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setImdxStatus('checking');
+    setImdxMessage('');
+    try {
+      const baseUrl = normalizeImdxBaseUrl(imdxBaseDraft);
+      await imdxService.verify({ enabled: true, baseUrl, apiKey: imdxKeyDraft.trim() });
+      updateImdx({ enabled: true, baseUrl, apiKey: imdxKeyDraft.trim() });
+      setImdxStatus('success');
+      setImdxMessage('IMDx answered. IMDb-style metadata is now available alongside TMDB.');
+    } catch (error) {
+      setImdxStatus('error');
+      setImdxMessage(error instanceof Error ? error.message : 'IMDx could not verify this endpoint.');
+    }
+  };
 
   const verifyAndSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -191,6 +216,73 @@ const SettingsView: React.FC<{
             </form>
             {apiMessage && <p className={`api-key-message ${apiStatus}`} role="status">{apiStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{apiMessage}</p>}
             <p className="api-privacy"><ShieldCheck size={14} /><span>Your key is stored only on this device and sent directly to TMDB.</span></p>
+          </section>
+
+          {/* IMDx / Tiffara metadata */}
+          <section className="settings-card imdx-settings-card">
+            <div className="settings-card-heading">
+              <span><Sparkles size={19} /></span>
+              <div>
+                <h2>IMDx · Tiffara (optional)</h2>
+                <p>An extra IMDb-style metadata source. TMDB stays your primary catalog — this only adds results, plots, ratings and episode stills.</p>
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <div><strong>Enable IMDx metadata</strong><p>Adds IMDb ratings, plots, cast and episode data from api.tiffara.com to search, details and the anime index.</p></div>
+              <Toggle checked={settings.imdx.enabled} onChange={(checked) => updateImdx({ enabled: checked })} label="Enable IMDx metadata" />
+            </div>
+
+            <form className="api-key-form" onSubmit={verifyImdx}>
+              <label htmlFor="imdx-base-url">API base URL</label>
+              <div className="api-key-input">
+                <ExternalLink size={16} />
+                <input
+                  id="imdx-base-url"
+                  type="url"
+                  value={imdxBaseDraft}
+                  onChange={(event) => { setImdxBaseDraft(event.target.value); setImdxStatus('idle'); setImdxMessage(''); }}
+                  placeholder="https://api.tiffara.com"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  disabled={imdxStatus === 'checking'}
+                />
+              </div>
+              <label htmlFor="imdx-api-key">API key (optional — public endpoints need none)</label>
+              <div className="api-key-input">
+                <KeyRound size={16} />
+                <input
+                  id="imdx-api-key"
+                  type={showImdxKey ? 'text' : 'password'}
+                  value={imdxKeyDraft}
+                  onChange={(event) => { setImdxKeyDraft(event.target.value); setImdxStatus('idle'); setImdxMessage(''); }}
+                  placeholder="Leave empty unless your IMDx host requires a key"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  disabled={imdxStatus === 'checking'}
+                />
+                <button type="button" onClick={() => setShowImdxKey((visible) => !visible)} aria-label={showImdxKey ? 'Hide IMDx API key' : 'Show IMDx API key'}>{showImdxKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              </div>
+              <div className="api-key-actions">
+                <button className="button button-primary" type="submit" disabled={imdxStatus === 'checking'}>
+                  {imdxStatus === 'checking' ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}
+                  {imdxStatus === 'checking' ? 'Verifying…' : 'Verify & save'}
+                </button>
+                {(settings.imdx.apiKey || settings.imdx.enabled) && (
+                  <button className="button button-secondary" type="button" onClick={() => { updateImdx({ enabled: false, apiKey: '' }); setImdxKeyDraft(''); setImdxStatus('idle'); setImdxMessage(''); }}>
+                    <Trash2 size={15} /> Disable
+                  </button>
+                )}
+                <a className="text-button" href={IMDX_DOCS_URL} target="_blank" rel="noreferrer noopener">API docs <ExternalLink size={12} /></a>
+                <span className={`api-saved-state ${settings.imdx.enabled ? 'active' : ''}`}><i />{settings.imdx.enabled ? 'IMDx active' : 'IMDx off'}</span>
+              </div>
+            </form>
+            {imdxMessage && <p className={`api-key-message ${imdxStatus}`} role="status">{imdxStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}{imdxMessage}</p>}
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Requests go straight from this device to your IMDx endpoint. TMDB is never replaced or disabled by this setting.</span></p>
           </section>
 
           {/* Debrid Magnet Streaming */}
@@ -421,6 +513,8 @@ const SettingsView: React.FC<{
             <div className="setup-stat"><span>Nuvio providers</span><strong>{repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0)}</strong></div>
             <div className="setup-stat"><span>Debrid</span><strong>{settings.debrid.provider === 'none' ? 'Off' : settings.debrid.provider}</strong></div>
             <div className="setup-stat"><span>TMDB API</span><strong>{settings.tmdbApiKey ? 'Own key' : 'Not set'}</strong></div>
+            <div className="setup-stat"><span>IMDx · Tiffara</span><strong>{settings.imdx.enabled ? 'Enabled' : 'Optional'}</strong></div>
+            <div className="setup-stat"><span>Anime index</span><strong>AniCore + Anikura</strong></div>
             <p><Blocks size={14} /> Export a JSON backup anytime to mirror this setup across devices.</p>
           </section>
           <section className="settings-card privacy-card"><span className="settings-side-icon"><ShieldCheck size={21} /></span><h2>Private by design</h2><p>Your library, profiles, history, API keys, and extension settings stay local on your device.</p></section>

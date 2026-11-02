@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
 import { findNuvioStreams } from '../services/nuvioService';
 import { tmdbService } from '../services/tmdbService';
+import { animeService } from '../services/animeService';
 import type {
   InstalledAddon, MediaItem, NuvioRepository,
   SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth,
@@ -39,7 +40,13 @@ const SourceModal: React.FC<{
 }) => {
   const [season, setSeason] = useState(initialSeason);
   const [episode, setEpisode] = useState(initialEpisode);
-  const [seasons, setSeasons] = useState<TmdbSeasonSummary[] | undefined>(media.seasons);
+  const [seasons, setSeasons] = useState<TmdbSeasonSummary[] | undefined>(
+    media.seasons?.length
+      ? media.seasons
+      : media.anime?.episodeCount && media.type === 'series'
+        ? [{ id: 1, seasonNumber: 1, name: 'Season 1', episodeCount: media.anime.episodeCount }]
+        : undefined,
+  );
   const [episodes, setEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [resolvedTmdbId, setResolvedTmdbId] = useState<number | undefined>(media.tmdbId);
   const [streams, setStreams] = useState<StreamResult[]>([]);
@@ -48,11 +55,27 @@ const SourceModal: React.FC<{
   const [loading, setLoading] = useState(true);
   const [requestKey, setRequestKey] = useState(0);
 
-  // Load real season metadata from TMDB for series
+  const animeSlug = media.anime?.slug || (media.source === 'anicore' ? media.id.slice('anicore:'.length) : '');
+
+  // Load real season metadata from AniCore (anime) or TMDB for series
   useEffect(() => {
     if (media.type !== 'series') return;
     let active = true;
     (async () => {
+      if (animeSlug) {
+        try {
+          const list = await animeService.getEpisodes(animeSlug);
+          if (!active || !list.length) return;
+          const counts = new Map<number, number>();
+          list.forEach((entry) => counts.set(entry.season, (counts.get(entry.season) || 0) + 1));
+          setSeasons([...counts.entries()].sort((a, b) => a[0] - b[0]).map(([seasonNumber, episodeCount]) => ({
+            id: seasonNumber, seasonNumber, name: `Season ${seasonNumber}`, episodeCount,
+          })));
+        } catch {
+          // Fall back to plain season numbers when AniCore is unreachable
+        }
+        return;
+      }
       try {
         const enriched = media.seasons?.length ? media : await tmdbService.enrich(media);
         if (!active) return;
@@ -63,11 +86,26 @@ const SourceModal: React.FC<{
       }
     })();
     return () => { active = false; };
-  }, [media]);
+  }, [media, animeSlug]);
 
   // Load real episode titles for the active season
   useEffect(() => {
-    if (media.type !== 'series' || !resolvedTmdbId) {
+    if (media.type !== 'series') {
+      setEpisodes([]);
+      return;
+    }
+    if (animeSlug) {
+      let active = true;
+      animeService.getEpisodes(animeSlug)
+        .then((list) => {
+          if (!active) return;
+          const seasonEps = list.filter((entry) => entry.season === season);
+          setEpisodes(seasonEps.length ? seasonEps : list);
+        })
+        .catch(() => { if (active) setEpisodes([]); });
+      return () => { active = false; };
+    }
+    if (!resolvedTmdbId) {
       setEpisodes([]);
       return;
     }
@@ -82,7 +120,7 @@ const SourceModal: React.FC<{
       })
       .catch(() => { if (active) setEpisodes([]); });
     return () => { active = false; };
-  }, [media.type, resolvedTmdbId, season]);
+  }, [media.type, resolvedTmdbId, season, animeSlug]);
 
   useEffect(() => {
     let cancelled = false;

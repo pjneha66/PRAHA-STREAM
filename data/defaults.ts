@@ -1,4 +1,4 @@
-import type { AppSettings, DiscoverFilters, HomeCatalog, InstalledAddon, PlayerSettings, UserProfile } from '../types';
+import type { AppSettings, DiscoverFilters, HomeCatalog, ImdxSettings, InstalledAddon, PlayerSettings, UserProfile } from '../types';
 
 /** Empty starting point for the TMDB-driven home screen. */
 export const EMPTY_HOME_CATALOG: HomeCatalog = { hero: [], trending: [], movies: [], series: [], topRated: [] };
@@ -68,6 +68,13 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   skipIntro: true,
 };
 
+/** Optional IMDb-style metadata from Tiffara's IMDx API. TMDB stays the primary catalog. */
+export const DEFAULT_IMDX_SETTINGS: ImdxSettings = {
+  enabled: false,
+  baseUrl: 'https://api.tiffara.com',
+  apiKey: '',
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   autoplay: true,
   compactCards: false,
@@ -75,6 +82,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preferredLanguage: 'en',
   accent: 'gold',
   tmdbApiKey: '',
+  imdx: DEFAULT_IMDX_SETTINGS,
   debrid: {
     provider: 'none',
     apiKey: '',
@@ -103,6 +111,15 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
     sync: {
       ...DEFAULT_SETTINGS.sync,
       ...(base.sync || {}),
+    },
+    imdx: {
+      ...DEFAULT_IMDX_SETTINGS,
+      ...(base.imdx || {}),
+      enabled: Boolean((base.imdx || {}).enabled),
+      baseUrl: typeof (base.imdx || {}).baseUrl === 'string' && ((base.imdx || {}).baseUrl as string).trim()
+        ? (base.imdx || {}).baseUrl as string
+        : DEFAULT_IMDX_SETTINGS.baseUrl,
+      apiKey: typeof (base.imdx || {}).apiKey === 'string' ? (base.imdx || {}).apiKey as string : '',
     },
     player: {
       ...DEFAULT_PLAYER_SETTINGS,
