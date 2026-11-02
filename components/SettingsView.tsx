@@ -5,8 +5,9 @@ import {
   Settings, ShieldCheck, Smartphone, Trash2, Tv, Upload, UserPlus, Users,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
-import { isAndroidApp, isAndroidTv } from '../services/androidBridge';
+import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
 import { PLAYER_THEMES } from './player/themes';
+import JellyfinSettings from './JellyfinSettings';
 import type {
   AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
   PlayerSettings, UserProfile,
@@ -58,6 +59,7 @@ const SettingsView: React.FC<{
 
   const [apiDraft, setApiDraft] = useState(settings.tmdbApiKey || '');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [dnsOpenError, setDnsOpenError] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
 
@@ -299,6 +301,8 @@ const SettingsView: React.FC<{
             </div>
           </section>
 
+          <JellyfinSettings />
+
           {/* Android & TV Experience */}
           <section className="settings-card">
             <div className="settings-card-heading">
@@ -327,6 +331,21 @@ const SettingsView: React.FC<{
             <div className="setting-row">
               <div><strong>Skip Intro button</strong><p>Queries IntroDB timestamps for series episodes and displays a Skip Intro prompt.</p></div>
               <Toggle checked={settings.player.skipIntro} onChange={(val) => updatePlayer({ skipIntro: val })} label="Skip Intro button" />
+            </div>
+          </section>
+
+          {/* DNS is configured by Android, not silently changed by the app. */}
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><ShieldCheck size={19} /></span><div><h2>Private DNS</h2><p>Encrypted DNS may help if your network's DNS cannot resolve a service.</p></div></div>
+            <div className="setting-row">
+              <div>
+                <strong>Use Android Private DNS</strong>
+                <p>On Android 9 or later, open Network &amp; internet → Private DNS, choose “Private DNS provider hostname”, and enter <b>dns.google</b> or <b>one.one.one.one</b>. Save, return to PRAHA, and retry. Menu names vary on TV and other devices.</p>
+                <p>This applies to the whole device and sends DNS queries to your chosen provider. It is not a VPN and cannot bypass IP, geographic, or service-level blocks. If your connection stops working, switch Private DNS back to Automatic.</p>
+                {!isAndroidApp() && <p>On the web, configure secure DNS in your browser or device settings instead.</p>}
+                {dnsOpenError && <p role="alert">Could not open settings. Open Android Settings and search for Private DNS.</p>}
+              </div>
+              {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => setDnsOpenError(!openPrivateDnsSettings())}>Open Android settings <ExternalLink size={15} /></button>}
             </div>
           </section>
 

@@ -48,7 +48,15 @@ async function request<T>(path: string, suppliedKey?: string): Promise<T> {
   if (isV4Token) headers.Authorization = `Bearer ${apiKey}`;
   else url.searchParams.set('api_key', apiKey);
 
-  const response = await fetch(url, { headers });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  let response: Response;
+  try {
+    response = await fetch(url, { headers, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('TMDB took too long to respond. Check your connection and try again.');
+    throw error;
+  } finally { clearTimeout(timer); }
   if (!response.ok) {
     let message = `TMDB returned HTTP ${response.status}.`;
     try {

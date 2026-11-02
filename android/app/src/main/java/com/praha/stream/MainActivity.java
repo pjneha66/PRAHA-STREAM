@@ -80,6 +80,49 @@ public class MainActivity extends BridgeActivity {
             return true;
         }
 
+        /** Open third-party embeds in a separate WebView without the native bridge. */
+        @JavascriptInterface
+        public boolean openProtectedEmbed(String url) {
+            try {
+                if (url == null || url.length() > 4096 || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return false;
+                Intent intent = new Intent(MainActivity.this, ProtectedEmbedActivity.class);
+                intent.putExtra(ProtectedEmbedActivity.EXTRA_URL, url);
+                startActivity(intent);
+                return true;
+            } catch (Exception ignored) { return false; }
+        }
+
+        /** Open system settings; only the user can change Android Private DNS. */
+        @JavascriptInterface
+        public boolean openPrivateDnsSettings() {
+            String[] actions = {
+                    "android.settings.PRIVATE_DNS_SETTINGS",
+                    android.provider.Settings.ACTION_WIRELESS_SETTINGS,
+                    android.provider.Settings.ACTION_SETTINGS
+            };
+            for (String action : actions) {
+                try {
+                    startActivity(new Intent(action));
+                    return true;
+                } catch (Exception ignored) {
+                    // Some Android and TV variants do not expose a Private DNS page.
+                }
+            }
+            return false;
+        }
+
+        @JavascriptInterface
+        public boolean openBrowser(String url) {
+            try {
+                Uri uri = Uri.parse(url);
+                if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) return false;
+                Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                startActivity(intent);
+                return true;
+            } catch (Exception ignored) { return false; }
+        }
+
         @JavascriptInterface
         public boolean isTelevision() {
             UiModeManager uiModeManager = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);

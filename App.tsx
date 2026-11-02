@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, CircleAlert, Info, X } from 'lucide-react';
 import Navigation from './components/Navigation';
 import HomeView from './components/HomeView';
+import EmbedModal from './components/EmbedModal';
 import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
@@ -18,12 +19,14 @@ import {
 import { fetchStremioCatalog, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
 import { tmdbService } from './services/tmdbService';
+import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
+import type { HomeRowSettings } from './services/homeCache';
 import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import type {
   AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
   LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, StreamResult, ToastMessage,
-  UserProfile, WatchProgress,
+  UserProfile, WatchProgress, PrahaBackupBundle,
 } from './types';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
@@ -62,6 +65,7 @@ interface ActivePlayerState {
   episode?: number;
   episodeTitle?: string;
   initialTime?: number;
+  alternatives?: StreamResult[];
 }
 
 const App: React.FC = () => {
@@ -72,7 +76,7 @@ const App: React.FC = () => {
   const [discoverHasMore, setDiscoverHasMore] = useState(false);
   const [discoverLoadingMore, setDiscoverLoadingMore] = useState(false);
 
-  const [catalog, setCatalog] = useState<HomeCatalog>(EMPTY_HOME_CATALOG);
+  const [catalog, setCatalog] = useState<HomeCatalog>(() => { try { return readHomeCache(window.localStorage) || EMPTY_HOME_CATALOG; } catch { return EMPTY_HOME_CATALOG; } });
   const [catalogState, setCatalogState] = useState<LoadState>('idle');
   const [catalogError, setCatalogError] = useState('');
   const [discoverItems, setDiscoverItems] = useState<MediaItem[]>([]);
@@ -80,10 +84,15 @@ const App: React.FC = () => {
   const [discoverError, setDiscoverError] = useState('');
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [sourceState, setSourceState] = useState<SourceRequest | null>(null);
+  const [embedState, setEmbedState] = useState<SourceRequest | null>(null);
   const [player, setPlayer] = useState<ActivePlayerState | null>(null);
+  const playerIdentityRef = useRef<string | null>(null);
+  const playerIdentity = player ? JSON.stringify([player.media.id, player.season, player.episode, player.stream.id]) : null;
+  playerIdentityRef.current = playerIdentity;
   const [nextEpisodeLoading, setNextEpisodeLoading] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
+  const playbackPositionRef = useRef(0);
   const lastBackExitPromptRef = useRef(0);
   const scrobbledKeysRef = useRef<Set<string>>(new Set());
 
@@ -114,6 +123,9 @@ const App: React.FC = () => {
 
   const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>(watchlistKey, []);
   const [history, setHistory] = usePersistentState<WatchProgress[]>(historyKey, []);
+  const [homeRowsRaw, setHomeRows] = usePersistentState<HomeRowSettings>(`praha.v2.profile.${activeProfile.id}.home-rows`, DEFAULT_HOME_ROWS);
+  const homeRows = useMemo(() => normalizeHomeRows(homeRowsRaw), [homeRowsRaw]);
+  const [preferredSource, setPreferredSource] = usePersistentState<string>(`praha.v2.profile.${activeProfile.id}.preferred-source`, '');
 
   // Spatial D-Pad / Android TV remote navigation (pauses automatically while video player is open)
   useSpatialNavigation(settings.dpadNavigation, Boolean(player));
@@ -164,6 +176,10 @@ const App: React.FC = () => {
         setPlayer(null);
         return;
       }
+      if (embedState) {
+        setEmbedState(null);
+        return;
+      }
       if (sourceState) {
         setSourceState(null);
         return;
@@ -187,7 +203,7 @@ const App: React.FC = () => {
 
     window.addEventListener('praha:hardware-back', onHardwareBack);
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
-  }, [player, sourceState, selected, view, notify]);
+  }, [player, sourceState, embedState, selected, view, notify]);
 
   const updatePlayerSettings = useCallback((patch: Partial<PlayerSettings>) => {
     setSettings((current) => {
@@ -207,31 +223,34 @@ const App: React.FC = () => {
     setCatalogState('loading');
     setCatalogError('');
     (async () => {
-      try {
-        const [trending, movies, series, topRated] = await Promise.all([
-          tmdbService.trending('all', 'week'),
-          tmdbService.catalog('popular', 'movie'),
-          tmdbService.catalog('popular', 'tv'),
-          tmdbService.catalog('top_rated', 'movie'),
-        ]);
-        if (!active) return;
-        const spotlight = await Promise.all(
-          uniqueMedia([...trending, ...movies]).filter((item) => item.backdrop).slice(0, 5)
-            .map((item) => tmdbService.enrich(item).catch(() => item)),
-        );
-        if (!active) return;
-        setCatalog({
-          hero: spotlight,
-          trending: uniqueMedia(trending),
-          movies: uniqueMedia(movies),
-          series: uniqueMedia(series),
-          topRated: uniqueMedia(topRated),
-        });
-        setCatalogState('ready');
-      } catch (error) {
-        if (!active) return;
-        setCatalog(EMPTY_HOME_CATALOG);
-        setCatalogError(error instanceof Error ? error.message : 'TMDB could not be reached.');
+      // Each row can render as soon as it arrives; a slow endpoint must not
+      // hold the entire home screen hostage.
+      const rows = [
+        ['trending', () => tmdbService.trending('all', 'week')],
+        ['movies', () => tmdbService.catalog('popular', 'movie')],
+        ['series', () => tmdbService.catalog('popular', 'tv')],
+        ['topRated', () => tmdbService.catalog('top_rated', 'movie')],
+      ] as const;
+      let successes = 0;
+      let lastError: unknown;
+      await Promise.all(rows.map(async ([name, fetchRow]) => {
+        try {
+          const items = uniqueMedia(await fetchRow());
+          if (!active) return;
+          successes++;
+          setCatalog((current) => {
+            const next = { ...current, [name]: items };
+            if (name === 'trending' || name === 'movies') {
+              next.hero = uniqueMedia([...next.trending, ...next.movies]).filter((item) => item.backdrop).slice(0, 5);
+            }
+            writeHomeCache(window.localStorage, next);
+            return next;
+          });
+          setCatalogState('ready');
+        } catch (error) { lastError = error; }
+      }));
+      if (active && !successes) {
+        setCatalogError(lastError instanceof Error ? lastError.message : 'TMDB could not be reached.');
         setCatalogState('error');
       }
     })();
@@ -360,6 +379,12 @@ const App: React.FC = () => {
     }
   };
 
+  const openEmbeddedPlayers = (media: MediaItem, season?: number, episode?: number) => {
+    const existing = history.find((entry) => entry.media.id === media.id);
+    setSelected(null);
+    setEmbedState({ media, season: season ?? existing?.season ?? 1, episode: episode ?? existing?.episode ?? 1 });
+  };
+
   const openSources = (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => {
     const existing = history.find((h) => h.media.id === item.id);
     setSelected(null);
@@ -418,6 +443,7 @@ const App: React.FC = () => {
 
   const resumeWatchEntry = (entry: WatchProgress) => {
     if (entry.lastStream && entry.progress < 96) {
+      playbackPositionRef.current = entry.currentTime || 0;
       setPlayer({
         media: entry.media,
         stream: entry.lastStream,
@@ -431,7 +457,7 @@ const App: React.FC = () => {
     openSources(entry.media, entry.season, entry.episode, entry.episodeTitle);
   };
 
-  const playStream = (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string) => {
+  const playStream = (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives: StreamResult[] = []) => {
     if (!sourceState) return;
     const { media } = sourceState;
     const existing = history.find((entry) =>
@@ -442,18 +468,21 @@ const App: React.FC = () => {
 
     upsertHistory({ media, stream, season, episode, episodeTitle });
     setSourceState(null);
-    setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime });
+    playbackPositionRef.current = resumeTime;
+    setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
   };
 
   const playExplorerStream = (media: MediaItem, stream: StreamResult) => {
     const existing = history.find((entry) => entry.media.id === media.id);
     const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
     upsertHistory({ media, stream });
+    playbackPositionRef.current = resumeTime;
     setPlayer({ media, stream, initialTime: resumeTime });
   };
 
   const handlePlayerProgress = useCallback((currentTime: number, duration: number) => {
-    if (!player) return;
+    if (!player || (playerIdentityRef.current !== null && playerIdentityRef.current !== playerIdentity)) return;
+    playbackPositionRef.current = currentTime;
     upsertHistory({
       media: player.media,
       stream: player.stream,
@@ -463,7 +492,7 @@ const App: React.FC = () => {
       currentTime,
       duration,
     });
-  }, [player, upsertHistory]);
+  }, [player, playerIdentity, upsertHistory]);
 
   const handleNextEpisode = useCallback(async () => {
     if (!player || player.media.type !== 'series' || !player.season || !player.episode) return;
@@ -505,6 +534,7 @@ const App: React.FC = () => {
 
       if (preferred) {
         upsertHistory({ media: player.media, stream: preferred, season: nextSeason, episode: nextEp, episodeTitle: nextTitle, currentTime: 0 });
+        playbackPositionRef.current = 0;
         setPlayer({
           media: player.media,
           stream: preferred,
@@ -541,6 +571,8 @@ const App: React.FC = () => {
     try {
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.watchlist`);
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.history`);
+      window.localStorage.removeItem(`praha.v2.profile.${profileId}.home-rows`);
+      window.localStorage.removeItem(`praha.v2.profile.${profileId}.preferred-source`);
     } catch { /* ignore */ }
     if (activeProfileId === profileId) setActiveProfileId('default');
     notify('Profile deleted.');
@@ -548,7 +580,8 @@ const App: React.FC = () => {
 
   // Backup Export & Import
   const handleExportBackup = async () => {
-    const profileData: Record<string, { watchlist: MediaItem[]; history: WatchProgress[] }> = {};
+    if (!window.confirm('This backup can contain API keys, tokens, addon URLs and scraper settings. Anyone with the file can read them. Export only to a trusted location. Continue?')) return;
+    const profileData: PrahaBackupBundle['profileData'] = {};
     profiles.forEach((prof) => {
       const wKey = prof.id === 'default' ? 'praha.v2.watchlist' : `praha.v2.profile.${prof.id}.watchlist`;
       const hKey = prof.id === 'default' ? 'praha.v2.history' : `praha.v2.profile.${prof.id}.history`;
@@ -556,6 +589,8 @@ const App: React.FC = () => {
         profileData[prof.id] = {
           watchlist: JSON.parse(window.localStorage.getItem(wKey) || '[]'),
           history: JSON.parse(window.localStorage.getItem(hKey) || '[]'),
+          homeRows: normalizeHomeRows(JSON.parse(window.localStorage.getItem(`praha.v2.profile.${prof.id}.home-rows`) || 'null')),
+          preferredSource: JSON.parse(window.localStorage.getItem(`praha.v2.profile.${prof.id}.preferred-source`) || '""'),
         };
       } catch {
         profileData[prof.id] = { watchlist: [], history: [] };
@@ -580,6 +615,7 @@ const App: React.FC = () => {
     try {
       const text = await file.text();
       const restored = validateAndParseBackup(text);
+      if (!window.confirm('Restore this backup? It replaces local settings, sources and profile data. Only import a file you trust; it may contain executable scraper code and credentials.')) return;
       setSettings(normalizeSettings(restored.settings));
       setAddons(restored.addons);
       setRepositories(restored.repositories);
@@ -591,11 +627,15 @@ const App: React.FC = () => {
         const hKey = profId === 'default' ? 'praha.v2.history' : `praha.v2.profile.${profId}.history`;
         window.localStorage.setItem(wKey, JSON.stringify(data.watchlist || []));
         window.localStorage.setItem(hKey, JSON.stringify(data.history || []));
+        if (data.homeRows) window.localStorage.setItem(`praha.v2.profile.${profId}.home-rows`, JSON.stringify(normalizeHomeRows(data.homeRows)));
+        if (typeof data.preferredSource === 'string') window.localStorage.setItem(`praha.v2.profile.${profId}.preferred-source`, JSON.stringify(data.preferredSource));
       });
 
       setActiveProfileId(restored.activeProfileId);
       const currentProfData = restored.profileData[restored.activeProfileId];
-      if (currentProfData) {
+      if (currentProfData && restored.activeProfileId === activeProfile.id) {
+        if (currentProfData.homeRows) setHomeRows(normalizeHomeRows(currentProfData.homeRows));
+        if (typeof currentProfData.preferredSource === 'string') setPreferredSource(currentProfData.preferredSource);
         setWatchlist(currentProfData.watchlist || []);
         setHistory(currentProfData.history || []);
       }
@@ -619,6 +659,7 @@ const App: React.FC = () => {
         repositories={repositories}
         onSelect={openDetails}
         onPlay={(item) => openSources(item)}
+        onEmbeddedPlayers={openEmbeddedPlayers}
         onResumeEntry={resumeWatchEntry}
         onRemoveHistory={removeHistoryEntry}
         onToggleWatchlist={(item) => toggleWatchlist(item)}
@@ -627,6 +668,8 @@ const App: React.FC = () => {
         onOpenSettings={() => navigate('settings')}
         onRetry={loadCatalog}
         compact={settings.compactCards}
+        homeRows={homeRows}
+        onHomeRowsChange={setHomeRows}
       />
     );
   } else if (view === 'discover') {
@@ -744,12 +787,15 @@ const App: React.FC = () => {
           history={history}
           onClose={() => setSelected(null)}
           onPlay={openSources}
+          onEmbeddedPlayers={openEmbeddedPlayers}
           onSelectRecommendation={openDetails}
           onToggleWatchlist={toggleWatchlist}
           onUpdateStatus={updateWatchlistStatus}
           inWatchlist={watchlist.some((item) => item.id === selected.id)}
         />
       )}
+
+      {embedState && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} />}
 
       {sourceState && (
         <SourceModal
@@ -761,6 +807,8 @@ const App: React.FC = () => {
           nuvioSettings={nuvioSettings}
           tmdbApiKey={settings.tmdbApiKey}
           preferredLanguage={settings.preferredLanguage}
+          preferredSource={preferredSource}
+          onPreferredSourceChange={setPreferredSource}
           onClose={() => setSourceState(null)}
           onOpenExtensions={() => { setSourceState(null); navigate('extensions'); }}
           onPlay={playStream}
@@ -770,6 +818,7 @@ const App: React.FC = () => {
       {player && (
         <React.Suspense fallback={<div className="player-backdrop"><div className="player-loading"><span className="brand-mark"><span /></span><p>Preparing your stream…</p></div></div>}>
           <PlayerModal
+            key={playerIdentity || undefined}
             media={player.media}
             stream={player.stream}
             season={player.season}
@@ -782,6 +831,17 @@ const App: React.FC = () => {
             autoplay={settings.autoplay}
             playerSettings={settings.player}
             onPlayerSettingsChange={updatePlayerSettings}
+            onTryAnother={player.alternatives?.length ? () => {
+              const [next, ...remaining] = player.alternatives!;
+              setPlayer({ ...player, stream: next, alternatives: remaining, initialTime: playbackPositionRef.current });
+              upsertHistory({ media: player.media, stream: next, season: player.season, episode: player.episode, episodeTitle: player.episodeTitle, currentTime: playbackPositionRef.current });
+              notify(`Trying ${next.sourceName}…`);
+            } : undefined}
+            onFindSources={() => {
+              const { media, season, episode, episodeTitle } = player;
+              setPlayer(null);
+              openSources(media, season, episode, episodeTitle);
+            }}
             onProgress={handlePlayerProgress}
             onNextEpisode={player.media.type === 'series' && player.season && player.episode ? handleNextEpisode : undefined}
             nextEpisodeLoading={nextEpisodeLoading}

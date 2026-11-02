@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import {
-  ArrowRight, Blocks, Check, ChevronLeft, ChevronRight, CircleAlert, Info, Play, Plus, RotateCcw, Star,
+  ArrowRight, Blocks, Check, ChevronLeft, ChevronRight, CircleAlert, ExternalLink, Info, Play, Plus, RotateCcw, Star,
 } from 'lucide-react';
 import type { HomeCatalog, InstalledAddon, MediaItem, NuvioRepository, WatchProgress } from '../types';
 import { Artwork, ContinueCard, MediaRow } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
+import { DEFAULT_HOME_ROWS } from '../services/homeCache';
+import type { HomeRowId, HomeRowSettings } from '../services/homeCache';
 
 interface HomeViewProps {
   catalog: HomeCatalog;
@@ -17,6 +19,7 @@ interface HomeViewProps {
   repositories: NuvioRepository[];
   onSelect: (item: MediaItem) => void;
   onPlay: (item: MediaItem) => void;
+  onEmbeddedPlayers: (item: MediaItem) => void;
   onResumeEntry: (entry: WatchProgress) => void;
   onRemoveHistory: (entry: WatchProgress) => void;
   onToggleWatchlist: (item: MediaItem) => void;
@@ -25,12 +28,14 @@ interface HomeViewProps {
   onOpenSettings: () => void;
   onRetry: () => void;
   compact: boolean;
+  homeRows: HomeRowSettings;
+  onHomeRowsChange: (settings: HomeRowSettings) => void;
 }
 
 const HomeView: React.FC<HomeViewProps> = ({
   catalog, loading, error, tmdbReady, history, watchlist, addons, repositories,
-  onSelect, onPlay, onResumeEntry, onRemoveHistory, onToggleWatchlist,
-  onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact,
+  onSelect, onPlay, onEmbeddedPlayers, onResumeEntry, onRemoveHistory, onToggleWatchlist,
+  onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact, homeRows, onHomeRowsChange,
 }) => {
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const spotlight = catalog.hero;
@@ -88,7 +93,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     );
   }
 
-  if (error) {
+  if (error && !spotlight.length && !catalog.trending.length && !catalog.movies.length && !catalog.series.length && !catalog.topRated.length) {
     return (
       <div className="home-view page-enter">
         <div className="empty-state"><span><CircleAlert size={28} /></span><h2>TMDB did not answer</h2><p>{error}</p>
@@ -102,7 +107,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     );
   }
 
-  if (!spotlight.length && !catalog.trending.length && !catalog.movies.length) {
+  if (!spotlight.length && !catalog.trending.length && !catalog.movies.length && !catalog.series.length && !catalog.topRated.length) {
     return (
       <div className="home-view page-enter">
         <div className="empty-state"><span><CircleAlert size={28} /></span><h2>TMDB returned no titles</h2>
@@ -119,6 +124,7 @@ const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="home-view page-enter">
+      {error && <div className="home-cache-notice" role="status">Showing saved titles; refresh failed. <button className="text-button" onClick={onRetry}>Try again</button></div>}
       {featured && (
         <section className="hero" key={featured.id}>
           <Artwork src={featured.backdrop || featured.poster} alt="" className="hero-art" />
@@ -135,6 +141,7 @@ const HomeView: React.FC<HomeViewProps> = ({
             <p>{featured.overview || 'No description is available for this title yet.'}</p>
             <div className="hero-actions">
               <button className="button button-primary" onClick={() => onPlay(featured)}><Play size={18} fill="currentColor" /> Watch now</button>
+              <button className="button button-glass" onClick={() => onEmbeddedPlayers(featured)}><ExternalLink size={18} /> Embedded players</button>
               <button className="button button-glass" onClick={() => onSelect(featured)}><Info size={18} /> More details</button>
               <button className={`hero-save ${saved ? 'saved' : ''}`} onClick={() => onToggleWatchlist(featured)} aria-label="Toggle watchlist">
                 {saved ? <Check size={19} /> : <Plus size={19} />}
@@ -155,39 +162,40 @@ const HomeView: React.FC<HomeViewProps> = ({
         </section>
       )}
 
-      {history.length > 0 && (
-        <section className="media-section continue-section">
-          <div className="section-heading">
-            <div><h2>Pick up where you left off</h2><p>Resume at your exact timestamp or jump to the next episode.</p></div>
-            <button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button>
-          </div>
-          <div className="continue-row">
-            {history.slice(0, 6).map((entry) => (
-              <ContinueCard
-                key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`}
-                entry={entry}
-                onPlay={onPlay}
-                onResumeEntry={onResumeEntry}
-                onRemove={onRemoveHistory}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      <MediaRow title="Trending this week" subtitle="Live from TMDB — what everyone is pressing play on." items={catalog.trending.slice(0, 20)}
-        onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
-
-      <MediaRow title="Popular movies" subtitle="TMDB’s most-watched films right now." items={catalog.movies.slice(0, 20)}
-        onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
-
+      <details className="home-row-settings">
+        <summary>Customize home rows</summary>
+        <p>Show, hide, or reorder rows for this profile.</p>
+        {homeRows.order.map((row, index) => {
+          const names: Record<HomeRowId, string> = { continue: 'Continue watching', trending: 'Trending', movies: 'Popular movies', series: 'Popular series', topRated: 'Top rated' };
+          const move = (direction: number) => {
+            const order = [...homeRows.order];
+            const target = index + direction;
+            if (target < 0 || target >= order.length) return;
+            [order[index], order[target]] = [order[target], order[index]];
+            onHomeRowsChange({ ...homeRows, order });
+          };
+          return <div className="home-row-setting" key={row}>
+            <label><input type="checkbox" checked={!homeRows.hidden.includes(row)} onChange={(event) => onHomeRowsChange({ ...homeRows, hidden: event.target.checked ? homeRows.hidden.filter((item) => item !== row) : [...homeRows.hidden, row] })} /> {names[row]}</label>
+            <span><button className="icon-button" onClick={() => move(-1)} disabled={index === 0} aria-label={`Move ${names[row]} up`}>↑</button><button className="icon-button" onClick={() => move(1)} disabled={index === homeRows.order.length - 1} aria-label={`Move ${names[row]} down`}>↓</button></span>
+          </div>;
+        })}
+        <button className="text-button" onClick={() => onHomeRowsChange(DEFAULT_HOME_ROWS)}>Reset rows</button>
+      </details>
+      {homeRows.order.filter((row) => !homeRows.hidden.includes(row)).map((row) => {
+        if (row === 'continue') return history.length ? <section className="media-section continue-section" key={row}>
+          <div className="section-heading"><div><h2>Pick up where you left off</h2><p>Resume at your exact timestamp or jump to the next episode.</p></div><button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button></div>
+          <div className="continue-row">{history.slice(0, 6).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} onResumeEntry={onResumeEntry} onRemove={onRemoveHistory} />)}</div>
+        </section> : null;
+        const rows = {
+          trending: ['Trending this week', 'Live from TMDB — what everyone is pressing play on.'],
+          movies: ['Popular movies', 'TMDB’s most-watched films right now.'],
+          series: ['Popular series', 'Binge-worthy shows trending on TMDB.'],
+          topRated: ['Top rated of all time', 'The highest-rated films in the TMDB database.'],
+        };
+        const [title, subtitle] = rows[row];
+        return <MediaRow key={row} title={title} subtitle={subtitle} items={catalog[row].slice(0, 20)} onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />;
+      })}
       {sourceBanner}
-
-      <MediaRow title="Popular series" subtitle="Binge-worthy shows trending on TMDB." items={catalog.series.slice(0, 20)}
-        onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
-
-      <MediaRow title="Top rated of all time" subtitle="The highest-rated films in the TMDB database." items={catalog.topRated.slice(0, 20)}
-        onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />
     </div>
   );
 };

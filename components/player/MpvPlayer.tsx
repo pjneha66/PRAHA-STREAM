@@ -12,6 +12,7 @@ import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './for
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
 import { useMpvEngine } from './useMpvEngine';
+import { mediaErrorMessage, MAX_STALL_RETRIES } from './recovery';
 import './mpv-player.css';
 
 type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'settings' | 'help' | null;
@@ -32,6 +33,8 @@ interface MpvPlayerProps {
   settings: PlayerSettings;
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
   onRequestClose: () => void;
+  onTryAnother?: () => void;
+  onFindSources?: () => void;
 }
 
 const MpvPlayer: React.FC<MpvPlayerProps> = ({
@@ -50,6 +53,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   settings,
   onSettingsChange,
   onRequestClose,
+  onTryAnother,
+  onFindSources,
 }) => {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const seekRef = useRef<HTMLDivElement | null>(null);
@@ -62,6 +67,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const osdTimer = useRef<number | null>(null);
 
   const [fatal, setFatal] = useState('');
+  useEffect(() => { setFatal(''); }, [effectiveUrl]);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [menu, setMenu] = useState<MenuId>(null);
   const [osd, setOsd] = useState('');
@@ -102,6 +108,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         }
       }));
       if (active) setPreparedSubtitles(converted.filter((s) => Boolean(s.url)));
+      else createdUrls.forEach((u) => URL.revokeObjectURL(u));
     })();
     return () => {
       active = false;
@@ -140,6 +147,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     url: effectiveUrl,
     subtitles: preparedSubtitles,
     autoplay,
+    hasFatalError: Boolean(fatal),
     volume: settings.volume,
     speed: settings.speed,
     landscapeLock: settings.landscapeLock,
@@ -450,7 +458,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         ref={videoRef}
         playsInline
         style={{ filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)` }}
-        onError={() => setFatal('This source could not be played directly. Try another stream or open it in VLC / mpv-android below.')}
+        onError={(event) => {
+          const error = event.currentTarget.error;
+          if (error) setFatal(mediaErrorMessage(error.code));
+        }}
       >
         {preparedSubtitles.map((subtitle, index) => (
           <track
@@ -527,12 +538,16 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       {ripple && <div className={`mpv-ripple ${ripple.side}`}><b>{ripple.label}</b></div>}
       {gestureLabel && <div className="mpv-gesture-label">{gestureLabel}</div>}
       {osd && <div className="mpv-osd" role="status">{osd}</div>}
+      {engine.recoveryStatus && !fatal && <div className="mpv-recovery-status" role="status">{engine.recoveryStatus}</div>}
 
       {statsOpen && stats && (
         <div className="mpv-stats">
           <h4><Activity size={13} /> Statistics</h4>
           <dl>
             <div><dt>Engine</dt><dd>{stats.engineName}</dd></div>
+            <div><dt>State</dt><dd>{fatal ? 'Error' : waiting ? 'Buffering' : playing ? 'Playing' : 'Paused / loading'}</dd></div>
+            <div><dt>Network</dt><dd>{typeof navigator !== 'undefined' && !navigator.onLine ? 'Offline' : 'Online (device)'}</dd></div>
+            <div><dt>Recovery</dt><dd>{engine.recoveryAttempts}/{MAX_STALL_RETRIES} attempts</dd></div>
             <div><dt>Video</dt><dd>{stats.width && stats.height ? `${stats.width}×${stats.height}` : '—'}</dd></div>
             <div><dt>FPS</dt><dd>{stats.fps ? `${stats.fps}` : '—'}</dd></div>
             <div><dt>Frames</dt><dd>{stats.totalFrames} total · {stats.droppedFrames} dropped</dd></div>
@@ -577,7 +592,9 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           <CircleX size={26} />
           <h3>Playback unavailable</h3>
           <p>{fatal}</p>
-          <button className="mpv-chip" onClick={() => { setFatal(''); engine.play(); }}>Try again</button>
+          <button className="mpv-chip" onClick={() => { setFatal(''); engine.retry(); }}>Try again</button>
+          {onTryAnother && <button className="mpv-chip" onClick={onTryAnother}>Try another source</button>}
+          {onFindSources && <button className="mpv-chip" onClick={onFindSources}>Find sources</button>}
         </div>
       )}
 

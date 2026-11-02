@@ -4,6 +4,9 @@ import type { StreamResult } from '../types';
 export interface PrahaNativeInterface {
   isAndroid(): boolean;
   isTelevision(): boolean;
+  openBrowser?(url: string): boolean;
+  openProtectedEmbed?(url: string): boolean;
+  openPrivateDnsSettings?(): boolean;
   getProxyPort(): number;
   proxyStreamUrl(url: string, headersJson: string): string;
   httpRequest(url: string, method: string, headersJson: string, body: string): string;
@@ -37,6 +40,34 @@ export function isAndroidApp(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Opens Android settings without changing device-wide DNS automatically. */
+export function openPrivateDnsSettings(): boolean {
+  try {
+    return Boolean(window.PrahaNative?.openPrivateDnsSettings?.());
+  } catch {
+    return false;
+  }
+}
+
+/** The Android player uses a dedicated WebView with no privileged JavaScript bridge. */
+export function openProtectedEmbed(url: string): boolean {
+  try {
+    const target = new URL(url);
+    return target.protocol === 'https:' && !target.username && !target.password && Boolean(window.PrahaNative?.openProtectedEmbed?.(target.href));
+  } catch { return false; }
+}
+
+export function openSafeExternalUrl(url: string): boolean {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== 'https:' || target.username || target.password) return false;
+    if (isAndroidApp()) return Boolean(window.PrahaNative?.openBrowser?.(target.href));
+    // noreferrer also prevents the destination from controlling the opener.
+    window.open(target.href, '_blank', 'noopener,noreferrer');
+    return true;
+  } catch { return false; }
 }
 
 export function isAndroidTv(): boolean {
