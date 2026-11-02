@@ -1,19 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
   Blocks, Check, CircleAlert, Copy, Film, HardDrive, Languages, Play, RefreshCw,
-  ShieldCheck, Users, X, Zap,
+  ShieldCheck, Users, X, Zap, Star,
 } from 'lucide-react';
-import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary } from '../types';
+import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth } from '../types';
 import { Artwork } from './MediaCard';
+import { filterAndSortStreams, sourceKey, streamQuality } from '../services/sourcePreferences';
 
-export const qualityOf = (stream: StreamResult) => {
-  const text = `${stream.quality || ''} ${stream.title}`.toLowerCase();
-  if (/2160|4k|uhd/.test(text)) return '4K';
-  if (/1080/.test(text)) return '1080p';
-  if (/720/.test(text)) return '720p';
-  if (/480/.test(text)) return '480p';
-  return stream.quality || 'AUTO';
-};
+export const qualityOf = streamQuality;
 
 export interface ParsedBadges {
   resolution?: string;
@@ -68,6 +62,9 @@ interface SourcePanelProps {
   streams: StreamResult[];
   loading: boolean;
   errors: SourceError[];
+  health?: ProviderHealth[];
+  preferredSource?: string;
+  onPreferredSourceChange?: (key: string) => void;
   season?: number;
   episode?: number;
   seasons?: TmdbSeasonSummary[];
@@ -77,7 +74,7 @@ interface SourcePanelProps {
   onRefresh?: () => void;
   providerCount: number;
   preferredLanguage: string;
-  onPlay: (stream: StreamResult) => void;
+  onPlay: (stream: StreamResult, alternatives?: StreamResult[]) => void;
   onOpenExtensions?: () => void;
   showClose?: boolean;
   onClose?: () => void;
@@ -86,19 +83,22 @@ interface SourcePanelProps {
 const SourcePanel: React.FC<SourcePanelProps> = ({
   media, streams, loading, errors, season, episode, seasons, episodes,
   onSeasonChange, onEpisodeChange, onRefresh, providerCount, preferredLanguage,
-  onPlay, onOpenExtensions, showClose, onClose,
+  onPlay, onOpenExtensions, showClose, onClose, health = [], preferredSource = '', onPreferredSourceChange,
 }) => {
   const [quality, setQuality] = useState('all');
+  const [provider, setProvider] = useState('all');
+  const [language, setLanguage] = useState('all');
+  const [codec, setCodec] = useState('all');
+  const [subtitles, setSubtitles] = useState('all');
   const [copied, setCopied] = useState('');
-
-  const filtered = useMemo(() => {
-    const result = quality === 'all' ? streams : streams.filter((stream) => qualityOf(stream) === quality);
-    return [...result].sort((a, b) => {
-      const aPreferred = a.language?.toLowerCase().startsWith(preferredLanguage) ? 1 : 0;
-      const bPreferred = b.language?.toLowerCase().startsWith(preferredLanguage) ? 1 : 0;
-      return bPreferred - aPreferred || (b.seeders || 0) - (a.seeders || 0);
-    });
-  }, [streams, quality, preferredLanguage]);
+  const filters = { quality, provider, language, codec, subtitles };
+  const filtered = useMemo(() => filterAndSortStreams(streams, filters, preferredSource, preferredLanguage),
+    [streams, quality, provider, language, codec, subtitles, preferredSource, preferredLanguage]);
+  const allRanked = useMemo(() => filterAndSortStreams(streams, { quality: 'all', provider: 'all', language: 'all', codec: 'all', subtitles: 'all' }, preferredSource, preferredLanguage), [streams, preferredSource, preferredLanguage]);
+  const providers = useMemo(() => Array.from(new Map(streams.map((stream) => [sourceKey(stream), stream.sourceName])).entries()), [streams]);
+  const languages = useMemo(() => Array.from(new Set(streams.map((stream) => stream.language?.toLowerCase()).filter((value): value is string => Boolean(value)))).sort(), [streams]);
+  const hasFilters = [quality, provider, language, codec, subtitles].some((value) => value !== 'all');
+  const play = (stream: StreamResult) => onPlay(stream, allRanked.filter((candidate) => candidate !== stream));
 
   const copyStream = async (stream: StreamResult) => {
     await navigator.clipboard.writeText(stream.url);
@@ -150,16 +150,27 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
         </div>
       )}
       <div className="source-toolbar">
-        <div className="source-search-status"><span className={`status-dot ${loading ? 'pulse' : ''}`} />{loading ? `Searching ${providerCount} provider${providerCount === 1 ? '' : 's'}…` : `${filtered.length} stream${filtered.length === 1 ? '' : 's'} found`}</div>
-        <div className="quality-filters">{['all', '4K', '1080p', '720p'].map((value) => <button key={value} className={quality === value ? 'active' : ''} onClick={() => setQuality(value)}>{value === 'all' ? 'All quality' : value}</button>)}</div>
+        <div className="source-search-status"><span className={`status-dot ${loading ? 'pulse' : ''}`} />{loading ? `Searching ${providerCount} provider${providerCount === 1 ? '' : 's'}… ${filtered.length} found` : `${filtered.length} stream${filtered.length === 1 ? '' : 's'} found`}</div>
+        <div className="quality-filters">{['all', '4K', '1080p', '720p', '480p'].map((value) => <button key={value} className={quality === value ? 'active' : ''} onClick={() => setQuality(value)}>{value === 'all' ? 'All quality' : value}</button>)}</div>
         <button className="icon-button" onClick={onRefresh} disabled={loading} aria-label="Refresh streams"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button>
       </div>
+      {onPreferredSourceChange && <p className="source-preference-hint">Star a provider to rank it first for this profile. Subtitle filters use only metadata reported by the stream.</p>}
+      <div className="source-filter-bar" aria-label="Filter streams">
+        <label>Provider <select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="all">All providers</option>{providers.map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+        <label>Language <select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="all">All languages</option>{languages.map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>
+        <label>Codec <select value={codec} onChange={(event) => setCodec(event.target.value)}><option value="all">All codecs</option><option>HEVC</option><option>H.264</option><option>AV1</option><option>Unknown</option></select></label>
+        <label>Subtitles <select value={subtitles} onChange={(event) => setSubtitles(event.target.value)}><option value="all">Any</option><option value="available">Reported</option><option value="unknown">Not reported</option></select></label>
+        {hasFilters && <button className="button button-secondary button-small" onClick={() => { setQuality('all'); setProvider('all'); setLanguage('all'); setCodec('all'); setSubtitles('all'); }}>Clear filters</button>}
+      </div>
+      {health.length > 0 && <details className="source-health"><summary>Provider health · {health.filter((item) => item.status !== 'searching').length}/{health.length} checked</summary>
+        <ul>{health.map((item) => <li key={item.id}><strong>{item.name}</strong><span className={`health-${item.status}`}>{item.status === 'searching' ? 'Searching…' : item.status === 'ready' ? `${item.count} found` : item.status === 'empty' ? 'No streams' : item.status === 'unsupported' ? 'Not supported' : 'Failed'}{item.message ? ` · ${item.message}` : ''}</span></li>)}</ul>
+      </details>}
       <div className="stream-list">
-        {loading ? Array.from({ length: Math.max(3, Math.min(providerCount, 5)) }).map((_, index) => <div className="stream-skeleton" key={index}><span /><div><i /><i /></div></div>) : filtered.map((stream) => {
+        {filtered.map((stream) => {
           const badges = parseStreamBadges(stream);
           return (
             <article className="stream-row" key={stream.id}>
-              <button className="stream-play" onClick={() => onPlay(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
+              <button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
               <div className="stream-main">
                 <div className="stream-title">
                   <strong>{stream.title}</strong>
@@ -182,17 +193,19 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
                 </div>
               </div>
               <div className="stream-actions">
+                {onPreferredSourceChange && <button className="icon-button" onClick={() => onPreferredSourceChange(sourceKey(stream) === preferredSource ? '' : sourceKey(stream))} aria-label={sourceKey(stream) === preferredSource ? `Remove ${stream.sourceName} preference` : `Prefer ${stream.sourceName}`} aria-pressed={sourceKey(stream) === preferredSource} title={sourceKey(stream) === preferredSource ? 'Preferred provider' : 'Prefer this provider'}><Star size={16} fill={sourceKey(stream) === preferredSource ? 'currentColor' : 'none'} /></button>}
                 <button className="icon-button" onClick={() => copyStream(stream)} aria-label="Copy stream URL">{copied === stream.id ? <Check size={16} /> : <Copy size={16} />}</button>
-                <button className="button button-small button-primary" onClick={() => onPlay(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
+                <button className="button button-small button-primary" onClick={() => play(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
               </div>
             </article>
           );
         })}
+        {loading && !filtered.length && Array.from({ length: Math.max(3, Math.min(providerCount, 5)) }).map((_, index) => <div className="stream-skeleton" key={index}><span /><div><i /><i /></div></div>)}
         {!loading && !filtered.length && (
           <div className="empty-state source-empty">
             <span><Film size={28} /></span>
-            <h2>{providerCount ? 'No streams found for this title' : 'Add a stream provider to press play'}</h2>
-            <p>{providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon or a Nuvio provider to start watching.'}</p>
+            <h2>{hasFilters && streams.length ? 'No streams match these filters' : providerCount ? 'No streams found for this title' : 'Add a stream provider to press play'}</h2>
+            <p>{hasFilters && streams.length ? 'Clear or change your filters to see more streams.' : providerCount ? 'Try another episode, refresh your sources, or install an addon that supports this title’s ID.' : 'Install a Stremio stream addon or a Nuvio provider to start watching.'}</p>
             {onOpenExtensions && <button className="button button-primary" onClick={onOpenExtensions}><Blocks size={17} /> Manage extensions</button>}
           </div>
         )}

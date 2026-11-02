@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "vidlink",
+      "movie": "https://vidlink.pro/movie/{tmdb}",
+      "series": "https://vidlink.pro/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "vidrock",
+      "movie": "https://vidrock.net/movie/{id}",
+      "series": "https://vidrock.net/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "vixsrc",
+      "movie": "https://vixsrc.to/movie/{id}",
+      "series": "https://vixsrc.to/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "vidfast",
+      "movie": "https://vidfast.vc/movie/{id}",
+      "series": "https://vidfast.vc/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "vidsrc-sh",
+      "movie": "https://vidsrc.sh/embed/movie/{id}",
+      "series": "https://vidsrc.sh/embed/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "vidsrc-to",
+      "movie": "https://vidsrc.to/embed/movie/{id}",
+      "series": "https://vidsrc.to/embed/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "vidnest",
+      "movie": "https://vidnest.fun/movie/{tmdb}",
+      "series": "https://vidnest.fun/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "vidzee",
+      "movie": "https://player.vidzee.wtf/embed/movie/{tmdb}",
+      "series": "https://player.vidzee.wtf/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "vidapi",
+      "movie": "https://vaplayer.ru/embed/movie/{id}",
+      "series": "https://vaplayer.ru/embed/tv/{id}/{season}/{episode}"
+    },
+    {
+      "id": "primesrc",
+      "movie": "https://primesrc.me/embed/movie?tmdb={tmdb}",
+      "series": "https://primesrc.me/embed/tv?tmdb={tmdb}&season={season}&episode={episode}"
+    },
+    {
+      "id": "cinemaos",
+      "movie": "https://cinemaos.tech/player/{tmdb}",
+      "series": "https://cinemaos.tech/player/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "cinextream",
+      "movie": "https://cinextream.cc/api/embed/movie/{tmdb}",
+      "series": "https://cinextream.cc/api/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "superembed",
+      "movie": "https://multiembed.mov/?video_id={tmdb}&tmdb=1",
+      "series": "https://multiembed.mov/?video_id={tmdb}&tmdb=1&s={season}&e={episode}"
+    }
+  ]
+}

@@ -498,3 +498,5 @@
   .mpv-osc, .mpv-center-toggle, .mpv-ripple, .mpv-osd, .mpv-menu.open { animation: none; transition: none; }
   .mpv-spinner > span { animation-duration: 1.6s; }
 }
+
+.mpv-recovery-status { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); z-index: 5; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; text-align: center; pointer-events: none; }

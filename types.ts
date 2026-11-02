@@ -224,6 +224,14 @@ export interface SourceError {
   message: string;
 }
 
+export interface ProviderHealth {
+  id: string;
+  name: string;
+  status: 'searching' | 'ready' | 'empty' | 'error' | 'unsupported';
+  count?: number;
+  message?: string;
+}
+
 export type SourceKind = 'stremio' | 'nuvio';
 
 export interface IntroSegment {
@@ -342,6 +350,8 @@ export interface PrahaBackupBundle {
   profileData: Record<string, {
     watchlist: MediaItem[];
     history: WatchProgress[];
+    homeRows?: import('./services/homeCache').HomeRowSettings;
+    preferredSource?: string;
   }>;
 }
 

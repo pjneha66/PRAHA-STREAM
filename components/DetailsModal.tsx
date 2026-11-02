@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Blocks, Check, Clapperboard, Film, LoaderCircle, Play, Plus, Star, Tv, Users, X,
+  Blocks, Check, Clapperboard, ExternalLink, Film, LoaderCircle, Play, Plus, Star, Tv, Users, X,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
 import type { LibraryStatus, MediaItem, TmdbEpisodeInfo, WatchProgress } from '../types';
@@ -20,6 +20,7 @@ const DetailsModal: React.FC<{
   history: WatchProgress[];
   onClose: () => void;
   onPlay: (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => void;
+  onEmbeddedPlayers: (item: MediaItem, season?: number, episode?: number) => void;
   onSelectRecommendation: (item: MediaItem) => void;
   onToggleWatchlist: (item: MediaItem, status?: LibraryStatus) => void;
   onUpdateStatus: (item: MediaItem, status: LibraryStatus) => void;
@@ -30,6 +31,7 @@ const DetailsModal: React.FC<{
   history,
   onClose,
   onPlay,
+  onEmbeddedPlayers,
   onSelectRecommendation,
   onToggleWatchlist,
   onUpdateStatus,
@@ -147,6 +149,8 @@ const DetailsModal: React.FC<{
                     : `Resume (${Math.round(savedProgress.progress)}%)`)
                   : 'Find sources'}
               </button>
+
+              <button className="button button-secondary" onClick={() => onEmbeddedPlayers(item, item.type === 'series' ? selectedSeason : undefined, item.type === 'series' ? (savedProgress?.season === selectedSeason ? savedProgress.episode || 1 : 1) : undefined)}><ExternalLink size={18} /> Embedded players</button>
 
               {item.trailerKey && (
                 <button className="button button-secondary" onClick={() => setShowTrailer((prev) => !prev)}>

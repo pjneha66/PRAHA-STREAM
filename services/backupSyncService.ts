@@ -12,7 +12,7 @@ export function createBackupBundle(params: {
   nuvioSettings: Record<string, Record<string, unknown>>;
   profiles: UserProfile[];
   activeProfileId: string;
-  profileData: Record<string, { watchlist: MediaItem[]; history: WatchProgress[] }>;
+  profileData: PrahaBackupBundle['profileData'];
 }): PrahaBackupBundle {
   return {
     app: 'praha-stream',

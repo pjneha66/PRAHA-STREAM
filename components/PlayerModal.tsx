@@ -12,7 +12,7 @@ import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
 import {
   extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, openExternalPlayer,
-  resolvePlayableStreamUrl,
+  resolvePlayableStreamUrl, setImmersiveFullscreen,
 } from '../services/androidBridge';
 import MpvPlayer from './player/MpvPlayer';
 
@@ -30,6 +30,8 @@ const PlayerModal: React.FC<{
   playerSettings: PlayerSettings;
   onPlayerSettingsChange: (patch: Partial<PlayerSettings>) => void;
   onProgress: (currentTime: number, duration: number) => void;
+  onTryAnother?: () => void;
+  onFindSources?: () => void;
   onNextEpisode?: () => void;
   nextEpisodeLoading?: boolean;
   onOpenSettings?: () => void;
@@ -48,11 +50,21 @@ const PlayerModal: React.FC<{
   playerSettings,
   onPlayerSettingsChange,
   onProgress,
+  onTryAnother,
+  onFindSources,
   onNextEpisode,
   nextEpisodeLoading = false,
   onOpenSettings,
   onClose,
 }) => {
+  // The Android player is already a full-screen modal. Lock the activity as
+  // soon as it opens rather than requiring a second fullscreen tap.
+  useEffect(() => {
+    if (!isAndroidApp()) return;
+    void setImmersiveFullscreen(true, true);
+    return () => { void setImmersiveFullscreen(false, false); };
+  }, []);
+
   const [copied, setCopied] = useState(false);
   const [activeStream, setActiveStream] = useState<StreamResult>(stream);
   const [debridBusy, setDebridBusy] = useState(false);
@@ -196,6 +208,8 @@ const PlayerModal: React.FC<{
                     <Sparkles size={16} /> Setup Debrid in Settings
                   </button>
                 ) : null}
+                {!debridBusy && onTryAnother && <button className="button button-secondary" onClick={onTryAnother}>Try another source</button>}
+                {onFindSources && <button className="button button-secondary" onClick={onFindSources}>Find sources</button>}
                 <button className="button button-secondary" onClick={copyLink}>
                   {copied ? <Check size={17} /> : <Copy size={17} />}
                   {copied ? 'Copied' : 'Copy magnet'}
@@ -222,6 +236,8 @@ const PlayerModal: React.FC<{
               settings={playerSettings}
               onSettingsChange={onPlayerSettingsChange}
               onRequestClose={onClose}
+              onTryAnother={onTryAnother}
+              onFindSources={onFindSources}
             />
           )}
         </div>

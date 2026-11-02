@@ -4,11 +4,11 @@ import type { MediaItem, WatchProgress } from '../types';
 import { formatTime } from './player/format';
 
 export const Artwork: React.FC<{ src?: string; alt: string; className?: string }> = ({ src, alt, className = '' }) => {
-  const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  const [failedSrc, setFailedSrc] = useState<string | undefined>();
+  if (!src || failedSrc === src) {
     return <div className={`artwork-fallback ${className}`} role="img" aria-label={alt}><span>{alt}</span></div>;
   }
-  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} loading="lazy" />;
+  return <img src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} loading={className.includes('hero-art') ? 'eager' : 'lazy'} />;
 };
 
 interface MediaCardProps {
