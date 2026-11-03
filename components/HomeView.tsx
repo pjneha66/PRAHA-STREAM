@@ -30,12 +30,16 @@ interface HomeViewProps {
   compact: boolean;
   homeRows: HomeRowSettings;
   onHomeRowsChange: (settings: HomeRowSettings) => void;
+  /** Optional IMDb-style titles from IMDx (Tiffara). Additive to TMDB, never a replacement. */
+  imdxSpotlight?: MediaItem[];
+  imdxEnabled?: boolean;
 }
 
 const HomeView: React.FC<HomeViewProps> = ({
   catalog, loading, error, tmdbReady, history, watchlist, addons, repositories,
   onSelect, onPlay, onEmbeddedPlayers, onResumeEntry, onRemoveHistory, onToggleWatchlist,
   onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact, homeRows, onHomeRowsChange,
+  imdxSpotlight = [], imdxEnabled = false,
 }) => {
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const spotlight = catalog.hero;
@@ -57,7 +61,10 @@ const HomeView: React.FC<HomeViewProps> = ({
     </section>
   );
 
-  if (!tmdbReady) {
+  const imdxCatalog = !tmdbReady && imdxEnabled
+    && Boolean(catalog.hero.length || catalog.trending.length || catalog.movies.length || catalog.series.length);
+
+  if (!tmdbReady && !imdxEnabled) {
     return (
       <div className="home-view page-enter">
         <section className="hero hero-empty">
@@ -82,9 +89,9 @@ const HomeView: React.FC<HomeViewProps> = ({
     return (
       <div className="home-view page-enter">
         <section className="hero hero-loading"><div className="hero-overlay" /><div className="hero-content">
-          <div className="hero-eyebrow"><span /> LOADING FROM TMDB</div>
+          <div className="hero-eyebrow"><span /> {tmdbReady ? 'LOADING FROM TMDB' : 'LOADING FROM IMDX'}</div>
           <h1>Fetching tonight’s spotlight…</h1>
-          <p>Trending titles, artwork, and ratings are on their way from TMDB.</p>
+          <p>{tmdbReady ? 'Trending titles, artwork, and ratings are on their way from TMDB.' : 'Popular titles and ratings are on their way from IMDx.'}</p>
         </div></section>
         <div className="media-grid">
           {Array.from({ length: 12 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>)}
@@ -96,7 +103,7 @@ const HomeView: React.FC<HomeViewProps> = ({
   if (error && !spotlight.length && !catalog.trending.length && !catalog.movies.length && !catalog.series.length && !catalog.topRated.length) {
     return (
       <div className="home-view page-enter">
-        <div className="empty-state"><span><CircleAlert size={28} /></span><h2>TMDB did not answer</h2><p>{error}</p>
+        <div className="empty-state"><span><CircleAlert size={28} /></span><h2>{tmdbReady ? 'TMDB did not answer' : 'Your metadata providers did not answer'}</h2><p>{error}</p>
           <div className="tmdb-setup-actions">
             <button className="button button-primary" onClick={onRetry}><RotateCcw size={16} /> Try again</button>
             <button className="button button-secondary" onClick={onOpenSettings}>Check your API key</button>
@@ -110,8 +117,10 @@ const HomeView: React.FC<HomeViewProps> = ({
   if (!spotlight.length && !catalog.trending.length && !catalog.movies.length && !catalog.series.length && !catalog.topRated.length) {
     return (
       <div className="home-view page-enter">
-        <div className="empty-state"><span><CircleAlert size={28} /></span><h2>TMDB returned no titles</h2>
-          <p>Your key connected, but no catalogue results came back. Retry, or check the key’s API access in your TMDB account.</p>
+        <div className="empty-state"><span><CircleAlert size={28} /></span><h2>{tmdbReady ? 'TMDB returned no titles' : 'No titles came back yet'}</h2>
+          <p>{tmdbReady
+            ? 'Your key connected, but no catalogue results came back. Retry, or check the key’s API access in your TMDB account.'
+            : 'IMDx is enabled but returned no titles. Retry, check the IMDx card in Settings, or add a TMDB key for the full TMDB catalog.'}</p>
           <div className="tmdb-setup-actions">
             <button className="button button-primary" onClick={onRetry}><RotateCcw size={16} /> Try again</button>
             <button className="button button-secondary" onClick={onOpenSettings}>Check your API key</button>
@@ -124,13 +133,19 @@ const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="home-view page-enter">
+      {!tmdbReady && imdxCatalog && (
+        <div className="home-cache-notice" role="status">
+          TMDB key not set — this catalog comes from IMDx (Tiffara). Add your TMDB key for trending, trailers and episode guides.
+          <button className="text-button" onClick={onOpenSettings}>Open settings</button>
+        </div>
+      )}
       {error && <div className="home-cache-notice" role="status">Showing saved titles; refresh failed. <button className="text-button" onClick={onRetry}>Try again</button></div>}
       {featured && (
         <section className="hero" key={featured.id}>
           <Artwork src={featured.backdrop || featured.poster} alt="" className="hero-art" />
           <div className="hero-overlay" />
           <div className="hero-content">
-            <div className="hero-eyebrow"><span /> TMDB SPOTLIGHT</div>
+            <div className="hero-eyebrow"><span /> {tmdbReady ? 'TMDB SPOTLIGHT' : 'IMDX SPOTLIGHT'}</div>
             <h1>{featured.title}</h1>
             <div className="hero-meta">
               {featured.rating && <span className="hero-rating"><Star size={13} fill="currentColor" /> {featured.rating.toFixed(1)}</span>}
@@ -195,6 +210,17 @@ const HomeView: React.FC<HomeViewProps> = ({
         const [title, subtitle] = rows[row];
         return <MediaRow key={row} title={title} subtitle={subtitle} items={catalog[row].slice(0, 20)} onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} watchlist={watchlist} compact={compact} />;
       })}
+      {imdxSpotlight.length > 0 && (
+        <MediaRow
+          title="Popular on IMDx"
+          subtitle="An extra, IMDb-style row from the optional Tiffara API — TMDB stays your primary catalog."
+          items={imdxSpotlight}
+          onSelect={onSelect}
+          onToggleWatchlist={onToggleWatchlist}
+          watchlist={watchlist}
+          compact={compact}
+        />
+      )}
       {sourceBanner}
     </div>
   );

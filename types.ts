@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -42,6 +42,27 @@ export interface HomeCatalog {
   topRated: MediaItem[];
 }
 
+/** Cross-database anime identifiers resolved by AniCore / Anikura. */
+export interface AnimeReference {
+  /** AniCore catalog slug (used for detail + episode endpoints). */
+  slug: string;
+  anicoreId?: number;
+  malId?: number;
+  anilistId?: number;
+  kitsuId?: number;
+  tvdbId?: number;
+  /** Anikura's own catalog id, when the title is carried there. */
+  anikuraId?: number;
+  format?: string;
+  status?: string;
+  season?: string;
+  seasonYear?: number;
+  episodeCount?: number;
+  studios?: string[];
+  /** Metadata providers that contributed to this record (kitsu, tvdb, tmdb, anilist, mal). */
+  sources?: string[];
+}
+
 export interface MediaItem {
   id: string;
   tmdbId?: number;
@@ -57,7 +78,9 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio';
+  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx';
+  /** Present when the title was resolved through AniCore / Anikura. */
+  anime?: AnimeReference;
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
@@ -247,6 +270,15 @@ export interface DebridSettings {
   apiKey: string;
 }
 
+/** Configuration for the optional IMDx (api.tiffara.com) metadata provider. */
+export interface ImdxSettings {
+  enabled: boolean;
+  /** API origin, e.g. https://api.tiffara.com */
+  baseUrl: string;
+  /** Optional key — the public IMDx endpoints answer without one. */
+  apiKey: string;
+}
+
 export interface SyncSettings {
   traktClientId?: string;
   traktToken?: string;
@@ -256,7 +288,7 @@ export interface SyncSettings {
 
 export interface DiscoverFilters {
   type: 'all' | MediaType;
-  source: 'all' | 'tmdb' | 'stremio';
+  source: 'all' | 'tmdb' | 'stremio' | 'imdx';
   genre: string;
   year: string;
   minRating: number;
@@ -325,6 +357,8 @@ export interface AppSettings {
   preferredLanguage: string;
   accent: AppThemeAccent;
   tmdbApiKey: string;
+  /** Optional IMDb-style metadata from the IMDx / Tiffara API. TMDB stays the primary catalog. */
+  imdx: ImdxSettings;
   /** Debrid service used to convert magnets/infoHashes into direct HTTP streams. */
   debrid: DebridSettings;
   /** Optional Trakt / Simkl scrobbling credentials. */

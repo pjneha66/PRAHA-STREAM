@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Blocks, Check, Clapperboard, ExternalLink, Film, LoaderCircle, Play, Plus, Star, Tv, Users, X,
+  Blocks, Check, Clapperboard, ExternalLink, Film, LoaderCircle, MessageSquare, Play, Plus, Sparkles, Star, Tv, Users, X,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
+import { animeService, hasAnikuraId } from '../services/animeService';
 import type { LibraryStatus, MediaItem, TmdbEpisodeInfo, WatchProgress } from '../types';
 import { Artwork, MediaCard } from './MediaCard';
+import AnimeDiscussion from './AnimeDiscussion';
 
 const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
   { value: 'watching', label: 'Watching' },
@@ -40,7 +42,13 @@ const DetailsModal: React.FC<{
   const [showTrailer, setShowTrailer] = useState(false);
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [episodes, setEpisodes] = useState<TmdbEpisodeInfo[]>([]);
+  const [animeEpisodes, setAnimeEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [discussionEpisode, setDiscussionEpisode] = useState<number | undefined>();
+  const discussionRef = React.useRef<HTMLDivElement | null>(null);
+
+  const animeSlug = item.anime?.slug || (item.source === 'anicore' ? item.id.slice('anicore:'.length) : '');
+  const isAnime = Boolean(animeSlug);
 
   const savedEntry = useMemo(
     () => watchlist.find((entry) => entry.id === item.id),
@@ -59,8 +67,30 @@ const DetailsModal: React.FC<{
     else setSelectedSeason(1);
   }, [item.id, savedProgress?.season, item.seasons]);
 
+  // Anime episode guides come from AniCore (season-aware) instead of TMDB.
   useEffect(() => {
-    if (item.type !== 'series' || !item.tmdbId) {
+    if (item.type !== 'series' || !animeSlug) {
+      setAnimeEpisodes([]);
+      return;
+    }
+    let active = true;
+    setEpisodesLoading(true);
+    animeService.getEpisodes(animeSlug)
+      .then((list) => {
+        if (!active) return;
+        setAnimeEpisodes(list);
+        if (list.length) {
+          const seasons = [...new Set(list.map((episode) => episode.season))].sort((a, b) => a - b);
+          setSelectedSeason((current) => (seasons.includes(current) ? current : seasons[0]));
+        }
+      })
+      .catch(() => { if (active) setAnimeEpisodes([]); })
+      .finally(() => { if (active) setEpisodesLoading(false); });
+    return () => { active = false; };
+  }, [animeSlug, item.id, item.type]);
+
+  useEffect(() => {
+    if (item.type !== 'series' || !item.tmdbId || animeSlug) {
       setEpisodes([]);
       return;
     }
@@ -71,7 +101,7 @@ const DetailsModal: React.FC<{
       .catch(() => { if (active) setEpisodes([]); })
       .finally(() => { if (active) setEpisodesLoading(false); });
     return () => { active = false; };
-  }, [item.id, item.type, item.tmdbId, selectedSeason]);
+  }, [item.id, item.type, item.tmdbId, selectedSeason, animeSlug]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -81,6 +111,16 @@ const DetailsModal: React.FC<{
   }, [onClose]);
 
   const seasonNumbers = useMemo(() => {
+    if (animeEpisodes.length) {
+      const counts = new Map<number, number>();
+      animeEpisodes.forEach((episode) => counts.set(episode.season, (counts.get(episode.season) || 0) + 1));
+      return [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([seasonNumber, episodeCount]) => ({
+        id: seasonNumber,
+        seasonNumber,
+        name: `Season ${seasonNumber}`,
+        episodeCount,
+      }));
+    }
     if (item.seasons?.length) return item.seasons;
     const total = item.numberOfSeasons || (item.type === 'series' ? 1 : 0);
     return Array.from({ length: total }, (_, idx) => ({
@@ -89,7 +129,12 @@ const DetailsModal: React.FC<{
       name: `Season ${idx + 1}`,
       episodeCount: 0,
     }));
-  }, [item.seasons, item.numberOfSeasons, item.type]);
+  }, [item.seasons, item.numberOfSeasons, item.type, animeEpisodes]);
+
+  const visibleEpisodes = useMemo(
+    () => (animeEpisodes.length ? animeEpisodes.filter((episode) => episode.season === selectedSeason) : episodes),
+    [animeEpisodes, episodes, selectedSeason],
+  );
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -115,7 +160,13 @@ const DetailsModal: React.FC<{
           <div className="details-poster"><Artwork src={item.poster} alt={item.title} /></div>
           <div className="details-copy">
             <span className="details-kicker">
-              {item.source === 'stremio' ? 'FROM YOUR ADDON' : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
+              {item.source === 'stremio'
+                ? 'FROM YOUR ADDON'
+                : item.source === 'anicore'
+                  ? 'FROM THE ANIME INDEX'
+                  : item.source === 'imdx'
+                    ? 'FROM IMDX'
+                    : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
             </span>
             <h2>{item.title}</h2>
             <div className="details-meta">
@@ -128,6 +179,17 @@ const DetailsModal: React.FC<{
 
             {item.genres.length > 0 && (
               <div className="genre-list">{item.genres.map((genre) => <span key={genre}>{genre}</span>)}</div>
+            )}
+
+            {item.anime && (
+              <div className="anime-detail-strip">
+                <span className="anime-detail-badge"><Sparkles size={12} /> {item.anime.format || 'Anime'}</span>
+                {item.anime.status && <span>{item.anime.status}</span>}
+                {item.anime.episodeCount ? <span>{item.anime.episodeCount} episodes</span> : null}
+                {item.anime.malId ? <span>MAL {item.anime.malId}</span> : null}
+                {item.anime.anilistId ? <span>AniList {item.anime.anilistId}</span> : null}
+                {item.imdbId ? <span>{item.imdbId}</span> : null}
+              </div>
             )}
 
             <p className="details-overview">{item.overview || 'No description is available for this title yet.'}</p>
@@ -186,10 +248,16 @@ const DetailsModal: React.FC<{
               <Blocks size={15} />
               <span>Streams & subtitles are fetched live from your Stremio addons and Nuvio plugins.</span>
             </div>
+            {isAnime && (
+              <div className="details-source-note">
+                <Sparkles size={15} />
+                <span>Metadata &amp; episodes from AniCore; anything Anikura carries is credited in the discussion below.</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {item.type === 'series' && item.tmdbId && seasonNumbers.length > 0 && (
+        {item.type === 'series' && (item.tmdbId || animeSlug) && seasonNumbers.length > 0 && (
           <section className="details-section">
             <div className="details-section-head">
               <h3><Tv size={17} /> Seasons & Episodes</h3>
@@ -210,9 +278,9 @@ const DetailsModal: React.FC<{
               <div className="details-episodes-loading">
                 <LoaderCircle size={18} className="spin" /> Loading Season {selectedSeason} episodes…
               </div>
-            ) : episodes.length > 0 ? (
+            ) : visibleEpisodes.length > 0 ? (
               <div className="details-episode-list">
-                {episodes.map((ep) => {
+                {visibleEpisodes.map((ep) => {
                   const epHistory = history.find(
                     (h) => h.media.id === item.id && h.season === selectedSeason && h.episode === ep.episode,
                   );
@@ -239,6 +307,15 @@ const DetailsModal: React.FC<{
                           </span>
                         </div>
                         <p>{ep.overview || 'Tap to search available sources for this episode.'}</p>
+                        <button
+                          className="text-button episode-comments-button"
+                          onClick={() => {
+                            setDiscussionEpisode(ep.episode);
+                            window.setTimeout(() => discussionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' }), 60);
+                          }}
+                        >
+                          <MessageSquare size={12} /> Episode discussion
+                        </button>
                       </div>
                       <button
                         className="button button-small button-secondary"
@@ -252,6 +329,12 @@ const DetailsModal: React.FC<{
               </div>
             ) : null}
           </section>
+        )}
+
+        {(item.type === 'series' || isAnime) && (isAnime || hasAnikuraId(item)) && (
+          <div ref={discussionRef}>
+            <AnimeDiscussion item={item} initialEpisode={discussionEpisode || 1} compact />
+          </div>
         )}
 
         {item.cast && item.cast.length > 0 && (
