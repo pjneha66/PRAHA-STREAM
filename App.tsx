@@ -30,9 +30,11 @@ import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import type {
   AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
-  LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, StreamResult, ToastMessage,
+  LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, ProfileAvatarIcon, StreamResult, ToastMessage,
   UserProfile, WatchProgress, PrahaBackupBundle,
 } from './types';
+
+const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
@@ -114,10 +116,17 @@ const App: React.FC = () => {
 
   const [profiles, setProfiles] = usePersistentState<UserProfile[]>('praha.v2.profiles', [DEFAULT_PROFILE]);
   const [activeProfileId, setActiveProfileId] = usePersistentState<string>('praha.v2.active-profile', DEFAULT_PROFILE.id);
-  const [profilePickerCompleted, setProfilePickerCompleted] = usePersistentState<boolean>(
-    'praha.v2.profile-picker-completed',
-    typeof window !== 'undefined' && window.localStorage.getItem('praha.v2.profiles') !== null,
-  );
+  const [sessionProfilePicked, setSessionProfilePicked] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return Boolean(window.sessionStorage.getItem(SESSION_PROFILE_KEY));
+    } catch {
+      return false;
+    }
+  });
+  const [profileSwitcherOpen, setProfileSwitcherOpen] = useState(false);
+  const profilePickerCompleted = sessionProfilePicked || settings.askProfileOnStartup === false;
+  const showProfileGate = profileSwitcherOpen || !profilePickerCompleted;
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0] || DEFAULT_PROFILE,
@@ -185,6 +194,10 @@ const App: React.FC = () => {
         document.exitFullscreen().catch(() => undefined);
         return;
       }
+      if (profileSwitcherOpen) {
+        setProfileSwitcherOpen(false);
+        return;
+      }
       if (player) {
         setPlayer(null);
         return;
@@ -216,7 +229,7 @@ const App: React.FC = () => {
 
     window.addEventListener('praha:hardware-back', onHardwareBack);
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
-  }, [player, sourceState, embedState, selected, view, notify]);
+  }, [profileSwitcherOpen, player, sourceState, embedState, selected, view, notify]);
 
   const updatePlayerSettings = useCallback((patch: Partial<PlayerSettings>) => {
     setSettings((current) => {
@@ -677,12 +690,32 @@ const App: React.FC = () => {
   }, [player, tmdbReady, addons, repositories, nuvioSettings, settings.tmdbApiKey, upsertHistory, notify]);
 
   // Profile management
-  const createProfile = (name: string, avatarColor: string, isKids: boolean) => {
+  const createProfile = (
+    name: string,
+    avatarColor: string,
+    isKids: boolean,
+    avatarIcon?: ProfileAvatarIcon,
+    avatarImage?: string,
+  ) => {
     const id = `prof-${Date.now().toString(36)}`;
-    const created: UserProfile = { id, name, avatarColor, isKids, createdAt: Date.now() };
+    const cleanImg = avatarImage?.trim() || undefined;
+    const created: UserProfile = { id, name, avatarColor, avatarIcon, avatarImage: cleanImg, isKids, createdAt: Date.now() };
     setProfiles((cur) => [...cur, created]);
-    setActiveProfileId(id);
-    notify(`Switched to ${name}.`, 'success');
+    if (!showProfileGate) {
+      setActiveProfileId(id);
+      notify(`Switched to ${name}.`, 'success');
+    } else {
+      notify(`Added profile ${name}.`, 'success');
+    }
+    return created;
+  };
+
+  const updateProfile = (
+    profileId: string,
+    patch: Partial<Pick<UserProfile, 'name' | 'avatarColor' | 'isKids' | 'avatarIcon' | 'avatarImage'>>,
+  ) => {
+    setProfiles((cur) => cur.map((prof) => (prof.id === profileId ? { ...prof, ...patch } : prof)));
+    notify('Profile updated.', 'success');
   };
 
   const deleteProfile = (profileId: string) => {
@@ -894,42 +927,62 @@ const App: React.FC = () => {
         }}
         onCreateProfile={createProfile}
         onDeleteProfile={deleteProfile}
+        onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
       />
     );
   }
 
-  if (!profilePickerCompleted) page = null;
+  const handleCompleteProfileGate = (profileId: string) => {
+    const wasSwitching = profileSwitcherOpen && profileId !== activeProfile.id;
+    setActiveProfileId(profileId);
+    try {
+      window.sessionStorage.setItem(SESSION_PROFILE_KEY, profileId);
+      window.localStorage.setItem('praha.v2.profile-picker-completed', 'true');
+    } catch { /* ignore */ }
+    setSessionProfilePicked(true);
+    setProfileSwitcherOpen(false);
+    if (wasSwitching) {
+      const target = profiles.find((p) => p.id === profileId);
+      if (target) notify(`Switched to ${target.name}.`, 'success');
+    }
+  };
 
   return (
     <>
-      <Navigation
-        view={view}
-        onNavigate={navigate}
-        query={query}
-        onQueryChange={setQuery}
-        onSearch={() => navigate('discover')}
-        sourceCount={activeSourceCount}
-        profiles={profiles}
-        activeProfile={activeProfile}
-        onSelectProfile={(id) => {
-          setActiveProfileId(id);
-          const target = profiles.find((p) => p.id === id);
-          if (target) notify(`Switched to ${target.name}.`, 'success');
-        }}
-      >
-        {page}
-      </Navigation>
+      {profilePickerCompleted && (
+        <Navigation
+          view={view}
+          onNavigate={navigate}
+          query={query}
+          onQueryChange={setQuery}
+          onSearch={() => navigate('discover')}
+          sourceCount={activeSourceCount}
+          profiles={profiles}
+          activeProfile={activeProfile}
+          onSelectProfile={(id) => {
+            setActiveProfileId(id);
+            try { window.sessionStorage.setItem(SESSION_PROFILE_KEY, id); } catch { /* ignore */ }
+            const target = profiles.find((p) => p.id === id);
+            if (target) notify(`Switched to ${target.name}.`, 'success');
+          }}
+          onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
+        >
+          {page}
+        </Navigation>
+      )}
 
-      {!profilePickerCompleted && (
+      {showProfileGate && (
         <ProfilePicker
           profiles={profiles.length ? profiles : [DEFAULT_PROFILE]}
           activeProfile={activeProfile}
-          onContinue={(profileId) => {
-            setActiveProfileId(profileId);
-            setProfilePickerCompleted(true);
-          }}
+          onContinue={handleCompleteProfileGate}
+          onCreateProfile={createProfile}
+          onUpdateProfile={updateProfile}
+          onDeleteProfile={deleteProfile}
+          canDismiss={profileSwitcherOpen && profilePickerCompleted}
+          onDismiss={() => setProfileSwitcherOpen(false)}
         />
       )}
 
