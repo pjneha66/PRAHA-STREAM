@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
 import { findNuvioStreams } from '../services/nuvioService';
+import { findPlayTorrioStreams } from '../services/playtorrioScrapers';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
 import type {
@@ -129,6 +130,7 @@ const SourceModal: React.FC<{
     const scrapers = repositories.filter((repo) => repo.enabled).flatMap((repo) =>
       repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
     setHealth([
+      { id: 'playtorrio:4khd', name: '4KHDHub & PlayTorrio VOD (4K UHD)', status: 'searching' as const },
       ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
       ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
     ]);
@@ -203,7 +205,28 @@ const SourceModal: React.FC<{
           });
           await Promise.all(jobs);
         })();
-        const jobs = [stremioJob, nuvioJob];
+        const playtorrioJob = (async () => {
+          const tmdbId = knownTmdb || (await idJob).tmdbId;
+          const id = 'playtorrio:4khd';
+          return runProvider(id, async () => {
+            const results = await findPlayTorrioStreams(media.title, media.type, tmdbId, media.year, s, ep);
+            return { streams: results, errors: [] };
+          }, (result) => {
+            if (cancelled) return;
+            setStreams((current) => {
+              const seen = new Set<string>();
+              // Put 4KHDHub and PlayTorrio 4K results right at the very front
+              const combined = [...result.streams, ...current];
+              return combined.filter((stream) => {
+                const key = stream.url || (stream.ytId ? `youtube:${stream.ytId}` : stream.id);
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+            });
+          });
+        })();
+        const jobs = [playtorrioJob, stremioJob, nuvioJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
@@ -222,7 +245,7 @@ const SourceModal: React.FC<{
 
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
-  const providerCount = activeStreamAddons + activeScrapers;
+  const providerCount = activeStreamAddons + activeScrapers + 1;
 
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
 

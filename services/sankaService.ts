@@ -1,4 +1,5 @@
 import { isAndroidApp, nativeFetchText } from './androidBridge';
+import { MangaService } from './mangaService';
 
 const PRIMARY_ORIGIN = 'https://www.sankavollerei.web.id';
 const MIRROR_ORIGIN = 'https://www.sankavollerei.com';
@@ -11,6 +12,7 @@ export type SankaKind = 'anime' | 'comic';
 export type ComicFeed = 'latest' | 'popular';
 
 export const SANKA_COMIC_SOURCES = [
+  { id: 'weebcentral', label: 'WeebCentral (English Manga)' },
   { id: 'bacakomik', label: 'BacaKomik' },
   { id: 'komiku', label: 'Komiku' },
   { id: 'komikstation', label: 'Komikstation' },
@@ -660,6 +662,35 @@ export async function fetchSankaTitlesPage(
   const source = options.source || (kind === 'comic' ? 'bacakomik' : 'otakudesu');
   const feed = options.feed || 'latest';
   const page = Math.max(1, Math.floor(options.page || 1));
+
+  if (source === 'weebcentral') {
+    try {
+      const mangaList = normalizedQuery
+        ? await MangaService.searchManga(normalizedQuery, page)
+        : await MangaService.getManga(page);
+      const items: SankaTitle[] = mangaList.map((m) => ({
+        id: `weebcentral:${m.id}`,
+        slug: m.id,
+        detailPath: `/series/${m.id}`,
+        title: m.title,
+        poster: m.coverNormal || m.coverSmall,
+        kind: 'comic',
+        source: 'weebcentral',
+        sourceUrl: `https://weebcentral.com/series/${m.id}`,
+        comicType: m.type,
+        genres: m.tags || ['Manga'],
+      }));
+      return {
+        items,
+        hasMore: mangaList.length >= 30,
+        page,
+      };
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') throw e;
+      return { items: [], hasMore: false, page };
+    }
+  }
+
   const routes = buildTitleRoutes(kind, normalizedQuery, source, feed, page);
 
   let lastError: unknown = null;
@@ -701,6 +732,25 @@ export async function fetchSankaTitles(
 ): Promise<SankaTitle[]> {
   const page = options.page || 1;
   const normalizedQuery = query.trim();
+
+  if (source === 'weebcentral') {
+    const mangaList = normalizedQuery
+      ? await MangaService.searchManga(normalizedQuery, page)
+      : await MangaService.getManga(page);
+    return mangaList.map((m) => ({
+      id: `weebcentral:${m.id}`,
+      slug: m.id,
+      detailPath: `/series/${m.id}`,
+      title: m.title,
+      poster: m.coverNormal || m.coverSmall,
+      kind: 'comic',
+      source: 'weebcentral',
+      sourceUrl: `https://weebcentral.com/series/${m.id}`,
+      comicType: m.type,
+      genres: m.tags || ['Manga'],
+    }));
+  }
+
   const routes = buildTitleRoutes(kind, normalizedQuery, source, feed, page);
   let lastError: unknown = null;
   let hadValidEmptyResponse = false;
@@ -843,6 +893,27 @@ export async function fetchSankaMangaDetail(
   signal?: AbortSignal,
   detailPath?: string,
 ): Promise<SankaMangaDetail> {
+  if (source === 'weebcentral') {
+    const [detail, chapters] = await Promise.all([
+      MangaService.getSeriesDetail(slug),
+      MangaService.getChapters(slug),
+    ]);
+    return {
+      title: detail.title,
+      poster: detail.coverNormal || detail.coverSmall,
+      summary: detail.synopsis || '',
+      genres: detail.tags || ['Manga'],
+      author: detail.author || '',
+      status: detail.status || 'Ongoing',
+      chapters: chapters.map((c) => ({
+        id: `weebcentral:${c.id}`,
+        slug: c.id,
+        chapterPath: `/chapters/${c.id}`,
+        title: c.name,
+      })),
+    };
+  }
+
   const routes = buildDetailRoutes(source, slug, detailPath);
   let lastError: unknown = null;
   let fallbackDetail: SankaMangaDetail | null = null;
@@ -958,6 +1029,11 @@ export async function fetchSankaChapterImages(
   signal?: AbortSignal,
   chapterPath?: string,
 ): Promise<string[]> {
+  if (source === 'weebcentral') {
+    const images = await MangaService.getChapterImages(slug);
+    if (images.length > 0) return images;
+  }
+
   const routes = buildChapterRoutes(source, slug, chapterPath);
   let lastError: unknown = null;
 

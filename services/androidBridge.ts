@@ -1,6 +1,31 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { StreamResult } from '../types';
 
+export interface NativeAudioTrackInfo {
+  id: number;
+  trackNumber: number;
+  name: string;
+  language?: string | null;
+  languageName?: string | null;
+  codec?: string | null;
+  codecLabel?: string | null;
+  channels?: number;
+  bitrate?: number;
+  selected: boolean;
+}
+
+export interface NativeSpuTrackInfo {
+  id: number;
+  trackNumber: number;
+  name: string;
+  language?: string | null;
+  languageName?: string | null;
+  codec?: string | null;
+  codecLabel?: string | null;
+  isExternal?: boolean;
+  selected: boolean;
+}
+
 export interface PrahaNativeInterface {
   isAndroid(): boolean;
   isTelevision(): boolean;
@@ -15,6 +40,29 @@ export interface PrahaNativeInterface {
   openExternalPlayer(url: string, title: string, packageName: string, headersJson: string): boolean;
   shareText(filename: string, content: string): boolean;
   exitApp(): void;
+
+  // LibVLC Player APIs
+  getAllAudioTracks?(): string;
+  getSelectedAudioTrack?(): number;
+  setAudioTrack?(id: number): boolean;
+  getAllSpuTracks?(): string;
+  getSelectedSpuTrack?(): number;
+  setSpuTrack?(id: number): boolean;
+  addSlave?(type: number, uri: string, select: boolean): boolean;
+  setSpuDelay?(delayMicros: number): boolean;
+  getSpuDelay?(): number;
+  setAudioDelay?(delayMicros: number): boolean;
+  getAudioDelay?(): number;
+  openSubtitlePicker?(): boolean;
+  vlcPlay?(url: string, headersJson: string, resumeMs: number): boolean;
+  vlcPause?(): void;
+  vlcResume?(): void;
+  vlcStop?(): void;
+  vlcSeek?(timeMs: number): void;
+  vlcSetVolume?(volume: number): void;
+  vlcSetRate?(rate: number): void;
+  isVlcAvailable?(): boolean;
+  isVlcPlaying?(): boolean;
 }
 
 declare global {
@@ -423,3 +471,108 @@ export function exitAndroidApp(): void {
     // No-op on web.
   }
 }
+
+export function isNativeVlcAvailable(): boolean {
+  try {
+    return Boolean(window.PrahaNative?.isVlcAvailable?.());
+  } catch {
+    return false;
+  }
+}
+
+export function isNativeVlcPlaying(): boolean {
+  try {
+    return Boolean(window.PrahaNative?.isVlcPlaying?.());
+  } catch {
+    return false;
+  }
+}
+
+export function getNativeAudioTracks(): NativeAudioTrackInfo[] {
+  try {
+    const raw = window.PrahaNative?.getAllAudioTracks?.();
+    if (!raw) return [];
+    return JSON.parse(raw) as NativeAudioTrackInfo[];
+  } catch {
+    return [];
+  }
+}
+
+export function getSelectedNativeAudioTrack(): number {
+  try {
+    return window.PrahaNative?.getSelectedAudioTrack?.() ?? -1;
+  } catch {
+    return -1;
+  }
+}
+
+export function setNativeAudioTrack(id: number): boolean {
+  try {
+    return Boolean(window.PrahaNative?.setAudioTrack?.(id));
+  } catch {
+    return false;
+  }
+}
+
+export function getNativeSpuTracks(): NativeSpuTrackInfo[] {
+  try {
+    const raw = window.PrahaNative?.getAllSpuTracks?.();
+    if (!raw) return [];
+    return JSON.parse(raw) as NativeSpuTrackInfo[];
+  } catch {
+    return [];
+  }
+}
+
+export function getSelectedNativeSpuTrack(): number {
+  try {
+    return window.PrahaNative?.getSelectedSpuTrack?.() ?? -1;
+  } catch {
+    return -1;
+  }
+}
+
+export function setNativeSpuTrack(id: number): boolean {
+  try {
+    return Boolean(window.PrahaNative?.setSpuTrack?.(id));
+  } catch {
+    return false;
+  }
+}
+
+export function addNativeSubtitleSlave(uri: string, select = true): boolean {
+  try {
+    return Boolean(window.PrahaNative?.addSlave?.(0, uri, select));
+  } catch {
+    return false;
+  }
+}
+
+export function openNativeSubtitlePicker(): boolean {
+  try {
+    return Boolean(window.PrahaNative?.openSubtitlePicker?.());
+  } catch {
+    return false;
+  }
+}
+
+export function setNativeSubtitleDelay(delaySeconds: number): boolean {
+  try {
+    const micros = Math.round(delaySeconds * 1000000);
+    return Boolean(window.PrahaNative?.setSpuDelay?.(micros));
+  } catch {
+    return false;
+  }
+}
+
+export const setNativeSpuDelay = setNativeSubtitleDelay;
+
+export function setNativeAudioDelay(delaySeconds: number): boolean {
+  try {
+    const micros = Math.round(delaySeconds * 1000000);
+    return Boolean(window.PrahaNative?.setAudioDelay?.(micros));
+  } catch {
+    return false;
+  }
+}
+

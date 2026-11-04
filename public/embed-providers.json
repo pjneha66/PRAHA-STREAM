@@ -2,6 +2,46 @@
   "version": 1,
   "providers": [
     {
+      "id": "fourkhdhub",
+      "movie": "https://4khdhub.one/embed/movie/{tmdb}",
+      "series": "https://4khdhub.one/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "movienight",
+      "movie": "https://movienig.ht/watch/movie/{tmdb}",
+      "series": "https://movienig.ht/watch/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "videasy",
+      "movie": "https://player.videasy.to/movie/{tmdb}",
+      "series": "https://player.videasy.to/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "vidcore",
+      "movie": "https://vidcore.org/embed/movie/{tmdb}",
+      "series": "https://vidcore.org/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "flystream",
+      "movie": "https://flystream.net/embed/movie/{tmdb}",
+      "series": "https://flystream.net/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "multiembed",
+      "movie": "https://www.2embed.cc/embed/{tmdb}",
+      "series": "https://www.2embed.cc/embedtv/{tmdb}&s={season}&e={episode}"
+    },
+    {
+      "id": "vidsrc-me",
+      "movie": "https://vidsrc.me/embed/movie/{tmdb}",
+      "series": "https://vidsrc.me/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
+      "id": "xdownloader",
+      "movie": "https://www.films365.org/embed/movie/{tmdb}",
+      "series": "https://www.films365.org/embed/tv/{tmdb}/{season}/{episode}"
+    },
+    {
       "id": "vidlink",
       "movie": "https://vidlink.pro/movie/{tmdb}",
       "series": "https://vidlink.pro/tv/{tmdb}/{season}/{episode}"

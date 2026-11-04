@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
+  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
 import type { AppView, UserProfile } from '../types';
@@ -23,6 +23,7 @@ const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
+  { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
@@ -33,6 +34,7 @@ const mobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
+  { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow', icon: Play },
   { id: 'library' as const, label: 'Library', icon: Library },

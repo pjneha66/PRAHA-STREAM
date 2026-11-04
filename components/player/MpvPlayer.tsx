@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
-import { isAndroidApp, openExternalPlayer, setImmersiveFullscreen } from '../../services/androidBridge';
+import { isAndroidApp, openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen } from '../../services/androidBridge';
+import AudioSubtitleDialog from './AudioSubtitleDialog';
 import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
@@ -90,6 +91,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [preparedSubtitles, setPreparedSubtitles] = useState<StreamSubtitle[]>([]);
   const [resumeBanner, setResumeBanner] = useState(initialTime > 5);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
+  const [audioSubDialogOpen, setAudioSubDialogOpen] = useState(false);
+  const [audioSubDialogTab, setAudioSubDialogTab] = useState<'audio' | 'subs'>('audio');
 
   const rawSubtitles = useMemo(() => {
     const merged: StreamSubtitle[] = [];
@@ -140,6 +143,26 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     setOsd(message);
     if (osdTimer.current) window.clearTimeout(osdTimer.current);
     osdTimer.current = window.setTimeout(() => setOsd(''), 1200);
+  }, []);
+
+  useEffect(() => {
+    const onVlcSubPicked = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.name) {
+        flash(`Loaded ${detail.name}`);
+      }
+    };
+    window.addEventListener('praha:vlc-subtitle-picked', onVlcSubPicked);
+    return () => window.removeEventListener('praha:vlc-subtitle-picked', onVlcSubPicked);
+  }, [flash]);
+
+  const handleLoadSubtitleFile = useCallback(() => {
+    if (isAndroidApp()) {
+      const launched = openNativeSubtitlePicker();
+      if (!launched) fileInputRef.current?.click();
+    } else {
+      fileInputRef.current?.click();
+    }
   }, []);
 
   const onFatalError = useCallback((message: string) => setFatal(message), []);
@@ -245,6 +268,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       const step = settings.seekStep;
 
       if (key === 'Escape') {
+        if (audioSubDialogOpen) { setAudioSubDialogOpen(false); return; }
         if (menu) { setMenu(null); return; }
         if (document.fullscreenElement) { document.exitFullscreen().catch(() => undefined); return; }
         onRequestClose();
@@ -484,8 +508,19 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         .mpv-stage video::cue {
           font-size: ${settings.subtitleSize}%;
           color: ${settings.subtitleColor};
-          background: rgba(0,0,0,${((settings.subtitleBgOpacity ?? 55) / 100).toFixed(2)});
-          text-shadow: 0 1px 3px rgba(0,0,0,.9);
+          background: ${settings.subtitleBgOpacity === 0 ? 'transparent' : `rgba(0,0,0,${((settings.subtitleBgOpacity ?? 55) / 100).toFixed(2)})`};
+          text-shadow: ${
+            settings.subtitleOutline === 'none'
+              ? 'none'
+              : settings.subtitleOutline === 'thin'
+              ? '1px 1px 1px #000, -1px -1px 1px #000, 1px -1px 1px #000, -1px 1px 1px #000'
+              : settings.subtitleOutline === 'thick'
+              ? '0 0 6px #000, 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000'
+              : settings.subtitleOutline === 'shadow'
+              ? '2px 2px 4px rgba(0,0,0,0.9)'
+              : '0 0 4px #000, 0 0 2px #000, 2px 2px 2px #000'
+          };
+          ${settings.subtitlePosition === 'top' ? 'line: 10%;' : settings.subtitlePosition === 'middle' ? 'line: 50%;' : ''}
         }
       `}</style>
 
@@ -665,10 +700,29 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
                 <SlidersHorizontal size={15} /> <span>{activeLevelLabel}</span>
               </button>
             )}
-            <button className={`mpv-chip ${menu === 'audio' ? 'active' : ''}`} onClick={() => setMenu(menu === 'audio' ? null : 'audio')} aria-label="Audio tracks" aria-expanded={menu === 'audio'}>
+            <button
+              className={`mpv-chip mpv-audiosub-btn ${audioSubDialogOpen ? 'active' : ''}`}
+              onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
+              aria-label="Audio & Subtitles"
+              title="Audio & Subtitles"
+            >
+              <AudioLines size={15} />
+              <span>Audio & Subs</span>
+            </button>
+            <button
+              className={`mpv-chip ${audioSubDialogOpen && audioSubDialogTab === 'audio' ? 'active' : ''}`}
+              onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
+              aria-label="Audio tracks"
+              aria-expanded={audioSubDialogOpen && audioSubDialogTab === 'audio'}
+            >
               <AudioLines size={15} /> <span>{activeAudio?.label || 'Audio'}</span>
             </button>
-            <button className={`mpv-chip ${menu === 'subs' ? 'active' : ''}`} onClick={() => setMenu(menu === 'subs' ? null : 'subs')} aria-label="Subtitles" aria-expanded={menu === 'subs'}>
+            <button
+              className={`mpv-chip ${audioSubDialogOpen && audioSubDialogTab === 'subs' ? 'active' : ''}`}
+              onClick={() => { setAudioSubDialogTab('subs'); setAudioSubDialogOpen(true); }}
+              aria-label="Subtitles"
+              aria-expanded={audioSubDialogOpen && audioSubDialogTab === 'subs'}
+            >
               {currentText ? <Captions size={15} /> : <CaptionsOff size={15} />} <span>{activeSubtitle?.label || (preparedSubtitles.length ? `${preparedSubtitles.length} Subs` : 'Off')}</span>
             </button>
             {canCast && (
@@ -809,6 +863,28 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           </div>
         </PlayerMenu>
       </div>
+
+      <AudioSubtitleDialog
+        isOpen={audioSubDialogOpen}
+        onClose={() => setAudioSubDialogOpen(false)}
+        initialTab={audioSubDialogTab}
+        audioTracks={audioTracks}
+        currentAudio={currentAudio}
+        onSelectAudio={(id) => {
+          engine.selectAudio(id);
+          flash('Audio track changed');
+        }}
+        textTracks={textTracks}
+        currentText={currentText}
+        onSelectText={(id) => {
+          engine.selectText(id);
+          flash(id ? 'Subtitle track changed' : 'Subtitles disabled');
+        }}
+        onLoadSubtitleFile={handleLoadSubtitleFile}
+        settings={settings}
+        onSettingsChange={onSettingsChange}
+        isAndroid={isAndroidApp()}
+      />
 
       {!ready && !fatal && <div className="mpv-loading-hint"><CirclePlay size={16} /> Loading stream…</div>}
       <button className="mpv-collapse" onClick={() => setControlsVisible((visible) => !visible)} aria-label="Toggle controls">

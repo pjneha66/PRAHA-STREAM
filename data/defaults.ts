@@ -59,6 +59,9 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   subtitleColor: '#ffffff',
   subtitleOffset: 0,
   subtitleBgOpacity: 55,
+  subtitleBgColor: '#000000',
+  subtitleOutline: 'medium',
+  subtitlePosition: 'bottom',
   stats: false,
   gestures: true,
   volume: 100,
@@ -67,6 +70,19 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   autoNextEpisode: true,
   landscapeLock: true,
   skipIntro: true,
+};
+
+export const DEFAULT_SUBTITLE_SETTINGS: Pick<
+  PlayerSettings,
+  'subtitleSize' | 'subtitleColor' | 'subtitleOffset' | 'subtitleBgOpacity' | 'subtitleBgColor' | 'subtitleOutline' | 'subtitlePosition'
+> = {
+  subtitleSize: 100,
+  subtitleColor: '#ffffff',
+  subtitleOffset: 0,
+  subtitleBgOpacity: 55,
+  subtitleBgColor: '#000000',
+  subtitleOutline: 'medium',
+  subtitlePosition: 'bottom',
 };
 
 /** Optional IMDb-style metadata from Tiffara's IMDx API. TMDB stays the primary catalog. */

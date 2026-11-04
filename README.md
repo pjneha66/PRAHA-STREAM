@@ -6,10 +6,16 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface inspired 
 
 ---
 
-## Android & Android TV Features (`v2.2.0`)
+## Android & Android TV Features (`v2.3.0`)
 
-PRAHA STREAM is built first-class for Android phones, tablets, and Android TV / Fire TV boxes via Capacitor + custom native Android Java bridges (`MainActivity.java` & `PrahaStreamProxy.java`):
+PRAHA STREAM is built first-class for Android phones, tablets, and Android TV / Fire TV boxes via Capacitor + custom native Android Java bridges (`MainActivity.java`, `PrahaStreamProxy.java`, and `PrahaVlcPlayer.java`):
 
+- **Native LibVLC Player Core (`PrahaVlcPlayer`)**: Direct in-app hardware-accelerated playback of MKV, MP4, HLS, TS, FLV, and Dolby Digital streams using embedded LibVLC. Renders on a native `VLCVideoLayout` surface beneath the transparent WebView interface with zero external app dependencies.
+- **Audio Language & Subtitle Manager**:
+  - Automatic detection and live switching of embedded MKV audio streams (AAC, E-AC-3, AC-3, DTS, Opus, TrueHD, FLAC) with channel layout indicators (Stereo, 5.1 Surround, 7.1) and ISO 639 language names.
+  - Subtitle manager supporting embedded MKV subtitles (SRT, ASS, SSA, WebVTT, PGS, VobSub) and external subtitle files.
+  - Full Android Storage Access Framework (`ACTION_OPEN_DOCUMENT`) file picker for loading external SRT/ASS files via LibVLC `addSlave`.
+  - Comprehensive subtitle appearance controls: font size (50%-300%), color presets and hex picker, background opacity, outline styles, screen position, and sub-second audio/subtitle sync delay offsets with 1-click default restore.
 - **Embedded Native Stream Header Proxy (`PrahaStreamProxy`)**: Runs a local `127.0.0.1` loopback proxy inside the Android APK that injects `Referer`, `Origin`, `User-Agent`, `Cookie`, and `Authorization` headers, forwards HTTP `Range` requests for instant seeking, and rewrites relative HLS `.m3u8` segment/key URLs so header-protected streams play natively in `MpvPlayer`.
 - **CORS-Free Native Scraper Networking**: Main-thread requests and Web Worker scrapers (Nuvio) automatically delegate blocked or header-restricted HTTP calls to PRAHA’s native Android HTTP bridge.
 - **Hardware Back Gesture & Deep-Link Navigation**: Android’s back button closes fullscreen → player → source finder → details modal → returns to Home, with double-back confirmation to exit.
@@ -27,7 +33,7 @@ Private DNS only changes DNS resolution: it is not a VPN and does not bypass IP 
 ```bash
 npm install
 npm run build:android
-# Output: dist-apk/praha-stream-v2.2.0.apk
+# Output: dist-apk/praha-stream-v2.3.0.apk
 ```
 *(If `android/app/release.keystore` does not exist yet, Gradle automatically generates a local signing keystore during `assembleRelease`, or uses `ANDROID_KEYSTORE_PATH` / `ANDROID_KEYSTORE_PASSWORD` environment variables in CI.)*
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check, CircleAlert, Copy, ExternalLink, FastForward, Link, LoaderCircle,
-  Magnet, ShieldCheck, Smartphone, Sparkles, X,
+  Magnet, Play, ShieldCheck, Smartphone, Sparkles, X,
 } from 'lucide-react';
 import type {
   DebridSettings, InstalledAddon, IntroSegment, MediaItem, PlayerSettings,
@@ -10,6 +10,7 @@ import type {
 import { findStremioSubtitles } from '../services/stremioService';
 import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
+import { TorrentStreamingEngine, type TorrentStreamStats } from '../services/torrentStreamingService';
 import {
   extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, openExternalPlayer,
   resolvePlayableStreamUrl, setImmersiveFullscreen,
@@ -69,12 +70,16 @@ const PlayerModal: React.FC<{
   const [activeStream, setActiveStream] = useState<StreamResult>(stream);
   const [debridBusy, setDebridBusy] = useState(false);
   const [debridError, setDebridError] = useState('');
+  const [torrentBusy, setTorrentBusy] = useState(false);
+  const [torrentError, setTorrentError] = useState('');
+  const [torrentStats, setTorrentStats] = useState<TorrentStreamStats | null>(null);
   const [addonSubtitles, setAddonSubtitles] = useState<StreamSubtitle[]>([]);
   const [introSegments, setIntroSegments] = useState<IntroSegment[]>([]);
 
   useEffect(() => {
     setActiveStream(stream);
     setDebridError('');
+    setTorrentError('');
   }, [stream]);
 
   // Auto-resolve magnet/torrent via Debrid if configured
@@ -158,6 +163,28 @@ const PlayerModal: React.FC<{
     }
   };
 
+  const manualStreamTorrent = async () => {
+    setTorrentBusy(true);
+    setTorrentError('');
+    try {
+      const { streamUrl, infoHash } = await TorrentStreamingEngine.streamTorrent(activeStream.url, {
+        title: activeStream.title || media.title,
+        fileIdx: activeStream.fileIdx,
+      });
+      setActiveStream({
+        ...activeStream,
+        url: streamUrl,
+        format: 'torrent-http',
+        provider: `${activeStream.provider || 'Torrent'} (Torrent Engine)`,
+      });
+      TorrentStreamingEngine.subscribeStats(infoHash, (stats) => setTorrentStats(stats));
+    } catch (err) {
+      setTorrentError(err instanceof Error ? err.message : 'Unable to connect to Torrent Streaming Engine.');
+    } finally {
+      setTorrentBusy(false);
+    }
+  };
+
   const fullTitle = media.type === 'series' && season
     ? `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`
     : media.title;
@@ -198,9 +225,13 @@ const PlayerModal: React.FC<{
                   : 'Connect Real-Debrid, AllDebrid, or TorBox in Settings to play magnets directly in PRAHA, or open in an external torrent/video app.'}
               </p>
               {debridError && <p className="debrid-inline-error"><CircleAlert size={14} /> {debridError}</p>}
+              {torrentError && <p className="debrid-inline-error"><CircleAlert size={14} /> {torrentError}</p>}
               <div>
+                <button className="button button-primary" onClick={manualStreamTorrent} disabled={torrentBusy}>
+                  {torrentBusy ? <LoaderCircle size={16} className="spin" /> : <Play size={16} fill="currentColor" />} Stream with Torrent Engine
+                </button>
                 {debrid.provider !== 'none' && debrid.apiKey ? (
-                  <button className="button button-primary" onClick={manualResolveDebrid} disabled={debridBusy}>
+                  <button className="button button-secondary" onClick={manualResolveDebrid} disabled={debridBusy}>
                     <Sparkles size={16} /> Retry Debrid stream
                   </button>
                 ) : onOpenSettings ? (

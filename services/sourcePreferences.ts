@@ -30,6 +30,17 @@ export function streamCodec(stream: StreamResult): string {
   return 'Unknown';
 }
 
+export function streamPriority(stream: StreamResult): number {
+  const is4khd = /4khd/i.test(stream.sourceName) || /4khd/i.test(stream.provider || '');
+  const quality = streamQuality(stream);
+  if (is4khd && quality === '4K') return 100;
+  if (is4khd) return 90;
+  if (quality === '4K') return 80;
+  if (quality === '1080p') return 60;
+  if (quality === '720p') return 40;
+  return 10;
+}
+
 export function filterAndSortStreams(streams: StreamResult[], filters: SourceFilters, preferredSource: string, preferredLanguage: string): StreamResult[] {
   return streams.filter((stream) =>
     (filters.quality === 'all' || streamQuality(stream) === filters.quality) &&
@@ -39,7 +50,10 @@ export function filterAndSortStreams(streams: StreamResult[], filters: SourceFil
     (filters.subtitles === 'all' || (filters.subtitles === 'available' ? Boolean(stream.subtitles?.length) : !stream.subtitles?.length)),
   ).sort((a, b) => {
     const preferred = Number(sourceKey(b) === preferredSource) - Number(sourceKey(a) === preferredSource);
+    if (preferred !== 0) return preferred;
+    const priority = streamPriority(b) - streamPriority(a);
+    if (priority !== 0) return priority;
     const language = Number(Boolean(b.language && b.language.toLowerCase().startsWith(preferredLanguage.toLowerCase()))) - Number(Boolean(a.language && a.language.toLowerCase().startsWith(preferredLanguage.toLowerCase())));
-    return preferred || language || (b.seeders || 0) - (a.seeders || 0);
+    return language || (b.seeders || 0) - (a.seeders || 0);
   });
 }

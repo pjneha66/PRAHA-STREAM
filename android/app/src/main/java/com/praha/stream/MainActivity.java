@@ -17,6 +17,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -24,6 +26,11 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 
 import org.json.JSONObject;
+import org.videolan.libvlc.util.VLCVideoLayout;
+
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -37,11 +44,43 @@ import java.util.List;
 
 public class MainActivity extends BridgeActivity {
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
+    private PrahaVlcPlayer vlcPlayer;
+    private VLCVideoLayout vlcVideoLayout;
+    private ActivityResultLauncher<Intent> subtitlePickerLauncher;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         streamProxy.start();
+
+        subtitlePickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                        Intent data = result.getData();
+                        Uri uri = data.getData();
+                        if (uri != null) {
+                            try {
+                                final int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                getContentResolver().takePersistableUriPermission(uri, takeFlags);
+                            } catch (Exception ignored) {}
+                            if (vlcPlayer != null) {
+                                vlcPlayer.addSlave(0, uri.toString(), true);
+                            }
+                            if (getBridge() != null && getBridge().getWebView() != null) {
+                                try {
+                                    JSONObject obj = new JSONObject();
+                                    obj.put("uri", uri.toString());
+                                    String name = uri.getLastPathSegment();
+                                    obj.put("name", name != null ? name : "External Subtitle");
+                                    String js = String.format("window.dispatchEvent(new CustomEvent('praha:vlc-subtitle-picked', { detail: %s }));", obj.toString());
+                                    getBridge().getWebView().evaluateJavascript(js, null);
+                                } catch (Exception ignored) {}
+                            }
+                        }
+                    }
+                }
+        );
 
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebView webView = getBridge().getWebView();
@@ -51,6 +90,19 @@ public class MainActivity extends BridgeActivity {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             settings.setDomStorageEnabled(true);
             webView.addJavascriptInterface(new PrahaJsBridge(), "PrahaNative");
+
+            FrameLayout root = findViewById(android.R.id.content);
+            if (root != null) {
+                vlcVideoLayout = new VLCVideoLayout(this);
+                vlcVideoLayout.setLayoutParams(new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                ));
+                vlcVideoLayout.setVisibility(View.GONE);
+                root.addView(vlcVideoLayout, 0);
+                vlcPlayer = new PrahaVlcPlayer(this);
+                vlcPlayer.init(vlcVideoLayout, webView);
+            }
         }
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -69,7 +121,18 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onPause() {
+        super.onPause();
+        if (vlcPlayer != null && vlcPlayer.isPlaying()) {
+            vlcPlayer.pause();
+        }
+    }
+
+    @Override
     public void onDestroy() {
+        if (vlcPlayer != null) {
+            vlcPlayer.release();
+        }
         streamProxy.stop();
         super.onDestroy();
     }
@@ -324,6 +387,160 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {
                 return false;
             }
+        }
+
+        @JavascriptInterface
+        public String getAllAudioTracks() {
+            if (vlcPlayer == null) return "[]";
+            return vlcPlayer.getAllAudioTracks();
+        }
+
+        @JavascriptInterface
+        public int getSelectedAudioTrack() {
+            if (vlcPlayer == null) return -1;
+            return vlcPlayer.getSelectedAudioTrack();
+        }
+
+        @JavascriptInterface
+        public boolean setAudioTrack(int id) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.setAudioTrack(id);
+        }
+
+        @JavascriptInterface
+        public String getAllSpuTracks() {
+            if (vlcPlayer == null) return "[]";
+            return vlcPlayer.getAllSpuTracks();
+        }
+
+        @JavascriptInterface
+        public int getSelectedSpuTrack() {
+            if (vlcPlayer == null) return -1;
+            return vlcPlayer.getSelectedSpuTrack();
+        }
+
+        @JavascriptInterface
+        public boolean setSpuTrack(int id) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.setSpuTrack(id);
+        }
+
+        @JavascriptInterface
+        public boolean addSlave(int type, String uri, boolean select) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.addSlave(type, uri, select);
+        }
+
+        @JavascriptInterface
+        public boolean setSpuDelay(long delayMicros) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.setSpuDelay(delayMicros);
+        }
+
+        @JavascriptInterface
+        public long getSpuDelay() {
+            if (vlcPlayer == null) return 0;
+            return vlcPlayer.getSpuDelay();
+        }
+
+        @JavascriptInterface
+        public boolean setAudioDelay(long delayMicros) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.setAudioDelay(delayMicros);
+        }
+
+        @JavascriptInterface
+        public long getAudioDelay() {
+            if (vlcPlayer == null) return 0;
+            return vlcPlayer.getAudioDelay();
+        }
+
+        @JavascriptInterface
+        public boolean openSubtitlePicker() {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    String[] mimeTypes = new String[]{
+                            "text/*",
+                            "application/x-subrip",
+                            "application/octet-stream",
+                            "text/vtt",
+                            "text/plain"
+                    };
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+                    subtitlePickerLauncher.launch(intent);
+                } catch (Exception ignored) {}
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean vlcPlay(String url, String headersJson, long resumeMs) {
+            if (vlcPlayer == null) return false;
+            runOnUiThread(() -> {
+                boolean ok = vlcPlayer.play(url, headersJson, resumeMs);
+                if (ok && getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().setBackgroundColor(Color.TRANSPARENT);
+                }
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public void vlcPause() {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.pause();
+            });
+        }
+
+        @JavascriptInterface
+        public void vlcResume() {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.resume();
+            });
+        }
+
+        @JavascriptInterface
+        public void vlcStop() {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.stop();
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().setBackgroundColor(Color.parseColor("#090A0C"));
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void vlcSeek(long timeMs) {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.seek(timeMs);
+            });
+        }
+
+        @JavascriptInterface
+        public void vlcSetVolume(int volume) {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.setVolume(volume);
+            });
+        }
+
+        @JavascriptInterface
+        public void vlcSetRate(float rate) {
+            runOnUiThread(() -> {
+                if (vlcPlayer != null) vlcPlayer.setRate(rate);
+            });
+        }
+
+        @JavascriptInterface
+        public boolean isVlcAvailable() {
+            return vlcPlayer != null && vlcPlayer.isAvailable();
+        }
+
+        @JavascriptInterface
+        public boolean isVlcPlaying() {
+            return vlcPlayer != null && vlcPlayer.isPlaying();
         }
 
         @JavascriptInterface

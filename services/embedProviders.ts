@@ -4,6 +4,14 @@ export interface EmbedProvider { id: string; name: string; movie: string; series
 
 // URL shapes based on each provider's published embed documentation, not live-verified streams.
 export const EMBED_PRESETS: EmbedProvider[] = [
+  { id: 'fourkhdhub', name: '4KHD Hub (4K UHD)', movie: 'https://4khdhub.one/embed/movie/{tmdb}', series: 'https://4khdhub.one/embed/tv/{tmdb}/{season}/{episode}' },
+  { id: 'movienight', name: 'MovieNight (4K HLS)', movie: 'https://movienig.ht/watch/movie/{tmdb}', series: 'https://movienig.ht/watch/tv/{tmdb}/{season}/{episode}' },
+  { id: 'videasy', name: 'Videasy (Multi-CDN)', movie: 'https://player.videasy.to/movie/{tmdb}', series: 'https://player.videasy.to/tv/{tmdb}/{season}/{episode}' },
+  { id: 'vidcore', name: 'VidCore', movie: 'https://vidcore.org/embed/movie/{tmdb}', series: 'https://vidcore.org/embed/tv/{tmdb}/{season}/{episode}' },
+  { id: 'flystream', name: 'FlyStream (4K HEVC)', movie: 'https://flystream.net/embed/movie/{tmdb}', series: 'https://flystream.net/embed/tv/{tmdb}/{season}/{episode}' },
+  { id: 'multiembed', name: 'MultiEmbed (2embed)', movie: 'https://www.2embed.cc/embed/{tmdb}', series: 'https://www.2embed.cc/embedtv/{tmdb}&s={season}&e={episode}' },
+  { id: 'vidsrc-me', name: 'VidSrc Me', movie: 'https://vidsrc.me/embed/movie/{tmdb}', series: 'https://vidsrc.me/embed/tv/{tmdb}/{season}/{episode}' },
+  { id: 'xdownloader', name: 'XDownloader (Films365)', movie: 'https://www.films365.org/embed/movie/{tmdb}', series: 'https://www.films365.org/embed/tv/{tmdb}/{season}/{episode}' },
   { id: 'vidlink', name: 'VidLink', movie: 'https://vidlink.pro/movie/{tmdb}', series: 'https://vidlink.pro/tv/{tmdb}/{season}/{episode}' },
   { id: 'vidrock', name: 'VidRock', movie: 'https://vidrock.net/movie/{id}', series: 'https://vidrock.net/tv/{id}/{season}/{episode}' },
   { id: 'vixsrc', name: 'VixSrc', movie: 'https://vixsrc.to/movie/{id}', series: 'https://vixsrc.to/tv/{id}/{season}/{episode}' },

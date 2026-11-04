@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import type { MediaInfo } from 'dashjs';
 import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
-import { enterNativeAndroidPip, setImmersiveFullscreen } from '../../services/androidBridge';
+import {
+  enterNativeAndroidPip, getNativeAudioTracks, getNativeSpuTracks,
+  getSelectedNativeAudioTrack, getSelectedNativeSpuTrack, isNativeVlcAvailable,
+  setImmersiveFullscreen, setNativeAudioTrack, setNativeSpuTrack,
+  setNativeSubtitleDelay,
+} from '../../services/androidBridge';
+import { formatAudioCodec, formatSubtitleCodec, resolveLanguageName } from '../../services/subtitleService';
 import { clamp } from './format';
 import { MAX_STALL_RETRIES, STABLE_PLAYBACK_SECONDS, stallAction } from './recovery';
 
@@ -15,7 +21,14 @@ export interface LevelOption {
 export interface TrackOption {
   id: string;
   label: string;
+  trackNumber?: number;
   language?: string;
+  languageName?: string | null;
+  codec?: string | null;
+  codecLabel?: string | null;
+  channels?: number;
+  bitrate?: number;
+  isExternal?: boolean;
   /** Set for subtitle tracks that hls.js owns (switched via `hls.subtitleTrack`). */
   hlsIndex?: number;
 }
@@ -164,11 +177,21 @@ export function useMpvEngine({
         bitrate: level.bitrate || undefined,
       }))));
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
-        setAudioTracks(data.audioTracks.map((track, index) => ({
-          id: `audio:${index}`,
-          label: track.name || track.lang || `Audio ${index + 1}`,
-          language: track.lang,
-        })));
+        setAudioTracks(data.audioTracks.map((track, index) => {
+          const lang = track.lang || undefined;
+          const langName = resolveLanguageName(lang);
+          const label = langName ? `${langName}${track.name && track.name !== langName ? ` (${track.name})` : ''}` : track.name || (data.audioTracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
+          const codec = (track as unknown as { audioCodec?: string }).audioCodec || undefined;
+          return {
+            id: `audio:${index}`,
+            label,
+            trackNumber: index + 1,
+            language: lang,
+            languageName: langName,
+            codec,
+            codecLabel: formatAudioCodec(codec),
+          };
+        }));
         if (data.audioTracks.length) setCurrentAudio(`audio:${hls.audioTrack >= 0 ? hls.audioTrack : 0}`);
       });
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_, data) => setCurrentAudio(`audio:${data.id}`));
@@ -201,7 +224,22 @@ export function useMpvEngine({
           const dashAny = dash as unknown as { getBitrateInfoListFor?: (type: string) => Array<{ qualityIndex: number; height?: number; bitrate?: number }> };
           const tracks = dash.getTracksFor('audio');
           const selected = dash.getCurrentTrackFor('audio');
-          setAudioTracks(tracks.map((track, index) => ({ id: `dash:${index}`, label: track.labels?.[0]?.text || track.lang || `Audio ${index + 1}`, language: track.lang || undefined })));
+          setAudioTracks(tracks.map((track, index) => {
+            const lang = track.lang || undefined;
+            const langName = resolveLanguageName(lang);
+            const rawLabel = track.labels?.[0]?.text || track.lang;
+            const label = langName ? `${langName}${rawLabel && rawLabel !== langName ? ` (${rawLabel})` : ''}` : rawLabel || (tracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
+            const codec = (track as unknown as { codec?: string }).codec || undefined;
+            return {
+              id: `dash:${index}`,
+              label,
+              trackNumber: index + 1,
+              language: lang,
+              languageName: langName,
+              codec,
+              codecLabel: formatAudioCodec(codec),
+            };
+          }));
           const selectedIndex = tracks.findIndex((track) => track === selected || (track.id != null && track.id === selected?.id));
           setCurrentAudio(selectedIndex >= 0 ? `dash:${selectedIndex}` : '');
           const bitrates = dashAny.getBitrateInfoListFor?.('video') || [];
@@ -337,6 +375,24 @@ export function useMpvEngine({
       }
     };
     const syncTextTracks = () => {
+      if (isNativeVlcAvailable()) {
+        const nativeSpus = getNativeSpuTracks();
+        if (nativeSpus.length > 0) {
+          const selected = getSelectedNativeSpuTrack();
+          setTextTracks(nativeSpus.map((t, idx) => ({
+            id: `vlc-spu:${t.id}`,
+            trackNumber: t.trackNumber || (idx + 1),
+            label: t.name || `Subtitle ${idx + 1}`,
+            language: t.language || undefined,
+            languageName: t.languageName || resolveLanguageName(t.language),
+            codec: t.codec || undefined,
+            codecLabel: t.codecLabel || formatSubtitleCodec(t.codec),
+            isExternal: Boolean(t.isExternal),
+          })));
+          setCurrentText(selected >= 0 ? `vlc-spu:${selected}` : '');
+          return;
+        }
+      }
       const list = video.textTracks;
       const options: TrackOption[] = [];
       let active = '';
@@ -344,11 +400,17 @@ export function useMpvEngine({
         const track = list[index];
         const hlsIndex = index - subtitles.length;
         const isHls = hlsIndex >= 0 && hlsRef.current?.subtitleTracks.length ? hlsIndex : undefined;
+        const lang = track.language || undefined;
+        const langName = resolveLanguageName(lang);
+        const label = langName ? `${langName}${track.label && track.label !== langName ? ` (${track.label})` : ''}` : track.label || (list.length > 1 ? `Subtitles ${index + 1}` : 'Subtitles');
         options.push({
           id: isHls !== undefined ? `hls:${hlsIndex}` : `text:${index}`,
-          label: track.label || track.language || `Subtitles ${index + 1}`,
-          language: track.language || undefined,
+          label,
+          trackNumber: index + 1,
+          language: lang,
+          languageName: langName,
           hlsIndex: isHls,
+          isExternal: index < subtitles.length,
         });
         if (track.mode === 'showing') active = options[options.length - 1].id;
       }
@@ -357,17 +419,83 @@ export function useMpvEngine({
     };
     const nativeTracks = (video as VideoWithAudioTracks).audioTracks;
     const syncNativeAudio = () => {
+      if (isNativeVlcAvailable()) {
+        const nativeAudios = getNativeAudioTracks();
+        if (nativeAudios.length > 0) {
+          const selected = getSelectedNativeAudioTrack();
+          setAudioTracks(nativeAudios.map((t, idx) => ({
+            id: `vlc-audio:${t.id}`,
+            trackNumber: t.trackNumber || (idx + 1),
+            label: t.name || (nativeAudios.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
+            language: t.language || undefined,
+            languageName: t.languageName || resolveLanguageName(t.language),
+            codec: t.codec || undefined,
+            codecLabel: t.codecLabel || formatAudioCodec(t.codec, t.channels),
+            channels: t.channels,
+            bitrate: t.bitrate,
+          })));
+          setCurrentAudio(selected >= 0 ? `vlc-audio:${selected}` : (selected === -1 ? 'audio:off' : ''));
+          return;
+        }
+      }
       if (hlsRef.current || dashRef.current || !nativeTracks) return;
       const options: TrackOption[] = [];
       let selected = '';
       for (let index = 0; index < nativeTracks.length; index++) {
         const track = nativeTracks[index];
-        options.push({ id: `native:${index}`, label: track.label || track.language || `Audio ${index + 1}`, language: track.language || undefined });
+        const lang = track.language || undefined;
+        const langName = resolveLanguageName(lang);
+        const label = langName || track.label || (nativeTracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
+        options.push({
+          id: `native:${index}`,
+          label,
+          trackNumber: index + 1,
+          language: lang,
+          languageName: langName,
+        });
         if (track.enabled) selected = `native:${index}`;
       }
       setAudioTracks(options);
       setCurrentAudio(selected);
     };
+
+    const onVlcTracks = (e: Event) => {
+      const custom = e as CustomEvent;
+      const detail = custom.detail;
+      if (!detail) return;
+      if (Array.isArray(detail.audioTracks)) {
+        setAudioTracks(detail.audioTracks.map((t: any, idx: number) => ({
+          id: `vlc-audio:${t.id}`,
+          trackNumber: t.trackNumber || (idx + 1),
+          label: t.name || (detail.audioTracks.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
+          language: t.language || undefined,
+          languageName: t.languageName || resolveLanguageName(t.language),
+          codec: t.codec || undefined,
+          codecLabel: t.codecLabel || formatAudioCodec(t.codec, t.channels),
+          channels: t.channels,
+          bitrate: t.bitrate,
+        })));
+        if (detail.selectedAudio !== undefined) {
+          setCurrentAudio(detail.selectedAudio >= 0 ? `vlc-audio:${detail.selectedAudio}` : (detail.selectedAudio === -1 ? 'audio:off' : ''));
+        }
+      }
+      if (Array.isArray(detail.spuTracks)) {
+        setTextTracks(detail.spuTracks.map((t: any, idx: number) => ({
+          id: `vlc-spu:${t.id}`,
+          trackNumber: t.trackNumber || (idx + 1),
+          label: t.name || `Subtitle ${idx + 1}`,
+          language: t.language || undefined,
+          languageName: t.languageName || resolveLanguageName(t.language),
+          codec: t.codec || undefined,
+          codecLabel: t.codecLabel || formatSubtitleCodec(t.codec),
+          isExternal: Boolean(t.isExternal),
+        })));
+        if (detail.selectedSpu !== undefined) {
+          setCurrentText(detail.selectedSpu >= 0 ? `vlc-spu:${detail.selectedSpu}` : '');
+        }
+      }
+    };
+    window.addEventListener('praha:vlc-tracks', onVlcTracks);
     nativeTracks?.addEventListener('addtrack', syncNativeAudio);
     nativeTracks?.addEventListener('removetrack', syncNativeAudio);
     nativeTracks?.addEventListener('change', syncNativeAudio);
@@ -430,6 +558,7 @@ export function useMpvEngine({
       video.textTracks.removeEventListener('addtrack', syncTextTracks);
       video.textTracks.removeEventListener('removetrack', syncTextTracks);
       video.textTracks.removeEventListener('change', syncTextTracks);
+      window.removeEventListener('praha:vlc-tracks', onVlcTracks);
     };
   }, [subtitles.length, initialTime]);
 
@@ -674,6 +803,27 @@ export function useMpvEngine({
   }, []);
 
   const selectAudio = useCallback((id: string) => {
+    if (id === 'audio:off' || id === 'off' || id === '-1') {
+      if (isNativeVlcAvailable()) {
+        setNativeAudioTrack(-1);
+      }
+      const tracks = (videoRef.current as VideoWithAudioTracks | null)?.audioTracks;
+      if (tracks) {
+        for (let i = 0; i < tracks.length; i++) tracks[i].enabled = false;
+      }
+      setCurrentAudio('audio:off');
+      return;
+    }
+
+    if (id.startsWith('vlc-audio:')) {
+      const vlcId = Number(id.slice(10));
+      if (Number.isInteger(vlcId)) {
+        setNativeAudioTrack(vlcId);
+        setCurrentAudio(id);
+      }
+      return;
+    }
+
     if (id.startsWith('audio:') && hlsRef.current) {
       const index = Number(id.slice(6));
       if (!Number.isInteger(index) || index < 0 || index >= hlsRef.current.audioTracks.length) return;
@@ -698,6 +848,29 @@ export function useMpvEngine({
   }, [audioTracks, currentAudio, selectAudio]);
 
   const selectText = useCallback((id: string) => {
+    if (id === '' || id === 'off') {
+      if (isNativeVlcAvailable()) {
+        setNativeSpuTrack(-1);
+      }
+      const video = videoRef.current;
+      if (video) {
+        const list = video.textTracks;
+        for (let i = 0; i < list.length; i++) list[i].mode = 'disabled';
+      }
+      if (hlsRef.current) hlsRef.current.subtitleTrack = -1;
+      setCurrentText('');
+      return;
+    }
+
+    if (id.startsWith('vlc-spu:')) {
+      const vlcId = Number(id.slice(8));
+      if (Number.isInteger(vlcId)) {
+        setNativeSpuTrack(vlcId);
+        setCurrentText(id);
+      }
+      return;
+    }
+
     const video = videoRef.current;
     if (!video) return;
     const list = video.textTracks;

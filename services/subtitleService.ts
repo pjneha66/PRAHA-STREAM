@@ -125,6 +125,102 @@ export async function prepareSubtitleUrl(subtitle: StreamSubtitle, offsetSeconds
   return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
 }
 
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English', eng: 'English',
+  hi: 'Hindi', hin: 'Hindi',
+  ja: 'Japanese', jpn: 'Japanese',
+  es: 'Spanish', spa: 'Spanish',
+  fr: 'French', fra: 'French', fre: 'French',
+  de: 'German', deu: 'German', ger: 'German',
+  it: 'Italian', ita: 'Italian',
+  pt: 'Portuguese', por: 'Portuguese',
+  ru: 'Russian', rus: 'Russian',
+  ko: 'Korean', kor: 'Korean',
+  zh: 'Chinese', zho: 'Chinese', chi: 'Chinese',
+  ar: 'Arabic', ara: 'Arabic',
+  ta: 'Tamil', tam: 'Tamil',
+  te: 'Telugu', tel: 'Telugu',
+  kn: 'Kannada', kan: 'Kannada',
+  ml: 'Malayalam', mal: 'Malayalam',
+  bn: 'Bengali', ben: 'Bengali',
+  pa: 'Punjabi', pan: 'Punjabi',
+  mr: 'Marathi', mar: 'Marathi',
+  gu: 'Gujarati', guj: 'Gujarati',
+  ur: 'Urdu', urd: 'Urdu',
+  fa: 'Persian', fas: 'Persian', per: 'Persian',
+  vi: 'Vietnamese', vie: 'Vietnamese',
+  th: 'Thai', tha: 'Thai',
+  id: 'Indonesian', ind: 'Indonesian',
+  ms: 'Malay', msa: 'Malay', may: 'Malay',
+  fil: 'Filipino', tgl: 'Tagalog',
+  pl: 'Polish', pol: 'Polish',
+  tr: 'Turkish', tur: 'Turkish',
+  uk: 'Ukrainian', ukr: 'Ukrainian',
+  nl: 'Dutch', nld: 'Dutch', dut: 'Dutch',
+  sv: 'Swedish', swe: 'Swedish',
+  no: 'Norwegian', nor: 'Norwegian',
+  da: 'Danish', dan: 'Danish',
+  fi: 'Finnish', fin: 'Finnish',
+  el: 'Greek', ell: 'Greek', gre: 'Greek',
+  cs: 'Czech', ces: 'Czech', cze: 'Czech',
+  hu: 'Hungarian', hun: 'Hungarian',
+  ro: 'Romanian', ron: 'Romanian', rum: 'Romanian',
+  he: 'Hebrew', heb: 'Hebrew',
+};
+
+export function resolveLanguageName(code?: string | null): string | null {
+  if (!code) return null;
+  const clean = code.trim().toLowerCase();
+  if (!clean || clean === 'und' || clean === 'unknown') return null;
+  if (LANGUAGE_NAMES[clean]) return LANGUAGE_NAMES[clean];
+  try {
+    if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+      const dn = new Intl.DisplayNames(['en'], { type: 'language' });
+      const resolved = dn.of(clean);
+      if (resolved && resolved.toLowerCase() !== clean) return resolved;
+    }
+  } catch {
+    // Ignore invalid language tags
+  }
+  return null;
+}
+
+export function formatAudioCodec(codec?: string | null, channels?: number): string {
+  if (!codec && !channels) return '';
+  const c = (codec || '').trim().toLowerCase();
+  let name = '';
+  if (c.includes('mp4a') || c.includes('aac')) name = 'AAC';
+  else if (c.includes('eac3') || c.includes('ec-3')) name = 'E-AC-3 (Dolby Digital+)';
+  else if (c.includes('ac-3') || c.includes('ac3')) name = 'AC-3 (Dolby Digital)';
+  else if (c.includes('dts')) name = 'DTS';
+  else if (c.includes('truehd') || c.includes('mlp')) name = 'TrueHD';
+  else if (c.includes('opus')) name = 'Opus';
+  else if (c.includes('flac')) name = 'FLAC';
+  else if (c.includes('vorb')) name = 'Vorbis';
+  else if (c.includes('mp3')) name = 'MP3';
+  else if (c) name = c.toUpperCase();
+
+  let chan = '';
+  if (channels === 1) chan = 'Mono';
+  else if (channels === 2) chan = 'Stereo';
+  else if (channels === 6) chan = '5.1';
+  else if (channels === 8) chan = '7.1';
+
+  if (name && chan) return `${name} · ${chan}`;
+  return name || chan;
+}
+
+export function formatSubtitleCodec(codec?: string | null): string {
+  if (!codec) return 'Subtitle';
+  const c = codec.trim().toLowerCase();
+  if (c.includes('pgs') || c.includes('bd_sub')) return 'PGS';
+  if (c.includes('vobsub') || c.includes('dvd') || c === 'spu') return 'VobSub';
+  if (c.includes('vtt')) return 'WebVTT';
+  if (c.includes('ssa') || c.includes('ass')) return 'ASS/SSA';
+  if (c.includes('srt') || c.includes('subrip') || c === 'subt') return 'SRT';
+  return codec.toUpperCase();
+}
+
 export async function parseLocalSubtitleFile(file: File): Promise<StreamSubtitle> {
   const content = await file.text();
   const vtt = convertToWebVtt(content, 0);

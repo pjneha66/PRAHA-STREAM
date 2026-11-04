@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'audiobooks' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -228,7 +228,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio';
+  sourceType: 'stremio' | 'nuvio' | 'playtorrio';
   quality?: string;
   size?: string;
   language?: string;
@@ -303,6 +303,9 @@ export interface DiscoverFilters {
 export type PlayerThemeId =
   | 'mpvrx' | 'amoled' | 'catppuccin' | 'nord' | 'tokyo' | 'dracula' | 'gruvbox' | 'rosepine';
 
+export type SubtitleOutline = 'none' | 'thin' | 'medium' | 'thick' | 'shadow';
+export type SubtitlePosition = 'bottom' | 'top' | 'middle';
+
 /** Settings for the built-in mpvRx-style player. Persisted with the rest of the app. */
 export interface PlayerSettings {
   /** Color scheme for the on-screen controller, inspired by mpvRx themes. */
@@ -319,6 +322,12 @@ export interface PlayerSettings {
   subtitleOffset: number;
   /** Subtitle background opacity (0 - 100). */
   subtitleBgOpacity: number;
+  /** Subtitle background color hex. */
+  subtitleBgColor?: string;
+  /** Subtitle text outline style. */
+  subtitleOutline?: SubtitleOutline;
+  /** Subtitle screen position (bottom, top, middle). */
+  subtitlePosition?: SubtitlePosition;
   /** Show the mpv-style statistics overlay on startup. */
   stats: boolean;
   /** Enable touch gestures (double-tap seek, swipe volume/brightness, long-press speed). */

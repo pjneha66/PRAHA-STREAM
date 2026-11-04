@@ -226,12 +226,14 @@ describe('Jellyfin connection URL', () => {
 describe('embedded provider templates', () => {
   it('constructs movie and episode URLs without mixing them into sources', async () => {
     const { EMBED_PRESETS, buildEmbedUrl } = await import('../services/embedProviders');
+    const vidlink = EMBED_PRESETS.find((p) => p.id === 'vidlink')!;
+    const vidrock = EMBED_PRESETS.find((p) => p.id === 'vidrock')!;
     const movie = { id: 'tmdb:550', tmdbId: 550, type: 'movie' } as any;
     const series = { id: 'tt0903747', imdbId: 'tt0903747', type: 'series' } as any;
-    expect(buildEmbedUrl(EMBED_PRESETS[0], movie)).toBe('https://vidlink.pro/movie/550');
-    expect(buildEmbedUrl(EMBED_PRESETS[1], series, 2, 3)).toBe('https://vidrock.net/tv/tt0903747/2/3');
-    expect(() => buildEmbedUrl(EMBED_PRESETS[0], series, 2, 3)).toThrow(/TMDB or IMDb ID/);
-    expect(() => buildEmbedUrl(EMBED_PRESETS[1], series, 0, 1)).toThrow(/positive/);
+    expect(buildEmbedUrl(vidlink, movie)).toBe('https://vidlink.pro/movie/550');
+    expect(buildEmbedUrl(vidrock, series, 2, 3)).toBe('https://vidrock.net/tv/tt0903747/2/3');
+    expect(() => buildEmbedUrl(vidlink, series, 2, 3)).toThrow(/TMDB or IMDb ID/);
+    expect(() => buildEmbedUrl(vidrock, series, 0, 1)).toThrow(/positive/);
   });
   it('rejects unsafe or malformed custom templates', async () => {
     const { validateEmbedTemplate } = await import('../services/embedProviders');
