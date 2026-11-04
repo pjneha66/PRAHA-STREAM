@@ -2047,3 +2047,48 @@ html.dpad-mode select:focus {
   .flow-detail-actions .button { flex: 1 1 100%; }
   .flow-related img, .flow-related-placeholder { width: 88px; height: 50px; }
 }
+
+/* ---------- Flow tab: subscribe affordances, LIVE badge, in-player bar ---------- */
+.flow-card-live { position: absolute; left: 7px; top: 7px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 5px; background: #d64545; color: #fff; font-size: 7.5px; font-weight: 800; letter-spacing: .8px; }
+.flow-card-live::before { content: ''; width: 4px; height: 4px; border-radius: 999px; background: #fff; }
+.flow-card-channel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.flow-subscribe { display: inline-flex; align-items: center; gap: 5px; height: 27px; padding: 0 11px; border: 1px solid rgba(var(--accent-rgb), .35); border-radius: 999px; background: rgba(var(--accent-rgb), .12); color: var(--accent); font-size: 8.5px; font-weight: 750; white-space: nowrap; transition: background .18s, color .18s, border-color .18s; }
+.flow-subscribe:hover { background: rgba(var(--accent-rgb), .2); }
+.flow-subscribe.subscribed { border-color: var(--line-strong); background: var(--surface-2); color: #b9bfc5; }
+.flow-subscribe.subscribed:hover { border-color: rgba(213, 108, 96, .35); color: #d99a92; }
+
+.flow-channels-inline { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 9px; }
+.flow-channel-pill { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: transparent; }
+.flow-channel-pill:hover { border-color: var(--line-strong); background: var(--surface); }
+.flow-channel-pill-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; padding: 0; background: none; text-align: left; }
+.flow-channel-pill-main img, .flow-channel-pill-main .flow-channel-initial { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; object-fit: cover; }
+.flow-channel-pill-main > span { display: flex; min-width: 0; flex-direction: column; }
+.flow-channel-pill-main strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.flow-channel-pill-main small { color: var(--muted-2); font-size: 8px; }
+
+/* YouTube-style channel bar overlaid at the bottom of the player */
+.flow-inplayer-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 9px 13px; background: linear-gradient(to top, rgba(4, 5, 6, .94), rgba(4, 5, 6, 0)); }
+.flow-inplayer-channel { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.flow-inplayer-channel img, .flow-inplayer-channel .flow-channel-initial { width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid rgba(255, 255, 255, .16); border-radius: 999px; object-fit: cover; }
+.flow-inplayer-channel > span { display: flex; min-width: 0; flex-direction: column; }
+.flow-inplayer-channel strong { overflow: hidden; color: #fff; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.flow-inplayer-channel small { color: #b3b9bf; font-size: 8px; }
+.flow-inplayer-bar .flow-subscribe { height: 30px; padding: 0 14px; font-size: 9px; }
+
+.flow-related { display: flex; align-items: flex-start; gap: 9px; padding: 2px; border-radius: 10px; background: none; text-align: left; }
+.flow-related-art { position: relative; flex: 0 0 auto; width: 108px; height: 61px; }
+.flow-related-art img { width: 100%; height: 100%; border-radius: 8px; object-fit: cover; background: #11151a; }
+.flow-related-art > svg { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border-radius: 8px; background: #11151a; color: var(--muted-2); padding: 20px; box-sizing: border-box; }
+.flow-related-art small { position: absolute; right: 4px; bottom: 4px; padding: 1px 5px; border-radius: 4px; background: rgba(4, 5, 6, .85); color: #e9edf0; font-size: 7px; font-weight: 700; }
+.flow-related > span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+
+@media (max-width: 640px) {
+  .flow-channels-inline { grid-template-columns: 1fr; }
+  .flow-related-art { width: 92px; height: 52px; }
+}
+
+.flow-stage-note { position: absolute; left: 10px; right: 10px; top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 8px 11px; border: 1px solid rgba(213, 108, 96, .35); border-radius: 10px; background: rgba(10, 12, 13, .92); color: #d8b0aa; font-size: 8.5px; line-height: 1.5; backdrop-filter: blur(10px); }
+.flow-stage-note > span { flex: 1; min-width: 160px; }
+.flow-stage-note > button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-2); color: #d9dce0; font-size: 8px; }
+.flow-stage-note > button:hover { background: var(--surface-3); }

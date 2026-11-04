@@ -9,7 +9,8 @@ import {
   youtubeEmbedUrl, youtubeWatchUrl,
 } from '../services/youtubeService';
 import {
-  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, normalizeMirrorUrl, pipedVideo, readMirrors, withMirrorFallback,
+  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, isMusicVideo, normalizeMirrorUrl,
+  pipedVideo, readMirrors, relativeTime, withMirrorFallback,
 } from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
@@ -125,10 +126,15 @@ describe('Flow tab mirror tier', () => {
     expect(mirror).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces the YouTube error when both tiers fail', async () => {
+  it('reports both tiers when they both fail', async () => {
     const direct = vi.fn(() => Promise.reject(new Error('YouTube responded with 500.')));
     const mirror = vi.fn(() => Promise.reject(new Error('mirror down')));
-    await expect(withMirrorFallback(direct, mirror)).rejects.toThrow('YouTube responded with 500.');
+    await expect(withMirrorFallback(direct, mirror)).rejects.toThrow('YouTube responded with 500. Mirrors: mirror down.');
+  });
+
+  it('turns opaque browser network errors into an explanation', () => {
+    expect(describeFailure(new TypeError('Failed to fetch'))).toBe('the request was blocked before it reached the server (CORS or offline)');
+    expect(describeFailure(new Error('YouTube responded with 500.'))).toBe('YouTube responded with 500');
   });
 
   it('reads the mirror list from storage and prefers the last healthy one', () => {
@@ -137,5 +143,40 @@ describe('Flow tab mirror tier', () => {
     window.localStorage.setItem(MIRROR_STORAGE_KEY, 'not json');
     expect(readMirrors().length).toBe(DEFAULT_MIRRORS.length);
     window.localStorage.removeItem(MIRROR_STORAGE_KEY);
+  });
+});
+
+describe('Flow tab music + published-date fixes', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('never renders the epoch-zero date Piped sends for some rows', () => {
+    const video = pipedVideo({ url: '/watch?v=dQw4w9WgXcQ', title: 'x', uploaded: 0, uploadedDate: '' });
+    expect(video?.published).toBeUndefined();
+    expect(relativeTime(0)).toBeUndefined();
+    expect(relativeTime(null)).toBeUndefined();
+    expect(relativeTime(undefined)).toBeUndefined();
+    expect(relativeTime(Date.now() / 1000 - 90)).toBe('1 minute ago');
+  });
+
+  it('keeps the human-readable date when the mirror sends one', () => {
+    expect(pipedVideo({ url: '/watch?v=dQw4w9WgXcQ', title: 'x', uploadedDate: '2 days ago' })?.published).toBe('2 days ago');
+  });
+
+  it('flags live rows instead of pretending they have a length', () => {
+    const live = pipedVideo({ url: '/watch?v=dQw4w9WgXcQ', title: 'Live', duration: -1, livestream: true });
+    expect(live?.live).toBe(true);
+    expect(live?.duration).toBeUndefined();
+  });
+
+  it('filters the Music tab down to songs only', () => {
+    const song = { id: 'dQw4w9WgXcQ', title: 'Song', duration: '3:33' };
+    const news = { id: 'aaaaaaaaaaa', title: 'Election night live', duration: '0:00' };
+    const live = { id: 'bbbbbbbbbbb', title: 'Live news', duration: '1:00', live: true };
+    expect(isMusicVideo(song)).toBe(true);
+    expect(isMusicVideo(news)).toBe(false);
+    expect(isMusicVideo(live)).toBe(false);
+    expect(isMusicVideo({ id: 'ccccccccccc', title: 'Clip', duration: '0:29' })).toBe(false);
+    expect(durationSeconds('1:02:03')).toBe(3723);
+    expect(durationSeconds(undefined)).toBe(0);
   });
 });

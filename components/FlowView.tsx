@@ -1,9 +1,8 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ChevronRight, CircleAlert, Clock, ExternalLink, Eye, Film, ListMusic, LoaderCircle,
-  MessageCircle, Music, Play, Plus, Radio, RefreshCw, Search, Trash2, Video, X,
+  Bell, BellRing, Check, ChevronRight, CircleAlert, Clock, ExternalLink, Film, ListMusic,
+  LoaderCircle, Music, Play, Plus, Radio, RefreshCw, Search, Share2, Trash2, Video, X,
 } from 'lucide-react';
-import type { MediaItem, StreamResult } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openSafeExternalUrl } from '../services/androidBridge';
 import {
@@ -12,47 +11,63 @@ import {
   type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult, type YtShelf, type YtVideo,
 } from '../services/youtubeService';
 import {
-  DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowSearch, normalizeMirrorUrl,
-  youtubeMedia, youtubeStream, type FlowVideoRef, type YtBackend,
+  DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowMusicHome, flowMusicSearch, flowSearch,
+  isMusicVideo, normalizeMirrorUrl, youtubeMedia, youtubeStream,
+  type FlowVideoRef, type YtBackend,
 } from '../services/flowService';
 
 /**
  * Flow tab — a privacy-first YouTube / YouTube Music browser modelled after
- * https://github.com/Flow-Tube/Flow. It reads YouTube's own key-free data (no
- * account, no API key, nothing sent to a third party), plays audio inside
- * PRAHA's native player, and can hand a video to the embedded player or the
- * Flow Android app.
+ * https://github.com/Flow-Tube/Flow. It reads YouTube's key-free data (no
+ * account, no API key), keeps subscriptions locally, plays audio in PRAHA's
+ * player, and opens videos in a cookie-less embed.
  */
 
 type FlowTab = 'home' | 'search' | 'music' | 'channels';
 type FlowVideo = FlowVideoRef;
 
+interface FlowSubscription {
+  id: string;
+  name: string;
+  avatar?: string;
+  addedAt: number;
+}
+
 const FLOW_RELEASES = 'https://github.com/Flow-Tube/Flow/releases/latest';
 const FLOW_REPO = 'https://github.com/Flow-Tube/Flow';
+const SUBS_KEY = 'praha.v2.flow-subscriptions';
+const LEGACY_CHANNELS_KEY = 'praha.v2.flow-channels';
 
-const VideoCard: React.FC<{ video: FlowVideo; onOpen: () => void; radio?: boolean }> = ({ video, onOpen, radio }) => (
-  <article className="flow-card">
-    <button className="flow-card-art" onClick={onOpen} aria-label={`Play ${video.title}`}>
-      {video.thumbnail
-        ? <img src={video.thumbnail} alt="" loading="lazy" />
-        : <span className="flow-card-placeholder"><Video size={22} /></span>}
-      {video.duration && <span className="flow-card-time">{video.duration}</span>}
-      <span className="flow-card-play"><Play size={18} fill="currentColor" /></span>
-    </button>
-    <button className="flow-card-copy" onClick={onOpen}>
-      <strong title={video.title}>{video.title}</strong>
-      <span>{video.channel || 'YouTube'}</span>
-      <small>{[video.views, video.published].filter(Boolean).join(' · ') || (radio ? 'Radio' : 'YouTube')}</small>
-    </button>
-  </article>
-);
+const MUSIC_MOODS = ['Lo-fi beats', 'Jazz playlist', 'Synthwave mix', 'Live sessions', 'Music videos 4K'];
 
-const Shelf: React.FC<{ shelf: YtShelf; onOpen: (video: YtVideo) => void }> = ({ shelf, onOpen }) => (
+const VideoCard: React.FC<{ video: FlowVideo; onOpen: () => void }> = ({ video, onOpen }) => {
+  const meta = [video.views, video.published].filter(Boolean).join(' · ');
+  return (
+    <article className="flow-card">
+      <button className="flow-card-art" onClick={onOpen} aria-label={`Play ${video.title}`}>
+        {video.thumbnail
+          ? <img src={video.thumbnail} alt="" loading="lazy" />
+          : <span className="flow-card-placeholder"><Video size={22} /></span>}
+        {video.live
+          ? <span className="flow-card-live">LIVE</span>
+          : video.duration && <span className="flow-card-time">{video.duration}</span>}
+        <span className="flow-card-play"><Play size={18} fill="currentColor" /></span>
+      </button>
+      <button className="flow-card-copy" onClick={onOpen}>
+        <strong title={video.title}>{video.title}</strong>
+        <span className="flow-card-channel">{video.channel || 'YouTube'}</span>
+        {meta && <small>{meta}</small>}
+      </button>
+    </article>
+  );
+};
+
+const Shelf: React.FC<{ shelf: YtShelf; onOpen: (video: YtVideo) => void; note?: string }> = ({ shelf, onOpen, note }) => (
   <section className="flow-shelf">
     <div className="section-heading">
       <div>
         <h2>{shelf.title}</h2>
-        <p>{shelf.videos.length} video{shelf.videos.length === 1 ? '' : 's'} · recommendations computed by YouTube, streamed without an account</p>
+        <p>{note || `${shelf.videos.length} video${shelf.videos.length === 1 ? '' : 's'} · streamed without an account`}</p>
       </div>
     </div>
     <div className="flow-row">
@@ -64,31 +79,39 @@ const Shelf: React.FC<{ shelf: YtShelf; onOpen: (video: YtVideo) => void }> = ({
 );
 
 interface FlowViewProps {
-  onPlay: (media: MediaItem, stream: StreamResult) => void;
-  onEmbed: (media: MediaItem) => void;
+  onPlay: (media: ReturnType<typeof youtubeMedia>, stream: ReturnType<typeof youtubeStream>) => void;
+  onEmbed: (media: ReturnType<typeof youtubeMedia>) => void;
   compact?: boolean;
 }
 
 const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [tab, setTab] = useState<FlowTab>('home');
+  const [backend, setBackend] = useState<YtBackend | null>(null);
 
+  /* ---------------- home ---------------- */
   const [home, setHome] = useState<YtHome | null>(null);
   const [homeState, setHomeState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [homeError, setHomeError] = useState('');
   const [homeAttempt, setHomeAttempt] = useState(0);
-  const [backend, setBackend] = useState<YtBackend | null>(null);
-  const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
-  const [mirrorDraft, setMirrorDraft] = useState('');
-  const [mirrorError, setMirrorError] = useState('');
-  const [showMirrors, setShowMirrors] = useState(false);
 
+  /* ---------------- search ---------------- */
   const [term, setTerm] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [results, setResults] = useState<YtSearchResult | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
 
-  const [channels, setChannels] = usePersistentState<string[]>('praha.v2.flow-channels', ['UCXuqSBlHAE6Xw-yeJA0Tunw']);
+  /* ---------------- music ---------------- */
+  const [musicHome, setMusicHome] = useState<YtHome | null>(null);
+  const [musicState, setMusicState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [musicError, setMusicError] = useState('');
+  const [musicTerm, setMusicTerm] = useState('');
+  const [musicQuery, setMusicQuery] = useState('');
+  const [musicResults, setMusicResults] = useState<YtSearchResult | null>(null);
+  const [musicSearching, setMusicSearching] = useState(false);
+
+  /* ---------------- subscriptions ---------------- */
+  const [subs, setSubs] = usePersistentState<FlowSubscription[]>(SUBS_KEY, []);
   const [channelDraft, setChannelDraft] = useState('');
   const [channelError, setChannelError] = useState('');
   const [feed, setFeed] = useState<YtChannelFeed | null>(null);
@@ -96,17 +119,53 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [feedState, setFeedState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [feedError, setFeedError] = useState('');
 
+  /* ---------------- detail ---------------- */
   const [detail, setDetail] = useState<YtDetail | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [detailError, setDetailError] = useState('');
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  /* ---------------- mirrors ---------------- */
+  const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
+  const [mirrorDraft, setMirrorDraft] = useState('');
+  const [mirrorError, setMirrorError] = useState('');
+  const [showMirrors, setShowMirrors] = useState(false);
 
   const [radioOn, setRadioOn] = useState(false);
   const android = isAndroidApp();
 
-  /* ---------------- home ---------------- */
+  const isSubscribed = useCallback((id?: string) => Boolean(id && subs.some((entry) => entry.id === id)), [subs]);
+
+  const toggleSubscribe = (channel: { id?: string; name?: string; avatar?: string }) => {
+    if (!channel.id) return;
+    const id = channel.id;
+    setSubs((current) => (current.some((entry) => entry.id === id)
+      ? current.filter((entry) => entry.id !== id)
+      : [{ id, name: channel.name || id, avatar: channel.avatar, addedAt: Date.now() }, ...current]));
+  };
+
+  /* ---------------- legacy migration: followed channels → subscriptions ---------------- */
   useEffect(() => {
-    if (tab !== 'home' && tab !== 'music' && tab !== 'search' && tab !== 'channels') return;
+    try {
+      const raw = window.localStorage.getItem(LEGACY_CHANNELS_KEY);
+      if (!raw) return;
+      const legacy = JSON.parse(raw) as unknown;
+      if (!Array.isArray(legacy)) return;
+      setSubs((current) => {
+        const known = new Set(current.map((entry) => entry.id));
+        const additions = legacy
+          .filter((id): id is string => typeof id === 'string' && !known.has(id))
+          .map((id) => ({ id, name: id, addedAt: Date.now() }));
+        return additions.length ? [...additions, ...current] : current;
+      });
+    } catch { /* ignore unreadable legacy storage */ }
+    // Runs once on mount; the setter is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------- home load ---------------- */
+  useEffect(() => {
     let active = true;
     setHomeState((state) => (state === 'ready' ? state : 'loading'));
     setHomeError('');
@@ -123,7 +182,28 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
         setHomeError(error instanceof Error ? error.message : 'Could not reach YouTube.');
       });
     return () => { active = false; };
-  }, [homeAttempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [homeAttempt]);
+
+  /* ---------------- music load ---------------- */
+  useEffect(() => {
+    if (tab !== 'music') return;
+    let active = true;
+    setMusicState((state) => (state === 'ready' ? state : 'loading'));
+    setMusicError('');
+    flowMusicHome()
+      .then(({ data, backend: source }) => {
+        if (!active) return;
+        setMusicHome(data);
+        setBackend(source);
+        setMusicState('ready');
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setMusicState('error');
+        setMusicError(error instanceof Error ? error.message : 'Could not load music.');
+      });
+    return () => { active = false; };
+  }, [tab, homeAttempt]);
 
   /* ---------------- search ---------------- */
   useEffect(() => {
@@ -142,7 +222,23 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     return () => { active = false; };
   }, [submitted]);
 
-  /* ---------------- channel ---------------- */
+  /* ---------------- music search ---------------- */
+  useEffect(() => {
+    if (!musicQuery) return;
+    let active = true;
+    setMusicSearching(true);
+    flowMusicSearch(musicQuery)
+      .then(({ data, backend: source }) => {
+        if (!active) return;
+        setMusicResults({ ...data, videos: data.videos.filter(isMusicVideo) });
+        setBackend(source);
+      })
+      .catch(() => { if (active) setMusicResults({ videos: [], channels: [] }); })
+      .finally(() => { if (active) setMusicSearching(false); });
+    return () => { active = false; };
+  }, [musicQuery]);
+
+  /* ---------------- channel feed ---------------- */
   const loadChannel = useCallback((id: string) => {
     setFeedId(id);
     setFeedState('loading');
@@ -157,9 +253,9 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   }, []);
 
   useEffect(() => {
-    if (tab !== 'channels' || feedId || !channels.length) return;
-    loadChannel(channels[0]);
-  }, [tab, feedId, channels, loadChannel]);
+    if (tab !== 'channels' || feedId || !subs.length) return;
+    loadChannel(subs[0].id);
+  }, [tab, feedId, subs, loadChannel]);
 
   /* ---------------- detail ---------------- */
   const openVideo = useCallback((video: FlowVideo | string) => {
@@ -168,6 +264,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setDetailState('loading');
     setDetailError('');
     setDetail(null);
+    setCopied(false);
     flowDetail(id)
       .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
@@ -178,7 +275,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   const closeDetail = () => { setDetailId(null); setDetail(null); setDetailState('idle'); setDetailError(''); };
 
-  /** Audio-only playback through PRAHA's player, with the embed as a fallback. */
+  /** Audio-only playback through PRAHA's player; the embed stays available beside it. */
   const playAudio = (video: YtDetail | FlowVideo) => {
     const media = youtubeMedia(video as FlowVideo, 'youtube');
     const stream = youtubeStream(video as FlowVideo);
@@ -191,20 +288,33 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     onPlay(media, stream);
   };
 
+  const shareVideo = async (id: string) => {
+    const url = youtubeWatchUrl(id);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      openSafeExternalUrl(url);
+    }
+  };
+
   /* ---------------- derived ---------------- */
-  const trending: YtShelf | null = useMemo(() => home?.shelves[0] || null, [home]);
+  const trending = useMemo(() => home?.shelves[0] || null, [home]);
   const shelves = useMemo(() => home?.shelves.slice(1) || [], [home]);
-  const musicShelf = useMemo(() => {
-    if (!home) return null;
-    const match = home.shelves.find((shelf) => /music|mix|song|album|playlist|radio/i.test(shelf.title));
-    return match || home.shelves[home.shelves.length - 1] || null;
-  }, [home]);
 
   const submitSearch = (event?: FormEvent) => {
     event?.preventDefault();
     const cleaned = term.trim();
     if (!cleaned) return;
     setSubmitted(cleaned);
+  };
+
+  const submitMusicSearch = (event?: FormEvent) => {
+    event?.preventDefault();
+    const cleaned = musicTerm.trim();
+    if (!cleaned) return;
+    setMusicQuery(cleaned);
   };
 
   const searchVideoId = () => {
@@ -216,7 +326,9 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setChannelError('');
     try {
       const id = await resolveChannelId(channelDraft || '');
-      setChannels((current) => (current.includes(id) ? current : [id, ...current]));
+      if (!isSubscribed(id)) {
+        setSubs((current) => [{ id, name: channelDraft.replace(/^.*\/channel\//, '') || id, addedAt: Date.now() }, ...current]);
+      }
       setChannelDraft('');
       setFeed(null);
       loadChannel(id);
@@ -225,17 +337,21 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     }
   };
 
-  const removeChannel = (id: string) => {
-    setChannels((current) => current.filter((entry) => entry !== id));
+  const unsubscribe = (id: string) => {
+    setSubs((current) => current.filter((entry) => entry.id !== id));
     if (feedId === id) { setFeedId(null); setFeed(null); setFeedState('idle'); }
   };
 
   const tabs: Array<{ id: FlowTab; label: string; subtitle: string; icon: typeof Video }> = [
     { id: 'home', label: 'Home', subtitle: 'Recommendations & trending', icon: Video },
     { id: 'search', label: 'Search', subtitle: 'Videos & channels', icon: Search },
-    { id: 'music', label: 'Music', subtitle: 'Songs, mixes & radio', icon: Music },
-    { id: 'channels', label: 'Channels', subtitle: 'Subscribe without an account', icon: ListMusic },
+    { id: 'music', label: 'Music', subtitle: 'Songs & mixes only', icon: Music },
+    { id: 'channels', label: 'Subscriptions', subtitle: 'Channels you follow', icon: ListMusic },
   ];
+
+  const detailChannel = detail
+    ? { id: detail.channelId, name: detail.channel, avatar: detail.channelAvatar }
+    : null;
 
   return (
     <div className="standard-page flow-page page-enter">
@@ -244,8 +360,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           <span className="page-kicker"><Radio size={14} /> FLOW · YOUTUBE WITHOUT THE TRACKING</span>
           <h1>YouTube, on your terms</h1>
           <p>
-            Browse recommendations, search, follow channels, and listen to YouTube or YouTube Music
-            audio in PRAHA's player. Data comes straight from YouTube's key-free endpoints — no
+            Browse recommendations, search, subscribe to channels, and listen to YouTube or YouTube
+            Music audio in PRAHA's player. Data comes straight from YouTube's key-free endpoints — no
             account, no API key, and nothing handed to a third-party proxy.
           </p>
           <div className="flow-hero-actions">
@@ -275,14 +391,14 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
         </div>
         <div className="flow-hero-side">
           <span className="flow-badge"><Film size={13} /> Flow tab</span>
-          <p>Plays in PRAHA's native player, opens in the built-in embed, or hands off to the Flow app.</p>
+          <p>{subs.length} subscription{subs.length === 1 ? '' : 's'} stored on this device only.</p>
           <span className={`flow-source-state ${backend || 'unknown'}`}>
             <span className="status-dot" />
             {backend === 'youtube'
               ? 'Served by YouTube directly'
               : backend === 'mirror'
-                ? 'YouTube blocked — using a Piped mirror'
-                : 'YouTube API blocked — trying mirrors…'}
+                ? 'YouTube blocked — using a mirror'
+                : 'Checking data sources…'}
           </span>
           {homeState === 'error' && (
             <button className="flow-link-button" onClick={() => setHomeAttempt((n) => n + 1)}>Retry YouTube</button>
@@ -292,7 +408,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           </button>
           {showMirrors && (
             <div className="flow-mirrors">
-              <p>YouTube’s key-free API sometimes refuses requests. These Piped / Invidious API mirrors are only used when that happens.</p>
+              <p>YouTube’s key-free API sometimes refuses requests. These Piped / Invidious mirrors are only used when that happens.</p>
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -311,9 +427,9 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   value={mirrorDraft}
                   onChange={(event) => setMirrorDraft(event.target.value)}
                   placeholder="https://pipedapi.example.com"
-                  aria-label="Add a Piped mirror"
+                  aria-label="Add a mirror"
                 />
-                <button type="submit" className="button button-secondary"><Plus size={14} /></button>
+                <button type="submit" className="button button-secondary" aria-label="Add mirror"><Plus size={14} /></button>
               </form>
               {mirrorError && <p className="flow-channel-error"><CircleAlert size={12} /> {mirrorError}</p>}
               {mirrors.map((mirror) => (
@@ -328,11 +444,6 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 Reset to defaults
               </button>
             </div>
-          )}
-          {android && (
-            <button className="button button-secondary" onClick={() => openSafeExternalUrl(FLOW_RELEASES)}>
-              Open Flow on this device <ExternalLink size={14} />
-            </button>
           )}
         </div>
       </div>
@@ -350,6 +461,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             >
               <Icon size={18} />
               <span>{item.label}<small>{item.subtitle}</small></span>
+              {item.id === 'channels' && subs.length > 0 && <b>{subs.length}</b>}
             </button>
           );
         })}
@@ -364,14 +476,16 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <div className="empty-state explore-empty">
               <span><CircleAlert size={28} /></span>
               <h2>YouTube did not answer</h2>
-              <p>{homeError} YouTube rate-limits key-free requests and every configured mirror failed. Add another mirror below, or retry in a minute.</p>
+              <p>{homeError} YouTube rate-limits key-free requests and every configured mirror failed. Add another mirror under Mirror settings, or retry in a minute.</p>
               <button className="button button-primary" onClick={() => setHomeAttempt((n) => n + 1)}>
                 <RefreshCw size={15} /> Try again
               </button>
             </div>
           )}
           {homeState === 'ready' && trending && <Shelf shelf={trending} onOpen={(video) => openVideo(video)} />}
-          {homeState === 'ready' && shelves.map((shelf) => <Shelf key={shelf.id} shelf={shelf} onOpen={(video) => openVideo(video)} />)}
+          {homeState === 'ready' && shelves.map((shelf) => (
+            <Shelf key={shelf.id} shelf={shelf} onOpen={(video) => openVideo(video)} />
+          ))}
         </div>
       )}
 
@@ -407,34 +521,40 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <>
               {results.channels.length > 0 && (
                 <section className="flow-shelf">
-                  <div className="section-heading"><div><h2>Channels</h2><p>Follow a channel to see its uploads without subscribing.</p></div></div>
+                  <div className="section-heading"><div><h2>Channels</h2><p>Subscribe to see a channel's uploads without an account.</p></div></div>
                   <div className="flow-channels-inline">
-                    {results.channels.slice(0, 8).map((channel) => (
-                      <button
-                        key={channel.id}
-                        className="flow-channel-pill"
-                        onClick={() => {
-                          setChannels((current) => (current.includes(channel.id) ? current : [channel.id, ...current]));
-                          setFeed(null);
-                          loadChannel(channel.id);
-                          setTab('channels');
-                        }}
-                      >
-                        {channel.thumbnail ? <img src={channel.thumbnail} alt="" loading="lazy" /> : <span className="flow-channel-initial">{channel.name.charAt(0)}</span>}
-                        <span>
-                          <strong>{channel.name}</strong>
-                          <small>{channel.subscribers || channel.handle || 'Channel'}</small>
-                        </span>
-                        <Plus size={14} />
-                      </button>
-                    ))}
+                    {results.channels.slice(0, 8).map((channel) => {
+                      const subscribed = isSubscribed(channel.id);
+                      return (
+                        <div key={channel.id} className="flow-channel-pill">
+                          <button
+                            className="flow-channel-pill-main"
+                            onClick={() => { setFeed(null); loadChannel(channel.id); setTab('channels'); }}
+                          >
+                            {channel.thumbnail
+                              ? <img src={channel.thumbnail} alt="" loading="lazy" />
+                              : <span className="flow-channel-initial">{channel.name.charAt(0)}</span>}
+                            <span>
+                              <strong>{channel.name}</strong>
+                              <small>{channel.subscribers || channel.handle || 'Channel'}</small>
+                            </span>
+                          </button>
+                          <button
+                            className={`flow-subscribe ${subscribed ? 'subscribed' : ''}`}
+                            onClick={() => toggleSubscribe({ id: channel.id, name: channel.name, avatar: channel.thumbnail })}
+                          >
+                            {subscribed ? <><Check size={12} /> Subscribed</> : <><Plus size={12} /> Subscribe</>}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
               )}
               {results.videos.length > 0 ? (
                 <section className="flow-shelf">
                   <div className="section-heading"><div><h2>Videos for “{submitted}”</h2><p>{results.videos.length} results</p></div></div>
-                  <div className="flow-row">
+                  <div className="flow-grid">
                     {results.videos.map((video) => (
                       <VideoCard key={video.id} video={video} onOpen={() => openVideo(video)} />
                     ))}
@@ -460,50 +580,80 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           <div className="flow-music-banner">
             <span className="flow-source-icon"><Music size={20} /></span>
             <div>
-              <strong>YouTube Music audio</strong>
-              <p>Every video can play audio-only in PRAHA's player, so mixes and albums keep playing with the screen off.</p>
+              <strong>YouTube Music — songs and mixes only</strong>
+              <p>Live news, podcasts and anything without a running time is filtered out. Playback is audio-only in PRAHA's player.</p>
             </div>
-            <button className="button button-secondary" onClick={() => setTab('search')}>
-              Find music <ChevronRight size={15} />
-            </button>
           </div>
-          {homeState === 'loading' && <div className="flow-loading"><LoaderCircle size={20} className="spin" /> Tuning the music shelf…</div>}
-          {homeState === 'error' && <div className="flow-inline-error"><CircleAlert size={16} /> {homeError}</div>}
-          {musicShelf && (
-            <Shelf
-              shelf={{ ...musicShelf, title: 'Mixes & music' }}
-              onOpen={(video) => openVideo(video)}
+
+          <form className="explore-search flow-search" onSubmit={submitMusicSearch}>
+            <Music size={17} />
+            <input
+              value={musicTerm}
+              onChange={(event) => setMusicTerm(event.target.value)}
+              placeholder="Search for songs, artists, albums, or mixes…"
+              aria-label="Search music"
             />
-          )}
+            {musicTerm && <button type="button" className="search-clear" onClick={() => { setMusicTerm(''); setMusicQuery(''); setMusicResults(null); }} aria-label="Clear">×</button>}
+          </form>
+
           <div className="flow-chips">
-            {['Lo-fi beats', 'Jazz playlist', 'Synthwave mix', 'Live sessions', 'Music videos 4K'].map((suggestion) => (
-              <button key={suggestion} className="flow-chip" onClick={() => { setTerm(suggestion); setSubmitted(suggestion); setTab('search'); }}>
-                {suggestion}
+            {MUSIC_MOODS.map((mood) => (
+              <button key={mood} className="flow-chip" onClick={() => { setMusicTerm(mood); setMusicQuery(mood); }}>
+                {mood}
               </button>
             ))}
           </div>
+
+          {musicSearching && <div className="flow-loading"><LoaderCircle size={20} className="spin" /> Finding music…</div>}
+
+          {musicResults && !musicSearching && (
+            musicResults.videos.length ? (
+              <Shelf
+                shelf={{ id: 'music-search', title: `Music for “${musicQuery}”`, videos: musicResults.videos }}
+                onOpen={(video) => openVideo(video)}
+                note={`${musicResults.videos.length} audio track${musicResults.videos.length === 1 ? '' : 's'} · live streams filtered out`}
+              />
+            ) : (
+              <div className="flow-inline-error"><CircleAlert size={16} /> No music matched that search.</div>
+            )
+          )}
+
+          {!musicResults && !musicSearching && (
+            <>
+              {musicState === 'loading' && <div className="flow-loading"><LoaderCircle size={20} className="spin" /> Tuning the music shelves…</div>}
+              {musicState === 'error' && <div className="flow-inline-error"><CircleAlert size={16} /> {musicError}</div>}
+              {musicState === 'ready' && musicHome?.shelves.map((shelf) => (
+                <Shelf
+                  key={shelf.id}
+                  shelf={shelf}
+                  onOpen={(video) => openVideo(video)}
+                  note={`${shelf.videos.length} track${shelf.videos.length === 1 ? '' : 's'} · music only`}
+                />
+              ))}
+            </>
+          )}
         </div>
       )}
 
       {tab === 'channels' && (
         <div className="flow-section flow-channels">
           <aside className="flow-channel-list">
-            <p className="explore-list-label">FOLLOWED CHANNELS</p>
+            <p className="explore-list-label">SUBSCRIPTIONS</p>
             <form className="flow-channel-form" onSubmit={addChannel}>
               <input
                 value={channelDraft}
                 onChange={(event) => setChannelDraft(event.target.value)}
                 placeholder="@handle, /channel/UC… link"
-                aria-label="Add a YouTube channel"
+                aria-label="Subscribe to a YouTube channel"
               />
-              <button type="submit" className="button button-primary" aria-label="Add channel"><Plus size={15} /></button>
+              <button type="submit" className="button button-primary" aria-label="Subscribe"><Plus size={15} /></button>
             </form>
             {channelError && <p className="flow-channel-error"><CircleAlert size={13} /> {channelError}</p>}
-            {channels.length === 0 && <p className="flow-channel-empty">No channels yet. Add one with its @handle or /channel/ link.</p>}
-            {channels.map((id) => (
-              <div key={id} className={`flow-channel-row ${feedId === id ? 'active' : ''}`}>
-                <button onClick={() => loadChannel(id)}>{id.slice(0, 14)}…</button>
-                <button className="flow-channel-remove" onClick={() => removeChannel(id)} aria-label={`Remove ${id}`}><Trash2 size={13} /></button>
+            {subs.length === 0 && <p className="flow-channel-empty">No subscriptions yet. Add a channel with its @handle or /channel/ link.</p>}
+            {subs.map((entry) => (
+              <div key={entry.id} className={`flow-channel-row ${feedId === entry.id ? 'active' : ''}`}>
+                <button onClick={() => loadChannel(entry.id)} title={entry.name}>{entry.name.length > 18 ? `${entry.name.slice(0, 18)}…` : entry.name}</button>
+                <button className="flow-channel-remove" onClick={() => unsubscribe(entry.id)} aria-label={`Unsubscribe from ${entry.name}`}><Trash2 size={13} /></button>
               </div>
             ))}
           </aside>
@@ -516,9 +666,15 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 <div className="flow-channel-header">
                   <div>
                     <h2>{feed.title}</h2>
-                    <p>{feed.videos.length} recent uploads from the public feed — no subscription needed.</p>
+                    <p>{feed.videos.length} recent uploads{feed.subscribers ? ` · ${feed.subscribers}` : ''}</p>
                   </div>
                   <div className="flow-channel-header-actions">
+                    <button
+                      className={`button ${isSubscribed(feed.channelId) ? 'button-secondary is-saved' : 'button-primary'}`}
+                      onClick={() => toggleSubscribe({ id: feed.channelId, name: feed.title, avatar: feed.avatar })}
+                    >
+                      {isSubscribed(feed.channelId) ? <><Check size={14} /> Subscribed</> : <><Bell size={14} /> Subscribe</>}
+                    </button>
                     <button className="button button-secondary" onClick={() => loadChannel(feed.channelId)}><RefreshCw size={14} /> Refresh</button>
                     <button className="button button-secondary" onClick={() => openSafeExternalUrl(youtubeChannelUrl(feed.channelId))}>
                       Open on YouTube <ExternalLink size={14} />
@@ -532,11 +688,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 </div>
               </>
             )}
-            {feedState === 'idle' && !channels.length && (
+            {feedState === 'idle' && !subs.length && (
               <div className="empty-state explore-empty">
-                <span><ListMusic size={28} /></span>
-                <h2>No channels followed</h2>
-                <p>Add a channel to pull its uploads straight from YouTube's public feed.</p>
+                <span><BellRing size={28} /></span>
+                <h2>No subscriptions</h2>
+                <p>Add a channel to pull its uploads straight from YouTube's public feed. Everything stays on this device.</p>
               </div>
             )}
           </div>
@@ -552,7 +708,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 <h2>{detail?.title || 'Loading video…'}</h2>
                 <div className="flow-detail-meta">
                   {detail?.channel && <span>{detail.channel}</span>}
-                  {detail?.views && <span><Eye size={11} /> {detail.views}</span>}
+                  {detail?.views && <span>{detail.views}</span>}
                   {detail?.published && <span><Clock size={11} /> {detail.published}</span>}
                   {detail?.likes && <span>{detail.likes} likes</span>}
                   {detail?.live && <span className="flow-live">LIVE</span>}
@@ -564,16 +720,21 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <div className="flow-detail-stage">
               {detailState === 'loading' && <div className="flow-loading"><LoaderCircle size={22} className="spin" /> Preparing player…</div>}
               {detailState === 'error' && (
-                <div className="flow-stage-error">
-                  <CircleAlert size={22} />
-                  <p>{detailError}</p>
-                  <div>
-                    <button className="button button-secondary" onClick={() => openVideo(detailId)}><RefreshCw size={14} /> Retry</button>
-                    <button className="button button-secondary" onClick={() => openSafeExternalUrl(youtubeWatchUrl(detailId))}>
-                      Watch on YouTube <ExternalLink size={14} />
-                    </button>
+                <>
+                  {/* The embed does not need the metadata API, so keep the video playable. */}
+                  <iframe
+                    src={youtubeEmbedUrl(detailId)}
+                    title="YouTube video"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                  />
+                  <div className="flow-stage-note">
+                    <CircleAlert size={15} />
+                    <span>Details unavailable ({detailError}). The player above still works.</span>
+                    <button onClick={() => openVideo(detailId)}><RefreshCw size={12} /> Retry</button>
+                    <button onClick={() => openSafeExternalUrl(youtubeWatchUrl(detailId))}><ExternalLink size={12} /> YouTube</button>
                   </div>
-                </div>
+                </>
               )}
               {detailState === 'idle' && detail && (
                 <iframe
@@ -583,16 +744,40 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   allowFullScreen
                 />
               )}
+              {detailState === 'idle' && detail && detailChannel?.id && (
+                <div className="flow-inplayer-bar">
+                  <span className="flow-inplayer-channel">
+                    {detailChannel.avatar
+                      ? <img src={detailChannel.avatar} alt="" />
+                      : <span className="flow-channel-initial">{detailChannel.name.charAt(0)}</span>}
+                    <span>
+                      <strong>{detailChannel.name}</strong>
+                      <small>{detail.channelSubscribers || 'YouTube channel'}</small>
+                    </span>
+                  </span>
+                  <button
+                    className={`flow-subscribe ${isSubscribed(detailChannel.id) ? 'subscribed' : ''}`}
+                    onClick={() => toggleSubscribe(detailChannel)}
+                  >
+                    {isSubscribed(detailChannel.id)
+                      ? <><BellRing size={13} /> Subscribed</>
+                      : <><Bell size={13} /> Subscribe</>}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flow-detail-actions">
               {detail && (
                 <>
                   <button className="button button-primary" onClick={() => playAudio(detail)}>
-                    <Play size={15} fill="currentColor" /> Play in PRAHA
+                    <Play size={15} fill="currentColor" /> Play audio in PRAHA
                   </button>
                   <button className="button button-secondary" onClick={() => onEmbed(youtubeMedia(detail, detail.id))}>
                     <Film size={15} /> Embedded player
+                  </button>
+                  <button className="button button-secondary" onClick={() => { void shareVideo(detail.id); }}>
+                    {copied ? <><Check size={15} /> Link copied</> : <><Share2 size={15} /> Share</>}
                   </button>
                   <button className="button button-secondary" onClick={() => openSafeExternalUrl(youtubeWatchUrl(detail.id))}>
                     <ExternalLink size={15} /> YouTube
@@ -622,13 +807,19 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   {detail.description && <p className="flow-description">{detail.description.slice(0, 1600)}</p>}
                   {detail.keywords && detail.keywords.length > 0 && (
                     <div className="flow-chips">
-                      {detail.keywords.map((keyword) => <span key={keyword} className="flow-chip flow-chip-static">#{keyword.replace(/\s+/g, '')}</span>)}
+                      {detail.keywords.map((keyword) => (
+                        <span key={keyword} className="flow-chip flow-chip-static">#{keyword.replace(/\s+/g, '')}</span>
+                      ))}
                     </div>
                   )}
 
                   <div className="flow-comments">
-                    <p className="explore-list-label"><MessageCircle size={12} /> COMMENTS {detail.comments.length ? `· ${detail.comments.length}` : ''}</p>
-                    {detail.comments.length === 0 && <p className="flow-channel-empty">Comments are not exposed for this video.</p>}
+                    <p className="explore-list-label">COMMENTS {detail.comments.length ? `· ${detail.comments.length}` : ''}</p>
+                    {detail.comments.length === 0 && (
+                      <p className="flow-channel-empty">
+                        Comments are not exposed by this data source. Open the video on YouTube to read them.
+                      </p>
+                    )}
                     {detail.comments.map((comment) => (
                       <div key={comment.id} className="flow-comment">
                         <span className="flow-comment-avatar">{comment.author.charAt(0).toUpperCase()}</span>
@@ -646,11 +837,14 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   <p className="explore-list-label">UP NEXT</p>
                   {detail.related.slice(0, 12).map((video) => (
                     <button key={video.id} className="flow-related" onClick={() => openVideo(video)}>
-                      {video.thumbnail ? <img src={video.thumbnail} alt="" loading="lazy" /> : <span className="flow-related-placeholder"><Video size={16} /></span>}
+                      <span className="flow-related-art">
+                        {video.thumbnail ? <img src={video.thumbnail} alt="" loading="lazy" /> : <Video size={16} />}
+                        {video.duration && <small>{video.duration}</small>}
+                      </span>
                       <span>
                         <strong>{video.title}</strong>
                         <small>{video.channel}</small>
-                        <small>{[video.views, video.duration].filter(Boolean).join(' · ')}</small>
+                        <small>{[video.views, video.published].filter(Boolean).join(' · ')}</small>
                       </span>
                     </button>
                   ))}
