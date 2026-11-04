@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import FlowView from '../components/FlowView';
 import { youtubeMedia, youtubeStream } from '../services/flowService';
 import {
-  formatDuration, normalizeChannelInput, parseIsoDuration, parseVideoId, youtubeChannelUrl,
-  youtubeEmbedUrl, youtubeWatchUrl,
+  formatDuration, formatUrl, normalizeChannelInput, parseInnerTubeFormats, parseIsoDuration, parseVideoId,
+  youtubeChannelUrl, youtubeEmbedUrl, youtubeWatchUrl,
 } from '../services/youtubeService';
 import {
   DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, fetchMirrorHome, fetchMirrorMusic,
@@ -318,5 +318,43 @@ describe('Flow tab mirror targeting', () => {
 
     resetDirectState();
     expect(shouldTryDirect()).toBe(true);
+  });
+});
+
+describe('Flow tab direct playback', () => {
+  it('separates muxed video streams from audio-only tracks', () => {
+    const formats = [
+      { mimeType: 'video/mp4; codecs="avc1"', url: 'https://cdn/video-muxed', height: 720, bitrate: 1500000, audioQuality: 'AUDIO_QUALITY_MEDIUM' },
+      { mimeType: 'video/webm; codecs="vp9"', url: 'https://cdn/video-adaptive', height: 1080, bitrate: 3000000, audioQuality: 'AUDIO_QUALITY_UNKNOWN' },
+      { mimeType: 'audio/webm; codecs="opus"', url: 'https://cdn/audio-hi', bitrate: 160000 },
+      { mimeType: 'audio/webm; codecs="opus"', url: 'https://cdn/audio-lo', bitrate: 70000 },
+    ];
+    const { audioTracks, videoTracks } = parseInnerTubeFormats(formats);
+    expect(audioTracks.map((track) => track.url)).toEqual(['https://cdn/audio-hi', 'https://cdn/audio-lo']);
+    expect(videoTracks.map((track) => track.url)).toEqual(['https://cdn/video-muxed']);
+    expect(videoTracks[0].label).toContain('720p');
+  });
+
+  it('recovers a URL from signatureCipher and ignores formats with none', () => {
+    expect(formatUrl({ url: 'https://cdn/ok' })).toBe('https://cdn/ok');
+    expect(formatUrl({ signatureCipher: 'url=https%3A%2F%2Fcdn%2Fcipher%3Fx%3D1&s=abc' })).toBe('https://cdn/cipher?x=1');
+    expect(formatUrl({ signatureCipher: 's=abc' })).toBe('');
+    expect(formatUrl({})).toBe('');
+  });
+});
+
+describe('Flow tab player payload', () => {
+  it('uses the direct stream and drops ytId so no embed is forced', () => {
+    const stream = youtubeStream({ id: 'dQw4w9WgXcQ', title: 'Track' }, { url: 'https://cdn/audio', format: 'audio' });
+    expect(stream.url).toBe('https://cdn/audio');
+    expect(stream.format).toBe('audio');
+    expect(stream.ytId).toBeUndefined();
+    expect(stream.externalUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  });
+
+  it('falls back to the embed when no direct stream exists', () => {
+    const stream = youtubeStream({ id: 'dQw4w9WgXcQ', title: 'Track' });
+    expect(stream.ytId).toBe('dQw4w9WgXcQ');
+    expect(stream.format).toBe('youtube');
   });
 });

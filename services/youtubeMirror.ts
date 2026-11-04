@@ -564,6 +564,27 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
   const relatedRaw = isInvidious ? payload.recommendedVideos : payload.relatedStreams;
   const related = videoList(relatedRaw, isInvidious ? 'invidious' : 'piped').filter((video) => video.id !== videoId);
 
+  const videoSource = isInvidious
+    ? [...(Array.isArray(payload.formatStreams) ? payload.formatStreams : []), ...(Array.isArray(payload.adaptiveFormats) ? payload.adaptiveFormats : [])]
+    : payload.videoStreams;
+  const videoTracks: YtDetail['videoTracks'] = (Array.isArray(videoSource) ? videoSource : [])
+    .map((raw) => {
+      const stream = raw as Record<string, unknown>;
+      const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
+      const parsedHeight = Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0);
+      const height = num(stream.height) ?? (parsedHeight || undefined);
+      return {
+        url: str(stream.url) || '',
+        mime,
+        bitrate: num(stream.bitrate) ?? 0,
+        height,
+        label: `${height ?? '?'}p · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
+        hasAudio: stream.audioQuality !== undefined || mime.includes('mp4') ? true : undefined,
+      };
+    })
+    .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))
+    .sort((a, b) => (b.height || 0) - (a.height || 0));
+
   const audioSource = isInvidious ? payload.adaptiveFormats : payload.audioStreams;
   let audioTracks: YtDetail['audioTracks'] = (Array.isArray(audioSource) ? audioSource : [])
     .map((raw) => {
@@ -619,6 +640,8 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
     related: related.slice(0, 24),
     chapters: parsedChapters,
     audioTracks,
+    videoTracks,
+    playbackUrl: videoTracks[0]?.url,
     embedUrl: youtubeEmbedUrl(videoId),
   };
 }

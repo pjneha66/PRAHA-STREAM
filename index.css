@@ -2110,3 +2110,7 @@ html.dpad-mode select:focus {
 .flow-error-detail { width: 100%; max-width: 640px; max-height: 190px; overflow: auto; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #0b0d10; color: #c8a49e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; line-height: 1.7; text-align: left; white-space: pre-wrap; word-break: break-word; }
 .flow-inline-error-block { flex-wrap: wrap; align-items: flex-start; }
 .flow-inline-error-block .flow-error-detail { margin: 6px 0 0; max-height: 160px; }
+
+/* ---------- Flow tab: native player + embed notices ---------- */
+.flow-native-video { width: 100%; height: 100%; background: #000; object-fit: contain; }
+.flow-stage-note.info { border-color: rgba(var(--accent-rgb), .3); color: #d9c9a6; }

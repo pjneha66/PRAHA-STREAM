@@ -141,6 +141,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [detailError, setDetailError] = useState('');
   const [copied, setCopied] = useState(false);
+  /**
+   * YouTube's embedded player refuses localhost/preview origins with error 153,
+   * so the direct stream is the primary player and the embed is opt-in.
+   */
+  const [playerMode, setPlayerMode] = useState<'stream' | 'embed'>('stream');
 
   /* ---------------- mirrors ---------------- */
   const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
@@ -306,6 +311,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setDetailError('');
     setDetail(null);
     setCopied(false);
+    setPlayerMode('stream');
     flowDetail(id)
       .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
@@ -318,14 +324,15 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   /** Audio-only playback through PRAHA's player; the embed stays available beside it. */
   const playAudio = (video: YtDetail | FlowVideo) => {
+    const detailVideo = video as YtDetail;
+    const audio = detailVideo.audioTracks?.[0];
+    const direct = detailVideo.playbackUrl;
     const media = youtubeMedia(video as FlowVideo, 'youtube');
-    const stream = youtubeStream(video as FlowVideo);
-    const audio = (video as YtDetail).audioTracks?.[0];
-    if (audio) {
-      stream.url = audio.url;
-      stream.format = 'audio';
-      stream.title = `${video.title} · audio only`;
-    }
+    const stream = youtubeStream(
+      video as FlowVideo,
+      audio ? { url: audio.url, format: 'audio' } : direct ? { url: direct, format: 'video' } : undefined,
+    );
+    if (audio) stream.title = `${video.title} · audio only`;
     onPlay(media, stream);
   };
 
@@ -794,19 +801,50 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   />
                   <div className="flow-stage-note">
                     <CircleAlert size={15} />
-                    <span>Details unavailable ({detailError}). The player above still works.</span>
+                    <span>Details unavailable ({detailError}). The player above still works, or open it on YouTube.</span>
                     <button onClick={() => openVideo(detailId)}><RefreshCw size={12} /> Retry</button>
                     <button onClick={() => openSafeExternalUrl(youtubeWatchUrl(detailId))}><ExternalLink size={12} /> YouTube</button>
                   </div>
                 </>
               )}
               {detailState === 'idle' && detail && (
-                <iframe
-                  src={youtubeEmbedUrl(detail.id)}
-                  title={detail.title}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
-                  allowFullScreen
-                />
+                playerMode === 'embed' ? (
+                  <>
+                    <iframe
+                      src={youtubeEmbedUrl(detail.id)}
+                      title={detail.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                    />
+                    <div className="flow-stage-note info">
+                      <CircleAlert size={15} />
+                      <span>YouTube's embedded player blocks localhost and preview domains (error 153). Use the direct player if it refuses to play.</span>
+                      <button onClick={() => setPlayerMode('stream')}><Play size={12} /> Direct player</button>
+                    </div>
+                  </>
+                ) : detail.playbackUrl || detail.audioTracks.length ? (
+                  <video
+                    key={detail.id}
+                    className="flow-native-video"
+                    src={detail.playbackUrl || detail.audioTracks[0].url}
+                    poster={detail.thumbnail}
+                    controls
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <div className="flow-stage-error">
+                    <CircleAlert size={22} />
+                    <p>No direct stream was returned for this video — YouTube sometimes withholds them from key-free clients.</p>
+                    <div>
+                      <button className="button button-secondary" onClick={() => setPlayerMode('embed')}>Try the embed</button>
+                      <button className="button button-secondary" onClick={() => openSafeExternalUrl(youtubeWatchUrl(detail.id))}>
+                        Watch on YouTube <ExternalLink size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )
               )}
               {detailState === 'idle' && detail && detailChannel?.id && (
                 <div className="flow-inplayer-bar">
@@ -837,6 +875,9 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   </button>
                   <button className="button button-secondary" onClick={() => onEmbed(youtubeMedia(detail, detail.id))}>
                     <Film size={15} /> Embedded player
+                  </button>
+                  <button className="button button-secondary" onClick={() => setPlayerMode((mode) => (mode === 'embed' ? 'stream' : 'embed'))}>
+                    {playerMode === 'embed' ? <><Play size={15} /> Direct player</> : <><Film size={15} /> YouTube embed</>}
                   </button>
                   <button className="button button-secondary" onClick={() => { void shareVideo(detail.id); }}>
                     {copied ? <><Check size={15} /> Link copied</> : <><Share2 size={15} /> Share</>}

@@ -84,6 +84,15 @@ export interface YtChapter {
   start: number;
 }
 
+export interface YtMediaTrack {
+  url: string;
+  mime: string;
+  bitrate?: number;
+  label: string;
+  /** Rough height in pixels for video tracks. */
+  height?: number;
+}
+
 export interface YtDetail {
   id: string;
   title: string;
@@ -104,7 +113,11 @@ export interface YtDetail {
   related: YtVideo[];
   chapters: YtChapter[];
   /** Streamable audio-only URLs, best first. */
-  audioTracks: Array<{ url: string; mime: string; bitrate?: number; label: string }>;
+  audioTracks: YtMediaTrack[];
+  /** Streamable muxed (video+audio) URLs, best first — used when the embed refuses. */
+  videoTracks: YtMediaTrack[];
+  /** Best muxed stream URL, ready for a `<video>` element. */
+  playbackUrl?: string;
   /** Embedded player fallback when direct playback is unavailable. */
   embedUrl: string;
 }
@@ -505,6 +518,61 @@ function decodeXml(value: string): string {
  * Watch page detail
  * ------------------------------------------------------------------ */
 
+/** InnerTube sometimes omits the URL (signatureCipher) — those formats are skipped. */
+export function formatUrl(format: Record<string, unknown>): string {
+  if (typeof format.url === 'string' && format.url.startsWith('https://')) return format.url;
+  const cipher = typeof format.signatureCipher === 'string'
+    ? format.signatureCipher
+    : typeof format.cipher === 'string' ? format.cipher : '';
+  if (!cipher) return '';
+  try {
+    const params = new URLSearchParams(cipher);
+    const url = params.get('url');
+    return url && url.startsWith('https://') ? url : '';
+  } catch { return ''; }
+}
+
+/** Splits InnerTube adaptive formats into audio-only and muxed video tracks. */
+export function parseInnerTubeFormats(formats: Array<Record<string, unknown>>): {
+  audioTracks: YtMediaTrack[];
+  videoTracks: YtMediaTrack[];
+  /** Best muxed stream URL, ready for a `<video>` element. */
+  playbackUrl?: string;
+} {
+  const toTrack = (format: Record<string, unknown>): YtMediaTrack | null => {
+    const url = formatUrl(format);
+    if (!url) return null;
+    const mime = String(format.mimeType ?? '');
+    const bitrate = Number(format.bitrate || 0);
+    const height = Number((format.height as number | undefined) ?? 0) || undefined;
+    return {
+      url,
+      mime,
+      bitrate,
+      height,
+      label: mime.startsWith('audio/')
+        ? `${Math.round(bitrate / 1000)} kbps · ${mime.split(';')[0].replace('audio/', '').toUpperCase()}`
+        : `${height ?? '?'}p · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
+    };
+  };
+
+  const audioTracks = formats
+    .filter((format) => String(format.mimeType ?? '').startsWith('audio/'))
+    .map(toTrack)
+    .filter((track): track is YtMediaTrack => Boolean(track))
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+  const videoTracks = formats
+    .filter((format) => String(format.mimeType ?? '').startsWith('video/'))
+    // Muxed streams only: an adaptive video track has audioQuality "AUDIO_QUALITY_UNKNOWN".
+    .filter((format) => String(format.audioQuality ?? 'AUDIO_QUALITY_UNKNOWN').toUpperCase().includes('AUDIO_QUALITY_') && !/UNKNOWN$/.test(String(format.audioQuality ?? '')))
+    .map(toTrack)
+    .filter((track): track is YtMediaTrack => Boolean(track))
+    .sort((a, b) => (b.height || 0) - (a.height || 0));
+
+  return { audioTracks, videoTracks };
+}
+
 export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
   const watch = await postInnerTube('player', {
     videoId,
@@ -519,21 +587,8 @@ export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
   const streaming = (watch.streamingData ?? {}) as Record<string, unknown>;
   const formats = (Array.isArray(streaming.adaptiveFormats) ? streaming.adaptiveFormats : []) as Array<Record<string, unknown>>;
 
-  const audioTracks = formats
-    .filter((format) => String(format.mimeType ?? '').startsWith('audio/'))
-    .map((format) => ({
-      url: typeof format.url === 'string' ? format.url : '',
-      mime: String(format.mimeType ?? ''),
-      bitrate: Number(format.bitrate || 0),
-    }))
-    .filter((track) => track.url.startsWith('https://'))
-    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
-    .map((track) => ({
-      url: track.url,
-      mime: track.mime,
-      bitrate: track.bitrate,
-      label: `${Math.round((track.bitrate || 0) / 1000)} kbps · ${track.mime.split(';')[0].replace('audio/', '').toUpperCase()}`,
-    }));
+  const { audioTracks, videoTracks } = parseInnerTubeFormats(formats);
+  const playbackUrl = videoTracks[0]?.url;
 
   let comments: YtComment[] = [];
   let related: YtVideo[] = [];
@@ -582,6 +637,8 @@ export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
     related,
     chapters,
     audioTracks,
+    videoTracks,
+    playbackUrl,
     embedUrl: youtubeEmbedUrl(videoId),
   };
 }

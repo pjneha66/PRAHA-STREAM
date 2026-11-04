@@ -36,17 +36,27 @@ export function youtubeMedia(video: FlowVideoRef, fallbackId = 'youtube:unknown'
   };
 }
 
-export function youtubeStream(video: FlowVideoRef): StreamResult {
+/**
+ * Player payload for a Flow video. When the detail request returned a direct
+ * stream, that URL is used so PRAHA's own player (MpvPlayer / HTML5) plays it
+ * without YouTube's embed, which blocks localhost and preview origins.
+ */
+export function youtubeStream(
+  video: FlowVideoRef,
+  media?: { url?: string; format?: 'audio' | 'video' },
+): StreamResult {
   return {
     id: `youtube:${video.id}`,
     title: video.title,
-    url: youtubeWatchUrl(video.id),
     sourceName: 'YouTube · Flow',
     sourceType: 'nuvio',
     provider: 'flow',
-    format: 'youtube',
+    format: media?.url ? (media.format === 'audio' ? 'audio' : 'mp4') : 'youtube',
     externalUrl: youtubeWatchUrl(video.id),
-    ytId: video.id,
+    // Keep ytId only when there is no direct URL: PlayerModal then falls back to
+    // the embed, which is the right behaviour for blocked-origin environments.
+    ytId: media?.url ? undefined : video.id,
+    url: media?.url || youtubeWatchUrl(video.id),
   };
 }
 
