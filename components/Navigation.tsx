@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
+  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, Tv2, UserPlus, Users,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
 import type { AppView, UserProfile } from '../types';
@@ -21,6 +21,7 @@ interface NavigationProps {
 
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
+  { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
@@ -32,6 +33,7 @@ const mainNav = [
 
 const mobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
+  { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },

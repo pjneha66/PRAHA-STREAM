@@ -10,6 +10,7 @@ import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
 import AudiobooksView from './components/AudiobooksView';
+import LiveTvView from './components/LiveTvView';
 import FlowView from './components/FlowView';
 import ProfilePicker from './components/ProfilePicker';
 import SettingsView from './components/SettingsView';
@@ -41,7 +42,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'anime', 'sanka', 'audiobooks', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'audiobooks', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -851,6 +852,14 @@ const App: React.FC = () => {
     );
   } else if (view === 'sanka') {
     page = <SankaExplorer />;
+  } else if (view === 'livetv') {
+    page = (
+      <LiveTvView
+        onPlayStream={(media, stream) => {
+          setPlayer({ media, stream, initialTime: 0 });
+        }}
+      />
+    );
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
   } else if (view === 'flow') {

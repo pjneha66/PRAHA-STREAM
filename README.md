@@ -6,10 +6,15 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface inspired 
 
 ---
 
-## Android & Android TV Features (`v2.3.0`)
+## Android & Android TV Features (`v2.4.0`)
 
 PRAHA STREAM is built first-class for Android phones, tablets, and Android TV / Fire TV boxes via Capacitor + custom native Android Java bridges (`MainActivity.java`, `PrahaStreamProxy.java`, and `PrahaVlcPlayer.java`):
 
+- **Live TV & Sports Tab (PlayTorrio Engine)**:
+  - **Channels Hub**: 50+ curated high-definition sports and entertainment channels (UFC, Formula 1, MotoGP, beIN Sports, Sky Sports, TNT Sports, UEFA Champions League, Premier League, La Liga, Serie A, ESPN, NBA TV, NFL Network, Cricket, HBO, CNN, etc.) with 1-click multi-source stream scanning.
+  - **Live Matches & PPV**: Real-time sports schedule and live event countdowns scraping Dami-TV and PPV.to feeds with team logos, viewer metrics, and instant stream playback.
+  - **M3U / M3U8 Playlists**: Preset feeds for Sports, News, Movies, English, Spanish, and Music from `iptv-org` plus custom playlist importing via URL or direct M3U text paste.
+  - **Xtream-Codes Portals**: Community portal scraper, live authentication verification, live category/stream browser, and short EPG program guide.
 - **Native LibVLC Player Core (`PrahaVlcPlayer`)**: Direct in-app hardware-accelerated playback of MKV, MP4, HLS, TS, FLV, and Dolby Digital streams using embedded LibVLC. Renders on a native `VLCVideoLayout` surface beneath the transparent WebView interface with zero external app dependencies.
 - **Audio Language & Subtitle Manager**:
   - Automatic detection and live switching of embedded MKV audio streams (AAC, E-AC-3, AC-3, DTS, Opus, TrueHD, FLAC) with channel layout indicators (Stereo, 5.1 Surround, 7.1) and ISO 639 language names.
