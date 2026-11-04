@@ -51,7 +51,7 @@ export function youtubeStream(video: FlowVideoRef): StreamResult {
 }
 
 export { DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, normalizeMirrorUrl, readMirrors, isMusicVideo } from './youtubeMirror';
-export { lastProbeLog, describeFailure, type SourceProbe } from './youtubeMirror';
+export { lastProbeLog, describeFailure, probeMirrors, resetDirectState, type SourceProbe } from './youtubeMirror';
 
 /**
  * YouTube's image CDN sends no CORS headers, but `<img>` does not need them —

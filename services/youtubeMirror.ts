@@ -35,14 +35,18 @@ export const MIRROR_STORAGE_KEY = 'praha.v2.flow-mirrors';
 
 /** Mixed list so one dead ecosystem cannot take the tab down. */
 export const DEFAULT_MIRRORS = [
+  'https://api.piped.private.coffee',
   'https://pipedapi.kavin.rocks',
   'https://inv.nadeko.net',
   'https://pipedapi.adminforge.de',
   'https://invidious.nerdvpn.de',
-  'https://api.piped.private.coffee',
-  'https://pipedapi.drgns.space',
-  'https://pipedapi.reallyaweso.me',
+  'https://pipedapi.leptons.xyz',
   'https://invidious.tiekoetter.com',
+  'https://pipedapi.drgns.space',
+  'https://piped-api.codespace.cz',
+  'https://pipedapi.orangenet.cc',
+  'https://yt.chocolatemoo53.com',
+  'https://pipedapi.reallyaweso.me',
 ];
 
 /** Instances known to proxy media streams, used when a video has no audio URLs. */
@@ -105,9 +109,17 @@ export function normalizeMirrorUrl(value: string): string {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
-/** Piped lives on `pipedapi.*`; anything else is tried as Invidious first. */
-function kindsFor(base: string): MirrorKind[] {
-  return /piped/i.test(base) ? ['piped', 'invidious'] : ['invidious', 'piped'];
+/**
+ * Pick the API family from the host name. Asking a Piped host for `/api/v1/…`
+ * only produces a CORS-masked 404 that looks like a network failure, so we only
+ * try both shapes on hosts we cannot classify.
+ */
+export function kindsFor(base: string): MirrorKind[] {
+  let host = base;
+  try { host = new URL(base).host; } catch { /* keep raw */ }
+  if (/piped/i.test(host)) return ['piped'];
+  if (/invidious|^inv\.|^yt\.|^iv\./i.test(host)) return ['invidious'];
+  return ['invidious', 'piped'];
 }
 
 const isErrorPayload = (payload: unknown): boolean =>
@@ -167,12 +179,17 @@ async function mirrorFetch<T>(
     : `${label}: no mirrors configured.`);
 }
 
-/** Keeps the message readable when eight instances all fail. */
-function summarise(problems: string[]): string {
-  const unique = Array.from(new Set(problems));
-  return unique.length <= 4
-    ? unique.join(' · ')
-    : `${unique.slice(0, 4).join(' · ')} · +${unique.length - 4} more`;
+/** Keeps the message readable when a dozen instances all fail: one line per host. */
+export function summarise(problems: string[]): string {
+  const byHost = new Map<string, string>();
+  for (const problem of problems) {
+    const [host, ...rest] = problem.split(': ');
+    if (!byHost.has(host)) byHost.set(host, rest.join(': ') || 'failed');
+  }
+  const lines = Array.from(byHost, ([host, reason]) => `${host}: ${reason}`);
+  return lines.length <= 4
+    ? lines.join(' · ')
+    : `${lines.slice(0, 4).join(' · ')} · +${lines.length - 4} more`;
 }
 
 function countVideos(value: unknown): number {
@@ -328,12 +345,27 @@ export function durationSeconds(value?: string): number {
 }
 
 /**
- * Music-tab heuristic: drop live streams, zero-length rows (news bulletins
- * report "0:00"), and clips too short to be a track.
+ * Music-tab heuristic (strict): drop live streams, zero-length rows (news
+ * bulletins report "0:00"), and clips too short to be a track.
  */
 export function isMusicVideo(video: YtVideo): boolean {
   if (video.live) return false;
   return durationSeconds(video.duration) >= 45;
+}
+
+const MUSIC_HINTS = /music|song|album|track|official audio|lyric|lyrics|remix|mix|beat|instrumental|acoustic|live session|radio|soundtrack|ost|feat\.?|ft\.?/i;
+const NON_MUSIC_HINTS = /news|election|breaking|press conference|interview|speech|debate|weather|sports?|highlights|full episode|podcast|documentary|vlog|tutorial|trailer/i;
+
+/**
+ * Music-tab heuristic (loose) for instances that only serve general video
+ * search: keep anything that looks like a song by title or channel, minus the
+ * obvious news/talk rows. Used only after the strict filter left nothing.
+ */
+export function looksLikeMusic(video: YtVideo): boolean {
+  if (!isMusicVideo(video)) return false;
+  const text = `${video.title} ${video.channel || ''}`;
+  if (NON_MUSIC_HINTS.test(text) && !MUSIC_HINTS.test(text)) return false;
+  return MUSIC_HINTS.test(text) || /vevo|topic|records|music/i.test(video.channel || '');
 }
 
 /* ------------------------------------------------------------------ *
@@ -387,49 +419,76 @@ export async function searchMirrorMusic(query: string): Promise<YtSearchResult> 
  * Music home. Every row is optional, so one grumpy instance cannot turn the
  * whole tab into an error: trending music, then two searches.
  */
+/**
+ * Trending music, in three increasingly forgiving passes. Most instances expose
+ * `/trending?type=music`; when one does not, its *general* trending list still
+ * works, so we filter that for songs rather than failing the tab.
+ */
+async function mirrorMusicTrending(strict: boolean): Promise<YtVideo[]> {
+  const filter = strict ? isMusicVideo : looksLikeMusic;
+  return mirrorFetch(strict ? 'Music trending' : 'Music trending (filtered)', {
+    piped: '/trending?region=US&type=music',
+    invidious: '/api/v1/trending?type=Music',
+  }, (payload, kind) => {
+    const videos = videoList(payload, kind).filter(filter);
+    return videos.length ? videos : null;
+  });
+}
+
+async function mirrorTrendingLoose(): Promise<YtVideo[]> {
+  const videos = await mirrorFetch('Trending', {
+    piped: '/trending?region=US',
+    invidious: '/api/v1/trending?region=US',
+  }, videoShelf('trending'));
+  return videos.filter(looksLikeMusic);
+}
+
 export async function fetchMirrorMusic(): Promise<YtHome> {
   const shelves: YtShelf[] = [];
-  const attempts: Array<() => Promise<YtShelf>> = [
-    async () => ({
-      id: 'mirror-music-trending',
-      title: 'Trending in music',
-      videos: await mirrorFetch('Music trending', {
-        piped: '/trending?region=US&type=music',
-        invidious: '/api/v1/trending?type=Music',
-      }, (payload, kind) => {
-        const videos = videoList(payload, kind).filter(isMusicVideo);
-        return videos.length ? videos : null;
-      }),
-    }),
-    async () => ({
-      id: 'mirror-music-hits',
-      title: 'Top hits right now',
-      videos: (await searchMirrorMusic('top hits this week')).videos,
-    }),
-    async () => ({
-      id: 'mirror-music-mixes',
-      title: 'Mixes & playlists',
-      videos: (await searchMirrorMusic('lofi hip hop mix')).videos,
-    }),
-    async () => ({
-      id: 'mirror-music-live',
-      title: 'Live sessions',
-      videos: (await searchMirrorMusic('live session')).videos,
-    }),
-  ];
-
   const failures: string[] = [];
-  for (const attempt of attempts) {
-    try {
-      const shelf = await attempt();
-      if (shelf.videos.length) shelves.push(shelf);
-    } catch (error) {
+
+  const push = (id: string, title: string, videos: YtVideo[]) => {
+    if (videos.length) shelves.push({ id, title, videos });
+  };
+
+  const tryRow = async (runner: () => Promise<YtVideo[]>): Promise<YtVideo[]> => {
+    try { return await runner(); } catch (error) {
       failures.push(describeFailure(error));
+      return [];
     }
+  };
+
+  // Note: an empty array is truthy, so compare lengths instead of relying on ||.
+  let trending: YtVideo[] = [];
+  for (const runner of [
+    () => mirrorMusicTrending(true),
+    () => mirrorMusicTrending(false),
+    mirrorTrendingLoose,
+  ]) {
+    if (trending.length) break;
+    trending = await tryRow(runner);
+  }
+  push('mirror-music-trending', 'Trending in music', trending);
+
+  for (const [id, title, query] of [
+    ['mirror-music-hits', 'Top hits right now', 'top hits this week'],
+    ['mirror-music-mixes', 'Mixes & playlists', 'lofi hip hop mix'],
+    ['mirror-music-live', 'Live sessions', 'live session music'],
+  ] as const) {
+    push(id, title, await tryRow(async () => {
+      try {
+        const strict = await searchMirrorMusic(query);
+        if (strict.videos.length) return strict.videos;
+      } catch { /* fall back to the general search below */ }
+      const broad = await searchMirror(query);
+      return broad.videos.filter(looksLikeMusic);
+    }));
   }
 
   if (!shelves.length) {
-    throw new Error(failures.length ? summarise(Array.from(new Set(failures))) : 'Music is unavailable right now.');
+    throw new Error(failures.length
+      ? `Music is unavailable right now — ${summarise(failures)}`
+      : 'Music is unavailable right now.');
   }
   return { shelves };
 }
@@ -569,10 +628,36 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
  * both fail the YouTube reason leads and the mirror sweep follows, so the
  * Mirror settings panel can explain itself.
  */
+/**
+ * Once YouTube answers with a network-level block, every later call would pay
+ * the same failed request. Remember it for the session and go straight to the
+ * mirrors; `resetDirectState()` (the Retry button) clears the flag.
+ */
+let directBlocked = false;
+
+export const shouldTryDirect = (): boolean => !directBlocked;
+
+export function resetDirectState(): void {
+  directBlocked = false;
+  preferredMirror = null;
+}
+
+/** Probes every configured mirror once and returns the sweep result. */
+export async function probeMirrors(): Promise<SourceProbe[]> {
+  lastProbeLog.length = 0;
+  try {
+    await fetchMirrorHome();
+  } catch { /* the log already holds the reason for each host */ }
+  return [...lastProbeLog];
+}
+
 export async function withMirrorFallback<T>(direct: () => Promise<T>, mirror: () => Promise<T>): Promise<FlowSource<T>> {
+  if (directBlocked) return { data: await mirror(), backend: 'mirror' };
   try {
     return { data: await direct(), backend: 'youtube' };
   } catch (directError) {
+    const reason = describeFailure(directError);
+    if (reason.startsWith('blocked') || reason === 'timed out') directBlocked = true;
     try {
       return { data: await mirror(), backend: 'mirror' };
     } catch (mirrorError) {

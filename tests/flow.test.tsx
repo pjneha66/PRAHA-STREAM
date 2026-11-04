@@ -10,7 +10,8 @@ import {
 } from '../services/youtubeService';
 import {
   DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, fetchMirrorHome, fetchMirrorMusic,
-  isMusicVideo, lastProbeLog, normalizeMirrorUrl, pipedVideo, readMirrors, relativeTime, withMirrorFallback,
+  isMusicVideo, kindsFor, lastProbeLog, normalizeMirrorUrl, pipedVideo, readMirrors, relativeTime,
+  resetDirectState, shouldTryDirect, summarise, withMirrorFallback,
 } from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
@@ -248,5 +249,74 @@ describe('Flow tab mirror sweep', () => {
     const music = await fetchMirrorMusic();
     expect(music.shelves.length).toBeGreaterThan(0);
     expect(music.shelves[0].videos[0].title).toBe('Track');
+  });
+});
+
+describe('Flow tab mirror targeting', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.localStorage.removeItem(MIRROR_STORAGE_KEY);
+  });
+
+  it('only asks each host for the API family it actually runs', () => {
+    expect(kindsFor('https://pipedapi.kavin.rocks')).toEqual(['piped']);
+    expect(kindsFor('https://api.piped.private.coffee')).toEqual(['piped']);
+    expect(kindsFor('https://inv.nadeko.net')).toEqual(['invidious']);
+    expect(kindsFor('https://yt.chocolatemoo53.com')).toEqual(['invidious']);
+    expect(kindsFor('https://mirror.example.org')).toEqual(['invidious', 'piped']);
+  });
+
+  it('collapses repeated failures to one line per host', () => {
+    const text = summarise([
+      'api.piped.private.coffee: answered, but had nothing usable',
+      'api.piped.private.coffee: blocked before it reached the server (CORS/offline)',
+      'pipedapi.kavin.rocks: blocked before it reached the server (CORS/offline)',
+    ]);
+    expect(text).toBe('api.piped.private.coffee: answered, but had nothing usable · pipedapi.kavin.rocks: blocked before it reached the server (CORS/offline)');
+  });
+
+  it('keeps song-like rows when a mirror only offers general trending', async () => {
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(['https://inv.good.test']));
+    const rows = [
+      { videoId: 'song0000001', title: 'Midnight City (Official Audio)', author: 'M83', lengthSeconds: 244 },
+      { videoId: 'news0000001', title: 'Election night live coverage', author: 'News', lengthSeconds: 600, liveNow: true },
+      { videoId: 'news0000002', title: 'Breaking news: markets', author: 'News', lengthSeconds: 300 },
+      { videoId: 'clip0000001', title: 'Funny cat', author: 'Random', lengthSeconds: 20 },
+    ];
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      const url = String(input);
+      const response = (status: number, body: string) => Promise.resolve({
+        ok: status >= 200 && status < 300, status, data: body, text: () => Promise.resolve(body),
+      });
+      // The music endpoint is unavailable for this instance...
+      if (url.includes('/trending?type=Music')) return response(500, '{}');
+      // ...but general trending works, and the tab filters it for songs.
+      if (url.includes('/api/v1/trending')) return response(200, JSON.stringify(rows));
+      return response(404, '{}');
+    }));
+
+    const music = await fetchMirrorMusic();
+    const titles = music.shelves.flatMap((shelf) => shelf.videos.map((video) => video.title));
+    expect(titles).toContain('Midnight City (Official Audio)');
+    expect(titles).not.toContain('Election night live coverage');
+    expect(titles).not.toContain('Breaking news: markets');
+    expect(titles).not.toContain('Funny cat');
+  });
+
+  it('stops re-trying a blocked YouTube for the session', async () => {
+    resetDirectState();
+    const direct = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+    const mirror = vi.fn(() => Promise.resolve('mirror data'));
+
+    await expect(withMirrorFallback(direct, mirror)).resolves.toEqual({ data: 'mirror data', backend: 'mirror' });
+    expect(shouldTryDirect()).toBe(false);
+
+    const second = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+    await expect(withMirrorFallback(second, mirror)).resolves.toEqual({ data: 'mirror data', backend: 'mirror' });
+    expect(second).not.toHaveBeenCalled();
+
+    resetDirectState();
+    expect(shouldTryDirect()).toBe(true);
   });
 });

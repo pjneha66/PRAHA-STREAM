@@ -12,8 +12,8 @@ import {
 } from '../services/youtubeService';
 import {
   DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowHomeViaMirror, flowMusicHome, flowMusicSearch,
-  flowMusicViaMirror, flowSearch, isMusicVideo, lastProbeLog, normalizeMirrorUrl, proxiedImage,
-  youtubeMedia, youtubeStream,
+  flowMusicViaMirror, flowSearch, isMusicVideo, lastProbeLog, normalizeMirrorUrl, probeMirrors,
+  proxiedImage, resetDirectState, youtubeMedia, youtubeStream,
   type FlowVideoRef, type YtBackend,
 } from '../services/flowService';
 
@@ -150,6 +150,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   /** 0 = normal, 1 = refresh mirrors before the last resort, 2 = stop retrying YouTube. */
   const [retryStage, setRetryStage] = useState<0 | 1 | 2>(0);
   const [probeTick, setProbeTick] = useState(0);
+  const [mirrorChecking, setMirrorChecking] = useState(false);
 
   const [radioOn, setRadioOn] = useState(false);
   const android = isAndroidApp();
@@ -162,8 +163,18 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
    * point at Mirror settings.
    */
   const retryFetch = () => {
+    resetDirectState();
     setRetryStage((stage) => (stage === 0 ? 1 : stage === 1 ? 2 : 2));
     setHomeAttempt((n) => n + 1);
+    setProbeTick((n) => n + 1);
+  };
+
+  /** Mirrors ↔ retry: run a sweep and show the outcome in the settings panel. */
+  const checkMirrors = async () => {
+    setShowMirrors(true);
+    setMirrorChecking(true);
+    await probeMirrors();
+    setMirrorChecking(false);
     setProbeTick((n) => n + 1);
   };
 
@@ -473,9 +484,14 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               <button className="flow-link-button" onClick={() => { setMirrors(DEFAULT_MIRRORS); retryFetch(); }}>
                 Reset to defaults
               </button>
-              <p className="explore-list-label" style={{ marginTop: 6 }}>LAST CHECK {probeTick ? '' : '(idle)'}</p>
-              {lastProbeLog.length === 0 && <p className="flow-channel-empty">Press “Check mirrors” or retry to test each instance.</p>}
-              {lastProbeLog.slice(0, 10).map((probe) => (
+              <p className="explore-list-label" style={{ marginTop: 6 }}>
+                LAST SWEEP {mirrorChecking ? '· RUNNING…' : lastProbeLog.length ? '' : '· NOT RUN YET'}
+              </p>
+              {lastProbeLog.length === 0 && (
+                <p className="flow-channel-empty">Press “Test all mirrors” to see which instance your network can reach.</p>
+              )}
+              <button className="flow-link-button" onClick={() => { void checkMirrors(); }}>Test all mirrors</button>
+              {lastProbeLog.slice(0, 12).map((probe) => (
                 <div key={`${probe.base}-${probe.kind}-${probe.detail}`} className={`flow-probe ${probe.ok ? 'ok' : 'bad'}`}>
                   <span>{probe.base.replace(/^https:\/\//, '')} <small>{probe.kind}</small></span>
                   <b>{probe.ok ? `${probe.videos ?? 0} videos` : probe.detail}</b>
@@ -514,12 +530,13 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <div className="empty-state explore-empty">
               <span><CircleAlert size={28} /></span>
               <h2>YouTube did not answer</h2>
-              <p>{homeError} YouTube rate-limits key-free requests and every configured mirror failed. Add another mirror under Mirror settings, or retry in a minute.</p>
+              <p>YouTube refused the request and no mirror took over. YouTube blocks key-free calls from many networks, so this is usually the network — not PRAHA.</p>
+              <pre className="flow-error-detail">{homeError.replace(/ · /g, '\n')}</pre>
               <button className="button button-primary" onClick={retryFetch}>
                 <RefreshCw size={15} /> {retryStage >= 2 ? 'Mirrors only' : 'Try again'}
               </button>
-              <button className="button button-secondary" onClick={() => { setShowMirrors(true); setProbeTick((n) => n + 1); }}>
-                Check mirrors
+              <button className="button button-secondary" onClick={() => { void checkMirrors(); }}>
+                {mirrorChecking ? 'Checking…' : 'Check mirrors'}
               </button>
             </div>
           )}
@@ -661,10 +678,12 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <>
               {musicState === 'loading' && <div className="flow-loading"><LoaderCircle size={20} className="spin" /> Tuning the music shelves…</div>}
               {musicState === 'error' && (
-                <div className="flow-inline-error">
+                <div className="flow-inline-error flow-inline-error-block">
                   <CircleAlert size={16} />
-                  <span style={{ flex: 1 }}>{musicError}</span>
+                  <span style={{ flex: 1 }}>No mirror could serve music right now.</span>
+                  <button className="flow-link-button" onClick={() => { void checkMirrors(); }}>Check mirrors</button>
                   <button className="flow-link-button" onClick={retryFetch}>Retry</button>
+                  <pre className="flow-error-detail">{musicError.replace(/ · /g, '\n')}</pre>
                 </div>
               )}
               {musicState === 'ready' && musicHome?.shelves.map((shelf) => (
