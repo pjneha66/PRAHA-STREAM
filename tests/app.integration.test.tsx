@@ -116,6 +116,7 @@ beforeAll(() => {
 beforeEach(() => {
   window.localStorage.clear();
   window.localStorage.setItem('praha.v2.settings', JSON.stringify({ tmdbApiKey: '' }));
+  window.localStorage.setItem('praha.v2.profile-picker-completed', 'true');
   window.location.hash = '#anime';
   installFetchMock();
 });
@@ -125,6 +126,31 @@ afterEach(() => {
 });
 
 describe('Anime tab in the app shell', () => {
+  it('asks who is watching on a fresh install and remembers the selection', async () => {
+    window.localStorage.removeItem('praha.v2.profile-picker-completed');
+    window.localStorage.removeItem('praha.v2.profiles');
+    window.location.hash = '#home';
+    render(<App />);
+
+    expect(screen.getByRole('dialog', { name: 'Who’s watching?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue as Main Profile' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Who’s watching?' })).toBeNull());
+    expect(window.localStorage.getItem('praha.v2.profile-picker-completed')).toBe('true');
+  }, 15000);
+
+  it('opens the Anime & Comics tab and renders Sanka API results', async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/anime/home')) return json({ data: [{ title: 'Sanka Test Anime', poster: 'https://img.example/poster.jpg' }] });
+      return json({});
+    });
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Anime & Comics' })[0]);
+
+    expect(await screen.findByText('Sanka Test Anime')).toBeTruthy();
+  }, 15000);
+
   it('enables IMDx from the Metadata settings card', async () => {
     window.location.hash = '#settings';
     render(<App />);
