@@ -9,6 +9,7 @@ import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
+import FlowView from './components/FlowView';
 import ProfilePicker from './components/ProfilePicker';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
@@ -38,7 +39,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'anime', 'sanka', 'discover', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'anime', 'sanka', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -844,6 +845,14 @@ const App: React.FC = () => {
     );
   } else if (view === 'sanka') {
     page = <SankaExplorer />;
+  } else if (view === 'flow') {
+    page = (
+      <FlowView
+        onPlay={playExplorerStream}
+        onEmbed={openEmbeddedPlayers}
+        compact={settings.compactCards}
+      />
+    );
   } else if (view === 'discover') {
     page = (
       <DiscoverView

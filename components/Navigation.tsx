@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookOpen, Check, Compass, Home, LayoutGrid, Library, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
+  Blocks, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
 import type { AppView, UserProfile } from '../types';
@@ -24,6 +24,7 @@ const mainNav = [
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
+  { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
   { id: 'library' as const, label: 'My Library', icon: Library },
 ];
@@ -33,6 +34,7 @@ const mobileNavItems = [
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
+  { id: 'flow' as const, label: 'Flow', icon: Play },
   { id: 'library' as const, label: 'Library', icon: Library },
   { id: 'extensions' as const, label: 'Addons', icon: Blocks },
   { id: 'settings' as const, label: 'Settings', icon: Settings },

@@ -76,7 +76,9 @@ export const ContinueCard: React.FC<{
                   ? 'ANIME'
                   : entry.media.source === 'imdx'
                     ? 'IMDX'
-                    : 'TMDB'}
+                    : entry.media.source === 'youtube'
+                      ? 'FLOW'
+                      : 'TMDB'}
           </span>
           <span className="continue-timestamp">{timeLabel}</span>
         </div>
