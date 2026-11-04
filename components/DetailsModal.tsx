@@ -166,7 +166,9 @@ const DetailsModal: React.FC<{
                   ? 'FROM THE ANIME INDEX'
                   : item.source === 'imdx'
                     ? 'FROM IMDX'
-                    : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
+                    : item.source === 'youtube'
+                      ? 'FROM YOUTUBE · FLOW'
+                      : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
             </span>
             <h2>{item.title}</h2>
             <div className="details-meta">

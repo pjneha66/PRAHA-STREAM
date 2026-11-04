@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -78,7 +78,7 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx';
+  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube';
   /** Present when the title was resolved through AniCore / Anikura. */
   anime?: AnimeReference;
   addonUrl?: string;

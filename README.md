@@ -76,6 +76,15 @@ npm run build
 - **Household Profiles & Library Statuses**: Multiple local profiles with separate watchlists (`Watching`, `Plan to Watch`, `On Hold`, `Completed`, `Dropped`) and histories. Fresh installs start with a “Who’s watching?” profile picker; the choice is remembered for subsequent launches.
 - **Full JSON Backup & Trakt / Simkl Scrobbling**: Export/share or import a single `.json` bundle containing all addons, repositories, profiles, library items, watch history, and settings—plus optional Trakt.tv and Simkl watch-history scrobbling.
 
+### Flow tab (YouTube / YouTube Music, no account needed)
+- **Where it comes from**: the tab is modelled after [Flow](https://github.com/Flow-Tube/Flow), the privacy-first YouTube / YouTube Music client for Android, and reads the same key-free data tier — YouTube's own `youtubei/v1` web endpoints and public channel RSS feeds. No API key, OAuth account, or third-party proxy is involved, and nothing about your viewing is stored outside PRAHA's local preferences.
+- **Home**: YouTube's recommendation shelves plus a trending fallback, rendered as PRAHA rows.
+- **Search**: videos and channels. Pasting a `watch`, `youtu.be`, `shorts`, or `embed` link jumps straight to that video.
+- **Music**: audio-only playback of any video through PRAHA's player (so mixes keep playing with the screen off), plus a one-tap, account-free **Flow radio** stream.
+- **Channels**: follow a channel by `@handle`, `/channel/UC…`, `/c/`, or `/user/` link; its recent uploads are read from YouTube's public feed. The list is stored per device in `praha.v2.flow-channels`.
+- **Watching**: the video opens in an embedded (cookie-less `youtube-nocookie.com`) player with chapters, description, comments, and *Up next*; **Play in PRAHA** sends the audio stream to the native player, **Embedded player** opens PRAHA's embed engine, and **Get Flow for Android** links to the upstream [releases](https://github.com/Flow-Tube/Flow/releases/latest).
+- **Platform notes**: the Android APK routes these requests through the native HTTP bridge, so they work without CORS. For `npm run dev`, start with `VITE_API_PROXY=1` — `vite.config.ts` relays `www.youtube.com`, `i.ytimg.com`, and `yt3.googleusercontent.com` under `/__youtube/<host>/` purely to add CORS headers. Add `YOUTUBE_PROXY_TARGET` to point the relay at a mirror.
+
 ### Anime tab, Anikura discussions and optional IMDx metadata
 
 The **Anime** tab reads two key-free public APIs directly from the device:
