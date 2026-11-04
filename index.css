@@ -2141,3 +2141,10 @@ html.dpad-mode select:focus {
   .flow-quality-summary small { display: none; }
   .flow-quality-menu { right: 8px; }
 }
+
+/* ---------- Flow tab: silent-stream warning ---------- */
+.flow-playback-warning { position: absolute; left: 8px; bottom: calc(100% + 8px); right: 8px; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid rgba(224, 184, 114, .34); border-radius: 10px; background: rgba(20, 16, 10, .95); color: #e6c89a; font-size: 8.5px; line-height: 1.5; backdrop-filter: blur(12px); }
+.flow-playback-warning > span { flex: 1; min-width: 140px; }
+.flow-playback-warning > button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-2); color: #e0e3e6; font-size: 8px; }
+.flow-playback-warning > button:hover { background: var(--surface-3); }
+.flow-quality-summary small.warn { color: #e0b872; }

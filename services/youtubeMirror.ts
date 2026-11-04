@@ -339,6 +339,26 @@ const invidiousList = (payload: unknown): YtVideo[] => {
  * include a numeric `height`. Missing this collapsed every quality into one
  * button labelled "?p".
  */
+/**
+ * Does this video stream carry an audio track? Piped says so with
+ * `videoOnly: false`; Invidious' `formatStreams` are muxed and its
+ * `adaptiveFormats` are not. Getting this wrong plays a silent picture.
+ */
+export function streamHasAudio(stream: Record<string, unknown>, kind: MirrorKind): boolean {
+  if (stream.videoOnly === true) return false;
+  if (stream.videoOnly === false) return true;
+  const audioQuality = String(stream.audioQuality ?? '').toUpperCase();
+  if (audioQuality.includes('AUDIO_QUALITY_')) return !audioQuality.endsWith('UNKNOWN');
+  if (typeof stream.audioTrackId === 'string' || typeof stream.audio_itag === 'number') return true;
+  if (stream.audioChannels) return true;
+  // Invidious reports `type`, not `mimeType`. Muxed formats live in
+  // formatStreams (adaptive: false); adaptiveFormats never carry audio.
+  const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
+  if (kind === 'invidious') return stream.adaptive !== true && mime.includes('mp4');
+  // Piped omits videoOnly on some instances; assume muxed unless it says otherwise.
+  return true;
+}
+
 export function trackHeight(stream: Record<string, unknown>, mime: string): number | undefined {
   const direct = num(stream.height);
   if (direct) return direct;
@@ -569,17 +589,23 @@ async function fallbackStreams(videoId: string): Promise<{ audio: YtDetail['audi
             const stream = raw as Record<string, unknown>;
             const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
             const quality = str(stream.qualityLabel) || str(stream.quality);
-            return { url: str(stream.url) || '', mime, bitrate: num(stream.bitrate) ?? 0, height: trackHeight(stream, mime), quality };
+            return { url: str(stream.url) || '', mime, bitrate: num(stream.bitrate) ?? 0, height: trackHeight(stream, mime), quality, hasAudio: streamHasAudio(stream, kind), raw: stream };
           })
           .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))
-          // Prefer muxed mp4 (has audio) and cap at 1080p; AVC mp4 plays everywhere.
-          .sort((a, b) => (b.height || 0) - (a.height || 0))
+          .filter((track) => kind === 'piped' ? track.hasAudio !== false : true)
+          .map((track) => ({ ...track, hasAudio: kind === 'piped' ? track.hasAudio : streamHasAudio(track.raw, kind) }))
+          .sort((a, b) => {
+            // Muxed first, then highest quality.
+            if (Boolean(b.hasAudio) !== Boolean(a.hasAudio)) return b.hasAudio ? 1 : -1;
+            return (b.height || 0) - (a.height || 0);
+          })
           .map((track) => ({
             url: track.url,
             mime: track.mime,
             bitrate: track.bitrate,
             height: track.height,
-            label: `${track.quality || (track.height ? `${track.height}p` : 'auto')} · ${track.mime.split(';')[0].replace('video/', '').toUpperCase()}`,
+            hasAudio: track.hasAudio,
+            label: `${track.quality || (track.height ? `${track.height}p` : 'auto')} · ${track.mime.split(';')[0].replace('video/', '').toUpperCase()}${track.hasAudio === false ? ' · silent' : ''}`,
           }));
 
         if (audio.length || video.length) {
@@ -606,20 +632,25 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
   const relatedRaw = isInvidious ? payload.recommendedVideos : payload.relatedStreams;
   const related = videoList(relatedRaw, isInvidious ? 'invidious' : 'piped').filter((video) => video.id !== videoId);
 
+  const muxedInvidious = (Array.isArray(payload.formatStreams) ? payload.formatStreams : []) as Array<Record<string, unknown>>;
+  const adaptiveInvidious = (Array.isArray(payload.adaptiveFormats) ? payload.adaptiveFormats : []) as Array<Record<string, unknown>>;
   const videoSource = isInvidious
-    ? [...(Array.isArray(payload.formatStreams) ? payload.formatStreams : []), ...(Array.isArray(payload.adaptiveFormats) ? payload.adaptiveFormats : [])]
+    // Muxed mp4 first: adaptive formats here never contain audio.
+    ? [...muxedInvidious.map((entry) => ({ ...entry, adaptive: false })), ...adaptiveInvidious.map((entry) => ({ ...entry, adaptive: true }))]
     : payload.videoStreams;
   let videoTracks: YtDetail['videoTracks'] = (Array.isArray(videoSource) ? videoSource : [])
     .map((raw) => {
       const stream = raw as Record<string, unknown>;
       const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
       const height = trackHeight(stream, mime);
+      const hasAudio = streamHasAudio(stream, isInvidious ? 'invidious' : 'piped');
       return {
         url: str(stream.url) || '',
         mime,
         bitrate: num(stream.bitrate) ?? 0,
         height,
-        label: `${height ? `${height}p` : String(stream.quality ?? 'auto')} · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
+        hasAudio,
+        label: `${height ? `${height}p` : String(stream.quality ?? 'auto')} · ${mime.split(';')[0].replace('video/', '').toUpperCase()}${hasAudio ? '' : ' · silent'}`,
       };
     })
     .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))
@@ -686,7 +717,7 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
     chapters: parsedChapters,
     audioTracks,
     videoTracks,
-    playbackUrl: videoTracks[0]?.url,
+    playbackUrl: (videoTracks.find((track) => track.hasAudio !== false) || videoTracks[0])?.url,
     embedUrl: youtubeEmbedUrl(videoId),
   };
 }

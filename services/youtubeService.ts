@@ -91,6 +91,8 @@ export interface YtMediaTrack {
   label: string;
   /** Rough height in pixels for video tracks. */
   height?: number;
+  /** False for adaptive video-only streams, which play silently. */
+  hasAudio?: boolean;
 }
 
 export interface YtDetail {
@@ -547,11 +549,13 @@ export function parseInnerTubeFormats(formats: Array<Record<string, unknown>>): 
     const height = Number((format.height as number | undefined) ?? 0)
       || Number(String(format.qualityLabel ?? '').replace(/[^0-9]/g, ''))
       || undefined;
+    const audioQuality = String(format.audioQuality ?? 'AUDIO_QUALITY_UNKNOWN').toUpperCase();
     return {
       url,
       mime,
       bitrate,
       height,
+      hasAudio: mime.startsWith('audio/') ? true : Boolean(audioQuality.includes('AUDIO_QUALITY_') && !audioQuality.endsWith('UNKNOWN')),
       label: mime.startsWith('audio/')
         ? `${Math.round(bitrate / 1000)} kbps · ${mime.split(';')[0].replace('audio/', '').toUpperCase()}`
         : `${height ?? '?'}p · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
@@ -564,13 +568,17 @@ export function parseInnerTubeFormats(formats: Array<Record<string, unknown>>): 
     .filter((track): track is YtMediaTrack => Boolean(track))
     .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
+  // Adaptive video (audioQuality UNKNOWN) is kept but flagged `hasAudio: false`:
+  // the Flow player pairs it with the audio-only track, and the quality menu
+  // labels it, instead of silently dropping 1080p/4K options.
   const videoTracks = formats
     .filter((format) => String(format.mimeType ?? '').startsWith('video/'))
-    // Muxed streams only: an adaptive video track has audioQuality "AUDIO_QUALITY_UNKNOWN".
-    .filter((format) => String(format.audioQuality ?? 'AUDIO_QUALITY_UNKNOWN').toUpperCase().includes('AUDIO_QUALITY_') && !/UNKNOWN$/.test(String(format.audioQuality ?? '')))
     .map(toTrack)
     .filter((track): track is YtMediaTrack => Boolean(track))
-    .sort((a, b) => (b.height || 0) - (a.height || 0));
+    .sort((a, b) => {
+      if (a.hasAudio !== b.hasAudio) return a.hasAudio ? -1 : 1;
+      return (b.height || 0) - (a.height || 0);
+    });
 
   return { audioTracks, videoTracks };
 }

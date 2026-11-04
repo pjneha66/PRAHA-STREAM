@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell, BellRing, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ExternalLink, Film, ListMusic,
   LoaderCircle, Music, Play, Plus, Radio, RefreshCw, Search, Settings, Share2, Trash2, Video, X,
@@ -150,6 +150,22 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [quality, setQuality] = useState<'auto' | number>('auto');
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [audioOnly, setAudioOnly] = useState(false);
+  const [silentWarning, setSilentWarning] = useState(false);
+  /**
+   * YouTube's embed checks the *referrer host*. localhost / preview domains are
+   * rejected (error 153), so the embed is shown with a https referrer YouTube
+   * accepts, and can be turned off per session.
+   */
+  const [embedReferrer, setEmbedReferrer] = useState<string>(() => embedReferrerFor(window.location.hostname));
+  /**
+   * When the best video stream is video-only (common for Invidious adaptive
+   * formats) the picture is paired with the audio-only track, so playback is
+   * never silent.
+   */
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioSynced = useRef(false);
+  const [playerError, setPlayerError] = useState('');
 
   /* ---------------- mirrors ---------------- */
   const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
@@ -319,6 +335,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setQuality('auto');
     setAudioOnly(false);
     setQualityMenuOpen(false);
+    setSilentWarning(false);
+    setPlayerError('');
     flowDetail(id)
       .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
@@ -413,11 +431,37 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   }, [detail]);
 
   const audioTrack = detail?.audioTracks?.[0];
+  const activeTrack = quality === 'auto' ? qualities[0] : qualities[quality];
   const activeSource = audioOnly
     ? audioTrack?.url
-    : quality === 'auto'
-      ? (detail?.playbackUrl || qualities[0]?.url)
-      : qualities[quality]?.url || qualities[0]?.url;
+    : activeTrack?.url || detail?.playbackUrl;
+  /** Video-only stream + a separate audio track → play them together. */
+  const duplicateAudio = !audioOnly && activeTrack?.hasAudio === false && Boolean(audioTrack);
+  const activeIsSilent = !audioOnly && activeTrack?.hasAudio === false && !audioTrack;
+
+  // Keep the hidden audio element locked to the video track's clock.
+  const syncAudio = useCallback(() => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    if (!video || !audio) return;
+    if (Math.abs(audio.currentTime - video.currentTime) > 0.4) audio.currentTime = video.currentTime;
+    audio.volume = video.muted ? 0 : video.volume;
+  }, []);
+
+  useEffect(() => {
+    if (!duplicateAudio) return;
+    audioSynced.current = false;
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    if (!video || !audio) return;
+    const start = () => { void audio.play().catch(() => setSilentWarning(true)); };
+    if (!video.paused) start();
+    video.addEventListener('play', start);
+    return () => {
+      video.removeEventListener('play', start);
+      audio.pause();
+    };
+  }, [duplicateAudio, activeSource]);
   const activeQualityLabel = audioOnly
     ? 'Audio only'
     : quality === 'auto'
@@ -844,29 +888,64 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               {detailState === 'idle' && detail && (
                 playerMode === 'embed' ? (
                   <>
-                    <iframe
-                      src={youtubeEmbedUrl(detail.id)}
-                      title={detail.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
-                      allowFullScreen
-                    />
+                    {/* YouTube rejects localhost/preview origins (error 153); try
+                        referrers that it does accept, then offer a real fallback. */}
+                    {embedReferrer ? (
+                      <iframe
+                        key={embedReferrer}
+                        src={youtubeEmbedUrl(detail.id)}
+                        title={detail.title}
+                        referrerPolicy="origin"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <div className="flow-stage-error">
+                        <Film size={22} />
+                        <p>YouTube's embedded player will not run on this origin. Pick how to watch instead:</p>
+                        <div>
+                          <button className="button button-primary" onClick={() => setPlayerMode('stream')}><Play size={14} /> Direct player</button>
+                          <button className="button button-secondary" onClick={() => openSafeExternalUrl(youtubeWatchUrl(detail.id))}>
+                            YouTube <ExternalLink size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="flow-stage-note info">
                       <CircleAlert size={15} />
-                      <span>YouTube's embedded player blocks localhost and preview domains (error 153). Use the direct player if it refuses to play.</span>
-                      <button onClick={() => setPlayerMode('stream')}><Play size={12} /> Direct player</button>
+                      <span>
+                        Embedding YouTube from a local or preview host triggers error 153 — that is YouTube's origin policy, not PRAHA.
+                        {embedReferrer ? ` Trying referrer ${new URL(embedReferrer).host}.` : ''}
+                      </span>
+                      <button onClick={() => setEmbedReferrer('')}><X size={12} /> No referrer</button>
+                      <button onClick={() => { openSafeExternalUrl(youtubeWatchUrl(detail.id)); }}><ExternalLink size={12} /> YouTube</button>
                     </div>
                   </>
                 ) : activeSource || detail.audioTracks.length ? (
                   <>
                     <video
-                      key={`${detail.id}-${quality}`}
+                      key={`${detail.id}-${quality}-${audioOnly}`}
+                      ref={videoRef}
                       className="flow-native-video"
-                      src={activeSource || detail.audioTracks[0].url}
+                      src={activeSource || detail.audioTracks[0]?.url}
                       poster={detail.thumbnail}
                       controls
                       autoPlay
                       playsInline
                       preload="metadata"
+                      onTimeUpdate={() => { if (duplicateAudio) syncAudio(); }}
+                      onSeeking={() => { if (duplicateAudio) syncAudio(); }}
+                      onPlay={() => { if (duplicateAudio) void audioRef.current?.play().catch(() => undefined); }}
+                      onPause={() => audioRef.current?.pause()}
+                      onRateChange={() => { if (audioRef.current && videoRef.current) audioRef.current.playbackRate = videoRef.current.playbackRate; }}
+                      onError={() => setPlayerError('This stream refused to load — try another quality, the embed, or YouTube.')}
+                      onVolumeChange={(event) => {
+                        if (!audioOnly && (event.currentTarget.muted || event.currentTarget.volume === 0)) {
+                          setSilentWarning(true);
+                        } else {
+                          setSilentWarning(false);
+                        }
+                      }}
                     />
                     <div className="flow-quality-bar">
                       <div className="flow-quality-summary">
@@ -879,6 +958,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                           <small>this source only had {qualities[0]?.height ? `${qualities[0].height}p` : 'one quality'}</small>
                         )}
                         {audioOnly && <small>audio in the background</small>}
+                        {!audioOnly && activeTrack?.hasAudio === false && <small className="warn">video-only stream</small>}
                       </div>
                       <button
                         className="flow-quality-toggle"
@@ -888,6 +968,27 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       >
                         Quality <ChevronDown size={12} className={qualityMenuOpen ? 'flip' : undefined} />
                       </button>
+                      {duplicateAudio && audioTrack && (
+                        <audio
+                          ref={audioRef}
+                          src={audioTrack.url}
+                          preload="auto"
+                          onError={() => setSilentWarning(true)}
+                        />
+                      )}
+                      {(activeIsSilent || silentWarning || playerError) && (
+                        <div className="flow-playback-warning" role="status">
+                          <CircleAlert size={13} />
+                          <span>
+                            {playerError
+                              || (activeIsSilent
+                                ? 'This quality is video-only (no audio track from this source).'
+                                : 'This stream is muted or silent.')}
+                          </span>
+                          <button onClick={() => setPlayerMode('embed')}><Film size={11} /> Embed</button>
+                          <button onClick={() => { openSafeExternalUrl(youtubeWatchUrl(detail.id)); }}><ExternalLink size={11} /> YouTube</button>
+                        </div>
+                      )}
                       {qualityMenuOpen && (
                         <div className="flow-quality-menu" role="menu">
                           <p className="flow-quality-menu-title">Playback quality</p>
@@ -1067,6 +1168,14 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     </div>
   );
 };
+
+/** Local and preview hosts are rejected by YouTube's embed; suggest a safe one. */
+export function embedReferrerFor(hostname: string): string {
+  const host = hostname.toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')
+    || /^\d+\.\d+\.\d+\.\d+$/.test(host) || /(^|\.)e2b\.app$/.test(host) || /^\w+-\d+\./.test(host);
+  return isLocal ? 'https://www.youtube.com/' : `https://${hostname}/`;
+}
 
 function formatClock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));

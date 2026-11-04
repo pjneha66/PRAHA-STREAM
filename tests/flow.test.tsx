@@ -2,7 +2,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import FlowView from '../components/FlowView';
+import FlowView, { embedReferrerFor } from '../components/FlowView';
 import { youtubeMedia, youtubeStream } from '../services/flowService';
 import {
   formatDuration, formatUrl, normalizeChannelInput, parseInnerTubeFormats, parseIsoDuration, parseVideoId,
@@ -11,7 +11,7 @@ import {
 import {
   DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, fetchMirrorHome, fetchMirrorMusic,
   isMusicVideo, kindsFor, lastProbeLog, normalizeMirrorUrl, pipedVideo, readMirrors, relativeTime,
-  resetDirectState, shouldTryDirect, summarise, withMirrorFallback,
+  resetDirectState, shouldTryDirect, streamHasAudio, summarise, withMirrorFallback,
 } from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
@@ -331,8 +331,10 @@ describe('Flow tab direct playback', () => {
     ];
     const { audioTracks, videoTracks } = parseInnerTubeFormats(formats);
     expect(audioTracks.map((track) => track.url)).toEqual(['https://cdn/audio-hi', 'https://cdn/audio-lo']);
-    expect(videoTracks.map((track) => track.url)).toEqual(['https://cdn/video-muxed']);
+    // Muxed first, then adaptive (kept so high resolutions stay selectable).
+    expect(videoTracks.map((track) => track.url)).toEqual(['https://cdn/video-muxed', 'https://cdn/video-adaptive']);
     expect(videoTracks[0].label).toContain('720p');
+    expect(videoTracks[1].hasAudio).toBe(false);
   });
 
   it('recovers a URL from signatureCipher and ignores formats with none', () => {
@@ -438,5 +440,36 @@ describe('Flow tab quality menu', () => {
     await act(async () => { fireEvent.click(button360 as HTMLElement); });
     expect(document.querySelector('video')?.getAttribute('src')).toBe('https://cdn/360');
     view.unmount();
+  });
+});
+
+describe('Flow tab audio integrity', () => {
+  it('treats Invidious adaptive formats as silent and its formatStreams as muxed', () => {
+    expect(streamHasAudio({ type: 'video/mp4', adaptive: true }, 'invidious')).toBe(false);
+    expect(streamHasAudio({ type: 'video/mp4', adaptive: false }, 'invidious')).toBe(true);
+    expect(streamHasAudio({ type: 'video/mp4' }, 'invidious')).toBe(true);
+  });
+
+  it('honours Piped videoOnly flags and audioQuality', () => {
+    expect(streamHasAudio({ videoOnly: true }, 'piped')).toBe(false);
+    expect(streamHasAudio({ videoOnly: false }, 'piped')).toBe(true);
+    expect(streamHasAudio({ audioQuality: 'AUDIO_QUALITY_MEDIUM' }, 'piped')).toBe(true);
+    expect(streamHasAudio({ audioQuality: 'AUDIO_QUALITY_UNKNOWN' }, 'piped')).toBe(false);
+  });
+
+  it('marks InnerTube muxed formats as having audio and adaptive ones as silent', () => {
+    const { videoTracks } = parseInnerTubeFormats([
+      { mimeType: 'video/mp4', url: 'https://cdn/muxed', height: 360, audioQuality: 'AUDIO_QUALITY_LOW' },
+      { mimeType: 'video/mp4', url: 'https://cdn/adaptive', height: 1080, audioQuality: 'AUDIO_QUALITY_UNKNOWN' },
+    ]);
+    expect(videoTracks.find((track) => track.url === 'https://cdn/muxed')?.hasAudio).toBe(true);
+    expect(videoTracks.find((track) => track.url === 'https://cdn/adaptive')?.hasAudio).toBe(false);
+  });
+
+  it('picks a YouTube-safe referrer for local and preview hosts', () => {
+    expect(embedReferrerFor('localhost')).toBe('https://www.youtube.com/');
+    expect(embedReferrerFor('127.0.0.1')).toBe('https://www.youtube.com/');
+    expect(embedReferrerFor('3000-abc123.e2b.app')).toBe('https://www.youtube.com/');
+    expect(embedReferrerFor('praha.example.com')).toBe('https://praha.example.com/');
   });
 });
