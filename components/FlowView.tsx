@@ -146,6 +146,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
    * so the direct stream is the primary player and the embed is opt-in.
    */
   const [playerMode, setPlayerMode] = useState<'stream' | 'embed'>('stream');
+  /** Index into the quality list, or 'auto' to let the browser pick. */
+  const [quality, setQuality] = useState<'auto' | number>('auto');
 
   /* ---------------- mirrors ---------------- */
   const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
@@ -312,6 +314,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setDetail(null);
     setCopied(false);
     setPlayerMode('stream');
+    setQuality('auto');
     flowDetail(id)
       .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
@@ -389,6 +392,26 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setSubs((current) => current.filter((entry) => entry.id !== id));
     if (feedId === id) { setFeedId(null); setFeed(null); setFeedState('idle'); }
   };
+
+  /**
+   * Distinct muxed qualities, highest first. Mirrors frequently hand back only a
+   * 360p muxed stream, so this list is also honest about what is available.
+   */
+  const qualities = useMemo(() => {
+    const tracks = detail?.videoTracks ?? [];
+    const seen = new Set<string>();
+    return tracks.filter((track) => {
+      const key = `${track.height ?? 0}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [detail]);
+
+  const activeSource = quality === 'auto' ? detail?.playbackUrl : qualities[quality]?.url;
+  const activeQualityLabel = quality === 'auto'
+    ? qualities[0]?.label
+    : qualities[quality]?.label;
 
   const tabs: Array<{ id: FlowTab; label: string; subtitle: string; icon: typeof Video }> = [
     { id: 'home', label: 'Home', subtitle: 'Recommendations & trending', icon: Video },
@@ -822,17 +845,51 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       <button onClick={() => setPlayerMode('stream')}><Play size={12} /> Direct player</button>
                     </div>
                   </>
-                ) : detail.playbackUrl || detail.audioTracks.length ? (
-                  <video
-                    key={detail.id}
-                    className="flow-native-video"
-                    src={detail.playbackUrl || detail.audioTracks[0].url}
-                    poster={detail.thumbnail}
-                    controls
-                    autoPlay
-                    playsInline
-                    preload="metadata"
-                  />
+                ) : activeSource || detail.audioTracks.length ? (
+                  <>
+                    <video
+                      key={`${detail.id}-${quality}`}
+                      className="flow-native-video"
+                      src={activeSource || detail.audioTracks[0].url}
+                      poster={detail.thumbnail}
+                      controls
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                    />
+                    <div className="flow-quality-bar">
+                      <span className="flow-quality-label">Video quality</span>
+                      <div className="flow-quality-options">
+                        <button
+                          className={quality === 'auto' ? 'active' : ''}
+                          onClick={() => setQuality('auto')}
+                        >
+                          Auto{qualities[0]?.height ? ` · ${qualities[0].height}p` : ''}
+                        </button>
+                        {qualities.map((track, index) => (
+                          <button
+                            key={`${track.height}-${index}`}
+                            className={quality === index ? 'active' : ''}
+                            onClick={() => setQuality(index)}
+                          >
+                            {track.height ? `${track.height}p` : track.label}
+                          </button>
+                        ))}
+                      </div>
+                      {qualities.length <= 1 && (
+                        <span className="flow-quality-hint">
+                          Only {activeQualityLabel || 'one quality'} was returned by the source
+                        </span>
+                      )}
+                      <button
+                        className="flow-quality-best"
+                        onClick={() => openSafeExternalUrl(youtubeWatchUrl(detail.id))}
+                        title="YouTube serves every quality up to 4K"
+                      >
+                        Higher quality on YouTube <ExternalLink size={11} />
+                      </button>
+                    </div>
+                  </>
                 ) : (
                   <div className="flow-stage-error">
                     <CircleAlert size={22} />
@@ -846,7 +903,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   </div>
                 )
               )}
-              {detailState === 'idle' && detail && detailChannel?.id && (
+              {detailState === 'idle' && detail && playerMode === 'embed' && detailChannel?.id && (
                 <div className="flow-inplayer-bar">
                   <span className="flow-inplayer-channel">
                     <Thumb src={detailChannel.avatar} width={96} className="flow-avatar" />

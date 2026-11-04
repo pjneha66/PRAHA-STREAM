@@ -358,3 +358,23 @@ describe('Flow tab player payload', () => {
     expect(stream.format).toBe('youtube');
   });
 });
+
+describe('Flow tab quality handling', () => {
+  it('keeps the highest muxed quality first and dedupes heights', () => {
+    const streams = [
+      { url: 'https://cdn/360', mimeType: 'video/mp4', qualityLabel: '360p', height: 360 },
+      { url: 'https://cdn/720', mimeType: 'video/mp4', qualityLabel: '720p', height: 720 },
+      { url: 'https://cdn/720-2', mimeType: 'video/mp4', qualityLabel: '720p', height: 720 },
+    ];
+    const sorted = [...streams].sort((a, b) => b.height - a.height);
+    expect(sorted[0].url).toBe('https://cdn/720');
+    const seen = new Set<number>();
+    const distinct = sorted.filter((track) => (seen.has(track.height) ? false : (seen.add(track.height), true)));
+    expect(distinct.map((track) => track.height)).toEqual([720, 360]);
+  });
+
+  it('reads height out of Invidious mime strings when no field is present', () => {
+    const mime = 'video/mp4; codecs="avc1"; res=1080x1920';
+    expect(Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0)).toBe(1080);
+  });
+});

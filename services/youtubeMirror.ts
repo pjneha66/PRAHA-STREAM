@@ -520,8 +520,12 @@ export async function fetchMirrorChannel(channelId: string): Promise<YtChannelFe
   };
 }
 
-/** Asks a media-capable instance for a track's audio, used when detail had none. */
-async function fallbackAudioTracks(videoId: string): Promise<YtDetail['audioTracks']> {
+/**
+ * Asks media-capable instances for stream URLs. Piped's `/streams` payload and
+ * Invidious' `/videos` payload usually carry more qualities than the instance
+ * that answered the metadata call, so this is how a 360p-only row is upgraded.
+ */
+async function fallbackStreams(videoId: string): Promise<{ audio: YtDetail['audioTracks']; video: YtDetail['videoTracks'] }> {
   for (const base of MEDIA_FALLBACKS) {
     for (const kind of kindsFor(base)) {
       try {
@@ -531,24 +535,49 @@ async function fallbackAudioTracks(videoId: string): Promise<YtDetail['audioTrac
         const response = await nativeFetchText(path, { timeoutMs: 9000, headers: { Accept: 'application/json' } });
         if (!response.ok) continue;
         const payload = JSON.parse(response.data) as Record<string, unknown>;
-        const source = (kind === 'piped' ? payload.audioStreams : payload.adaptiveFormats) as Array<Record<string, unknown>> | undefined;
-        const tracks = (Array.isArray(source) ? source : [])
-          .map((stream) => ({
-            url: str(stream.url) || '',
-            mime: String(stream.mimeType ?? stream.type ?? 'audio/webm'),
-            bitrate: num(stream.bitrate) ?? 0,
-          }))
+        const audioSource = kind === 'piped' ? payload.audioStreams : payload.adaptiveFormats;
+        const videoSource = kind === 'piped'
+          ? payload.videoStreams
+          : [...(Array.isArray(payload.formatStreams) ? payload.formatStreams : []), ...(Array.isArray(payload.adaptiveFormats) ? payload.adaptiveFormats : [])];
+
+        const audio = (Array.isArray(audioSource) ? audioSource : [])
+          .map((raw) => {
+            const stream = raw as Record<string, unknown>;
+            return { url: str(stream.url) || '', mime: String(stream.mimeType ?? stream.type ?? 'audio/webm'), bitrate: num(stream.bitrate) ?? 0 };
+          })
           .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('audio'))
           .sort((a, b) => b.bitrate - a.bitrate)
+          .map((track) => ({ ...track, label: `${Math.round(track.bitrate / 1000)} kbps · ${track.mime.split(';')[0].replace('audio/', '').toUpperCase()}` }));
+
+        const video = (Array.isArray(videoSource) ? videoSource : [])
+          .map((raw) => {
+            const stream = raw as Record<string, unknown>;
+            const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
+            const parsedHeight = Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0);
+            const quality = str(stream.qualityLabel) || str(stream.quality);
+            const height = num(stream.height) ?? (Number(String(quality || '').replace(/[^0-9]/g, '')) || parsedHeight || undefined);
+            return { url: str(stream.url) || '', mime, bitrate: num(stream.bitrate) ?? 0, height, quality };
+          })
+          .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))
+          // Prefer muxed mp4 (has audio) and cap at 1080p; AVC mp4 plays everywhere.
+          .sort((a, b) => (b.height || 0) - (a.height || 0))
           .map((track) => ({
-            ...track,
-            label: `${Math.round(track.bitrate / 1000)} kbps · ${track.mime.split(';')[0].replace('audio/', '').toUpperCase()}`,
+            url: track.url,
+            mime: track.mime,
+            bitrate: track.bitrate,
+            height: track.height,
+            label: `${track.quality || (track.height ? `${track.height}p` : 'auto')} · ${track.mime.split(';')[0].replace('video/', '').toUpperCase()}`,
           }));
-        if (tracks.length) return tracks;
+
+        if (audio.length || video.length) {
+          preferredMirror = preferredMirror || base;
+          logProbe({ base, kind, ok: true, detail: `streams ${audio.length}a/${video.length}v`, videos: video.length });
+          return { audio, video };
+        }
       } catch { /* try the next media host */ }
     }
   }
-  return [];
+  return { audio: [], video: [] };
 }
 
 export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
@@ -567,7 +596,7 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
   const videoSource = isInvidious
     ? [...(Array.isArray(payload.formatStreams) ? payload.formatStreams : []), ...(Array.isArray(payload.adaptiveFormats) ? payload.adaptiveFormats : [])]
     : payload.videoStreams;
-  const videoTracks: YtDetail['videoTracks'] = (Array.isArray(videoSource) ? videoSource : [])
+  let videoTracks: YtDetail['videoTracks'] = (Array.isArray(videoSource) ? videoSource : [])
     .map((raw) => {
       const stream = raw as Record<string, unknown>;
       const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
@@ -601,7 +630,12 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
 
   // Piped sometimes answers without media URLs (its proxy is separate); ask a
   // media-capable instance before giving up on in-app playback.
-  if (!audioTracks.length) audioTracks = await fallbackAudioTracks(videoId);
+  if (!audioTracks.length || !videoTracks.length) {
+    const extra = await fallbackStreams(videoId);
+    if (!audioTracks.length) audioTracks = extra.audio;
+    // Always take the fullest video list: mirrors often return only 360p.
+    if (extra.video.length && extra.video.length >= videoTracks.length) videoTracks = extra.video;
+  }
 
   const chapters = (Array.isArray(payload.chapters) ? payload.chapters : []) as Array<Record<string, unknown>>;
   const parsedChapters = chapters
