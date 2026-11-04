@@ -2,7 +2,8 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import FlowView, { youtubeMedia, youtubeStream } from '../components/FlowView';
+import FlowView from '../components/FlowView';
+import { youtubeMedia, youtubeStream } from '../services/flowService';
 import {
   formatDuration, normalizeChannelInput, parseIsoDuration, parseVideoId, youtubeChannelUrl,
   youtubeEmbedUrl, youtubeWatchUrl,

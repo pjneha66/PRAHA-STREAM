@@ -8,12 +8,45 @@
  */
 
 import {
-  fetchYoutubeChannel, fetchYoutubeDetail, fetchYoutubeHome, searchYoutube,
-  type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult,
+  fetchYoutubeChannel, fetchYoutubeDetail, fetchYoutubeHome, searchYoutube, youtubeWatchUrl,
+  type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult, type YtVideo,
 } from './youtubeService';
+import type { MediaItem, StreamResult } from '../types';
 import {
   fetchMirrorChannel, fetchMirrorDetail, fetchMirrorHome, searchMirror, withMirrorFallback,
 } from './youtubeMirror';
+
+/** Minimal video shape the Flow cards and player mapping need. */
+export type FlowVideoRef = Pick<YtVideo, 'id' | 'title' | 'channel' | 'thumbnail' | 'duration' | 'views' | 'published'>;
+
+/** Turn a Flow video into the MediaItem-shaped record PRAHA's player expects. */
+export function youtubeMedia(video: FlowVideoRef, fallbackId = 'youtube:unknown'): MediaItem {
+  return {
+    id: `youtube:${video.id || fallbackId}`,
+    type: 'movie',
+    title: video.title || 'YouTube video',
+    overview: '',
+    poster: video.thumbnail || '',
+    backdrop: video.thumbnail || '',
+    year: video.published,
+    genres: ['YouTube'],
+    source: 'youtube',
+  };
+}
+
+export function youtubeStream(video: FlowVideoRef): StreamResult {
+  return {
+    id: `youtube:${video.id}`,
+    title: video.title,
+    url: youtubeWatchUrl(video.id),
+    sourceName: 'YouTube · Flow',
+    sourceType: 'nuvio',
+    provider: 'flow',
+    format: 'youtube',
+    externalUrl: youtubeWatchUrl(video.id),
+    ytId: video.id,
+  };
+}
 
 export { DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, normalizeMirrorUrl, readMirrors } from './youtubeMirror';
 export type { FlowSource, YtBackend } from './youtubeMirror';

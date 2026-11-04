@@ -12,8 +12,8 @@ import {
   type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult, type YtShelf, type YtVideo,
 } from '../services/youtubeService';
 import {
-  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, flowChannel, flowDetail, flowHome, flowSearch,
-  normalizeMirrorUrl, type YtBackend,
+  DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowSearch, normalizeMirrorUrl,
+  youtubeMedia, youtubeStream, type FlowVideoRef, type YtBackend,
 } from '../services/flowService';
 
 /**
@@ -25,39 +25,10 @@ import {
  */
 
 type FlowTab = 'home' | 'search' | 'music' | 'channels';
-type FlowVideo = Pick<YtVideo, 'id' | 'title' | 'channel' | 'thumbnail' | 'duration' | 'views' | 'published'>;
+type FlowVideo = FlowVideoRef;
 
 const FLOW_RELEASES = 'https://github.com/Flow-Tube/Flow/releases/latest';
 const FLOW_REPO = 'https://github.com/Flow-Tube/Flow';
-
-/** Turn a Flow video into the MediaItem-shaped record PRAHA's player expects. */
-export function youtubeMedia(video: FlowVideo, fallbackId = 'youtube:unknown'): MediaItem {
-  return {
-    id: `youtube:${video.id || fallbackId}`,
-    type: 'movie',
-    title: video.title || 'YouTube video',
-    overview: '',
-    poster: video.thumbnail || '',
-    backdrop: video.thumbnail || '',
-    year: video.published,
-    genres: ['YouTube'],
-    source: 'youtube',
-  };
-}
-
-export function youtubeStream(video: FlowVideo): StreamResult {
-  return {
-    id: `youtube:${video.id}`,
-    title: video.title,
-    url: youtubeWatchUrl(video.id),
-    sourceName: 'YouTube · Flow',
-    sourceType: 'nuvio',
-    provider: 'flow',
-    format: 'youtube',
-    externalUrl: youtubeWatchUrl(video.id),
-    ytId: video.id,
-  };
-}
 
 const VideoCard: React.FC<{ video: FlowVideo; onOpen: () => void; radio?: boolean }> = ({ video, onOpen, radio }) => (
   <article className="flow-card">
