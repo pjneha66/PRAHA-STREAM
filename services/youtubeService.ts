@@ -157,8 +157,33 @@ export function normalizeChannelInput(input: string): string {
 
 export const youtubeWatchUrl = (videoId: string) => `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 export const youtubeChannelUrl = (channelId: string) => `https://www.youtube.com/channel/${encodeURIComponent(channelId)}`;
-export const youtubeEmbedUrl = (videoId: string, startSeconds = 0) =>
-  `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0&modestbranding=1${startSeconds > 0 ? `&start=${Math.floor(startSeconds)}` : ''}`;
+export interface EmbedOptions {
+  /** Seconds to start at. */
+  start?: number;
+  /** YouTube UI + caption language (BCP-47, e.g. "en", "hi"). */
+  language?: string;
+  /** Turn captions on by default. */
+  captions?: boolean;
+  /** Preferred caption track language; defaults to `language`. */
+  captionLanguage?: string;
+  /** Privacy-friendly nocookie host instead of www.youtube.com. */
+  noCookie?: boolean;
+  autoplay?: boolean;
+}
+
+export const youtubeEmbedUrl = (videoId: string, options: number | EmbedOptions = 0) => {
+  const opts: EmbedOptions = typeof options === 'number' ? { start: options } : options;
+  const host = opts.noCookie === false ? 'https://www.youtube.com' : 'https://www.youtube-nocookie.com';
+  const params = new URLSearchParams({ rel: '0', modestbranding: '1', playsinline: '1' });
+  if (opts.start && opts.start > 0) params.set('start', String(Math.floor(opts.start)));
+  if (opts.language) params.set('hl', opts.language);
+  if (opts.captions) {
+    params.set('cc_load_policy', '1');
+    params.set('cc_lang_pref', opts.captionLanguage || opts.language || 'en');
+  }
+  if (opts.autoplay) params.set('autoplay', '1');
+  return `${host}/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+};
 
 /** Accepts a raw ID, youtu.be short link, /shorts/ link, or a full watch URL. */
 export function parseVideoId(input: string): string {

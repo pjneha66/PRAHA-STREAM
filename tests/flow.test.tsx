@@ -42,7 +42,17 @@ describe('Flow tab link parsing', () => {
   it('builds watch, channel, and privacy-friendly embed URLs', () => {
     expect(youtubeWatchUrl('abc12345678')).toBe('https://www.youtube.com/watch?v=abc12345678');
     expect(youtubeChannelUrl('UC12345678901234567890')).toBe('https://www.youtube.com/channel/UC12345678901234567890');
-    expect(youtubeEmbedUrl('abc12345678')).toBe('https://www.youtube-nocookie.com/embed/abc12345678?rel=0&modestbranding=1');
+    const embed = new URL(youtubeEmbedUrl('abc12345678'));
+    expect(embed.origin).toBe('https://www.youtube-nocookie.com');
+    expect(embed.pathname).toBe('/embed/abc12345678');
+    expect(embed.searchParams.get('playsinline')).toBe('1');
+    expect(embed.searchParams.get('rel')).toBe('0');
+    // Player settings drive the player language / caption params.
+    const localised = new URL(youtubeEmbedUrl('abc12345678', { language: 'hi', captions: true, captionLanguage: 'mr', noCookie: false }));
+    expect(localised.origin).toBe('https://www.youtube.com');
+    expect(localised.searchParams.get('hl')).toBe('hi');
+    expect(localised.searchParams.get('cc_load_policy')).toBe('1');
+    expect(localised.searchParams.get('cc_lang_pref')).toBe('mr');
     expect(youtubeEmbedUrl('abc12345678', 90)).toContain('&start=90');
   });
 
@@ -72,16 +82,18 @@ describe('Flow tab link parsing', () => {
 describe('Flow tab UI smoke render', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('renders the Flow shell with all four sections and the upstream project links', () => {
+  it('renders the YouTube-style shell with rail, mode switch and upstream project links', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
     const html = renderToStaticMarkup(
       <FlowView onPlay={() => undefined} onEmbed={() => undefined} />,
     );
-    expect(html).toContain('FLOW · YOUTUBE WITHOUT THE TRACKING');
-    expect(html).toContain('YouTube, on your terms');
-    expect(html).toContain('https://github.com/Flow-Tube/Flow');
-    for (const label of ['Home', 'Search', 'Music', 'Channels']) expect(html).toContain(label);
+    expect(html).toContain('yt-topbar');
+    expect(html).toContain('yt-rail');
+    expect(html).toContain('aria-label="Player settings"');
+    for (const label of ['Home', 'Search', 'YouTube', 'Music', 'Channels']) expect(html).toContain(label);
     expect(html).toContain('role="tablist"');
+    // No banner or persistent notice is painted over the browse surface.
+    expect(html).not.toContain('flow-banner');
   });
 });
 
