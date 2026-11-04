@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preferredLanguage: 'en',
   accent: 'gold',
   tmdbApiKey: '',
+  tmdbEnrichment: { enabled: true, trailers: true, artwork: true, basicInfo: true, details: true, credits: true, episodes: true, seasonPosters: true, recommendations: true },
   imdx: DEFAULT_IMDX_SETTINGS,
   debrid: {
     provider: 'none',
@@ -106,6 +107,7 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
   return {
     ...DEFAULT_SETTINGS,
     ...base,
+    tmdbEnrichment: { ...DEFAULT_SETTINGS.tmdbEnrichment, ...(base.tmdbEnrichment || {}) },
     debrid: {
       ...DEFAULT_SETTINGS.debrid,
       ...(base.debrid || {}),

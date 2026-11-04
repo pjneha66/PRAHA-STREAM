@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Library } from 'lucide-react';
-import { listJellyfinItems, normalizeJellyfinUrl, signInJellyfin, signOutJellyfin, type JellyfinItem } from '../services/jellyfinService';
+import { listJellyfinItems, normalizeJellyfinUrl, signInJellyfin, signOutJellyfin, type JellyfinSnapshot } from '../services/jellyfinService';
 
 /** The password and session token are held in memory only; never included in backups or URLs. */
-const JellyfinSettings: React.FC = () => {
+const JellyfinSettings: React.FC<{ snapshot: JellyfinSnapshot | null; onSnapshotChange: (snapshot: JellyfinSnapshot | null) => void }> = ({ snapshot, onSnapshotChange }) => {
   const [server, setServer] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [session, setSession] = useState<{ base: string; name: string } | null>(null);
-  const [items, setItems] = useState<JellyfinItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const generation = useRef(0);
@@ -21,17 +19,16 @@ const JellyfinSettings: React.FC = () => {
     if (!username.trim() || !password) { setError('Enter your Jellyfin username and password.'); return; }
     if (base.startsWith('http:') && !window.confirm('This connection is not encrypted. Your password and session token can be observed on the network. Continue only on a trusted network?')) return;
     const current = ++generation.current;
-    setBusy(true); setError(''); setSession(null); setItems([]);
+    setBusy(true); setError(''); onSnapshotChange(null);
     try {
       const auth = await signInJellyfin(base, username.trim(), password);
       let logoutFailed = false;
-      let result: JellyfinItem[];
+      let result: JellyfinSnapshot['items'];
       try { result = await listJellyfinItems(base, auth.token, auth.userId); }
       finally { await signOutJellyfin(base, auth.token).catch(() => { logoutFailed = true; }); }
 
       if (generation.current !== current) return;
-      setSession({ base, name: auth.name });
-      setItems(result);
+      onSnapshotChange({ base, name: auth.name, items: result });
       setPassword('');
       if (logoutFailed) setError('Your library loaded, but the server did not confirm logout. You can revoke the PRAHA session in Jellyfin.');
     } catch (err) {
@@ -41,18 +38,18 @@ const JellyfinSettings: React.FC = () => {
 
   return <section className="settings-card">
     <div className="settings-card-heading"><span><Library size={19} /></span><div><h2>Jellyfin library</h2><p>Browse your own Jellyfin library and open titles in Jellyfin.</p></div></div>
-    <p className="jellyfin-note">Login is temporary and only used to fetch this list; it is not included in backups. For playback, Jellyfin opens separately and may ask you to sign in again. On the web, your server must allow this app's origin via CORS.</p>
+    <p className="jellyfin-note">Login is temporary and only used to fetch this list. The first 50 titles appear on Home until you reload, switch profiles, or clear the session; credentials are not stored or included in backups. For playback, Jellyfin opens separately and may ask you to sign in again. On the web, your server must allow this app's origin via CORS.</p>
     <form className="jellyfin-form" onSubmit={connect}>
       <label>Server URL<input type="url" required placeholder="https://your-server.example" value={server} onChange={(event) => setServer(event.target.value)} /></label>
       <label>Username<input autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} /></label>
       <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
       <button className="button button-primary" disabled={busy}>{busy ? 'Connecting…' : 'Connect and browse'}</button>
-      {(session || busy) && <button type="button" className="button button-secondary" onClick={() => { generation.current++; setSession(null); setItems([]); setPassword(''); setBusy(false); setError(''); }}>Clear session</button>}
+      {(snapshot || busy) && <button type="button" className="button button-secondary" onClick={() => { generation.current++; onSnapshotChange(null); setPassword(''); setBusy(false); setError(''); }}>Clear session</button>}
     </form>
     {error && <p role="alert" className="jellyfin-note">{error}</p>}
-    {session && <div className="jellyfin-results"><strong>{session.name} · {items.length} titles (first 50)</strong>
-      {items.length === 0 && <p>No movies or series found.</p>}
-      {items.map((item) => <div className="jellyfin-item" key={item.Id}><span>{item.Name} {item.ProductionYear ? `(${item.ProductionYear})` : ''} · {item.Type}</span><a className="text-button" href={`${session.base}/web/index.html#!/details?id=${encodeURIComponent(item.Id)}`} target="_blank" rel="noopener noreferrer">Open in Jellyfin <ExternalLink size={13} /></a></div>)}
+    {snapshot && <div className="jellyfin-results"><strong>{snapshot.name} · {snapshot.items.length} titles (first 50)</strong>
+      {snapshot.items.length === 0 && <p>No movies or series found.</p>}
+      {snapshot.items.map((item) => <div className="jellyfin-item" key={item.Id}><span>{item.Name} {item.ProductionYear ? `(${item.ProductionYear})` : ''} · {item.Type}</span><a className="text-button" href={`${snapshot.base}/web/index.html#!/details?id=${encodeURIComponent(item.Id)}`} target="_blank" rel="noopener noreferrer">Open in Jellyfin <ExternalLink size={13} /></a></div>)}
     </div>}
   </section>;
 };

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import type { MediaInfo } from 'dashjs';
 import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
 import { enterNativeAndroidPip, setImmersiveFullscreen } from '../../services/androidBridge';
 import { clamp } from './format';
@@ -31,6 +32,10 @@ export interface PlayerStats {
   readyState: number;
   engineName: string;
 }
+
+interface NativeAudioTrack { label?: string; language?: string; enabled: boolean }
+interface NativeAudioTrackList extends EventTarget { readonly length: number; [index: number]: NativeAudioTrack }
+type VideoWithAudioTracks = HTMLVideoElement & { audioTracks?: NativeAudioTrackList };
 
 interface EngineOptions {
   url: string;
@@ -81,7 +86,7 @@ export function useMpvEngine({
 }: EngineOptions) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const dashRef = useRef<{ reset: () => void; setQualityFor?: (type: string, index: number, force?: boolean) => void; setAutoSwitchQualityFor?: (type: string, enable: boolean) => void } | null>(null);
+  const dashRef = useRef<{ reset: () => void; setQualityFor?: (type: string, index: number, force?: boolean) => void; setAutoSwitchQualityFor?: (type: string, enable: boolean) => void; getTracksFor: (type: 'audio') => MediaInfo[]; getCurrentTrackFor: (type: 'audio') => MediaInfo | null; setCurrentTrack: (track: MediaInfo) => void } | null>(null);
   const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef({ network: 0, media: 0 });
   const resumeRef = useRef<number | null>(null);
@@ -107,7 +112,8 @@ export function useMpvEngine({
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [currentVolume, setCurrentVolume] = useState(volume);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(volume <= 0);
+  const lastAudibleVolumeRef = useRef(volume > 0 ? clamp(volume, 1, 100) : 100);
   const [rate, setRate] = useState(speed);
   const [levels, setLevels] = useState<LevelOption[]>([]);
   const [currentLevel, setCurrentLevel] = useState(-1);
@@ -130,6 +136,7 @@ export function useMpvEngine({
     setReady(false);
     setLevels([]);
     setAudioTracks([]);
+    setCurrentAudio('');
     setCurrentLevel(-1);
     recoveredRef.current = { network: 0, media: 0 };
     frameTimesRef.current = [];
@@ -192,6 +199,11 @@ export function useMpvEngine({
         dash.on('streamInitialized', () => {
           if (disposed) return;
           const dashAny = dash as unknown as { getBitrateInfoListFor?: (type: string) => Array<{ qualityIndex: number; height?: number; bitrate?: number }> };
+          const tracks = dash.getTracksFor('audio');
+          const selected = dash.getCurrentTrackFor('audio');
+          setAudioTracks(tracks.map((track, index) => ({ id: `dash:${index}`, label: track.labels?.[0]?.text || track.lang || `Audio ${index + 1}`, language: track.lang || undefined })));
+          const selectedIndex = tracks.findIndex((track) => track === selected || (track.id != null && track.id === selected?.id));
+          setCurrentAudio(selectedIndex >= 0 ? `dash:${selectedIndex}` : '');
           const bitrates = dashAny.getBitrateInfoListFor?.('video') || [];
           setLevels(bitrates.map((info, idx) => ({
             id: info.qualityIndex ?? idx,
@@ -270,7 +282,9 @@ export function useMpvEngine({
     const video = videoRef.current;
     if (!video) return;
     video.volume = clamp(volume / 100, 0, 1);
+    if (volume > 0) lastAudibleVolumeRef.current = clamp(volume, 1, 100);
     setCurrentVolume(volume);
+    setMuted(video.muted || video.volume === 0);
   }, [volume]);
 
   useEffect(() => {
@@ -341,9 +355,27 @@ export function useMpvEngine({
       setTextTracks(options);
       setCurrentText(active);
     };
+    const nativeTracks = (video as VideoWithAudioTracks).audioTracks;
+    const syncNativeAudio = () => {
+      if (hlsRef.current || dashRef.current || !nativeTracks) return;
+      const options: TrackOption[] = [];
+      let selected = '';
+      for (let index = 0; index < nativeTracks.length; index++) {
+        const track = nativeTracks[index];
+        options.push({ id: `native:${index}`, label: track.label || track.language || `Audio ${index + 1}`, language: track.language || undefined });
+        if (track.enabled) selected = `native:${index}`;
+      }
+      setAudioTracks(options);
+      setCurrentAudio(selected);
+    };
+    nativeTracks?.addEventListener('addtrack', syncNativeAudio);
+    nativeTracks?.addEventListener('removetrack', syncNativeAudio);
+    nativeTracks?.addEventListener('change', syncNativeAudio);
+    video.addEventListener('loadedmetadata', syncNativeAudio);
+    syncNativeAudio();
     const syncVolume = () => {
       setCurrentVolume(Math.round(video.volume * 100));
-      setMuted(video.muted);
+      setMuted(video.muted || video.volume === 0);
     };
     const syncRate = () => setRate(video.playbackRate);
     const handlePlay = () => setPlaying(true);
@@ -379,6 +411,10 @@ export function useMpvEngine({
     video.textTracks.addEventListener('change', syncTextTracks);
 
     return () => {
+      video.removeEventListener('loadedmetadata', syncNativeAudio);
+      nativeTracks?.removeEventListener('addtrack', syncNativeAudio);
+      nativeTracks?.removeEventListener('removetrack', syncNativeAudio);
+      nativeTracks?.removeEventListener('change', syncNativeAudio);
       video.removeEventListener('loadedmetadata', syncDuration);
       video.removeEventListener('durationchange', syncDuration);
       video.removeEventListener('timeupdate', syncTime);
@@ -588,6 +624,7 @@ export function useMpvEngine({
     const video = videoRef.current;
     if (!video) return;
     const next = clamp(Math.round(percent), 0, 100);
+    if (next > 0) lastAudibleVolumeRef.current = next;
     video.volume = next / 100;
     video.muted = next === 0;
     setCurrentVolume(next);
@@ -598,9 +635,18 @@ export function useMpvEngine({
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    video.muted = !video.muted;
-    setMuted(video.muted);
-  }, []);
+    if (video.volume === 0) {
+      const restored = lastAudibleVolumeRef.current;
+      video.volume = restored / 100;
+      video.muted = false;
+      setCurrentVolume(restored);
+      setMuted(false);
+      onSettingsChange({ volume: restored });
+    } else {
+      video.muted = !video.muted;
+      setMuted(video.muted);
+    }
+  }, [onSettingsChange]);
 
   const setSpeed = useCallback((next: number) => {
     const video = videoRef.current;
@@ -628,9 +674,20 @@ export function useMpvEngine({
   }, []);
 
   const selectAudio = useCallback((id: string) => {
-    const hls = hlsRef.current;
-    if (!hls || !id.startsWith('audio:')) return;
-    hls.audioTrack = Number(id.slice(6));
+    if (id.startsWith('audio:') && hlsRef.current) {
+      const index = Number(id.slice(6));
+      if (!Number.isInteger(index) || index < 0 || index >= hlsRef.current.audioTracks.length) return;
+      hlsRef.current.audioTrack = index;
+    } else if (id.startsWith('dash:') && dashRef.current) {
+      const track = dashRef.current.getTracksFor('audio')[Number(id.slice(5))];
+      if (!track) return;
+      dashRef.current.setCurrentTrack(track);
+    } else if (id.startsWith('native:')) {
+      const tracks = (videoRef.current as VideoWithAudioTracks | null)?.audioTracks;
+      const index = Number(id.slice(7));
+      if (!tracks || !Number.isInteger(index) || index < 0 || index >= tracks.length) return;
+      for (let i = 0; i < tracks.length; i++) tracks[i].enabled = i === index;
+    } else return;
     setCurrentAudio(id);
   }, []);
 

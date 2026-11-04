@@ -119,7 +119,7 @@ export async function fetchStremioCatalog(
   if (options.genre) extras.push(`genre=${encodeURIComponent(options.genre)}`);
   if (options.skip) extras.push(`skip=${options.skip}`);
   const suffix = extras.length ? `/${extras.join('&')}` : '';
-  base.pathname = `${base.pathname}/catalog/${encodeURIComponent(catalog.type)}/${encodeURIComponent(catalog.id)}${suffix}.json`;
+  base.pathname = `${base.pathname.replace(/\/$/, '')}/catalog/${encodeURIComponent(catalog.type)}/${encodeURIComponent(catalog.id)}${suffix}.json`;
   const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl));
   return (data.metas || data.metasDetailed || []).map((meta: Record<string, any>) => mapStremioMeta(meta, addon, catalog.type));
 }
@@ -127,7 +127,7 @@ export async function fetchStremioCatalog(
 export async function fetchStremioMeta(addon: InstalledAddon, media: MediaItem): Promise<MediaItem> {
   if (!supportsResource(addon, 'meta', media.type, media.id)) return media;
   const base = transportBase(addon.manifestUrl);
-  base.pathname = `${base.pathname}/meta/${media.type}/${encodeURIComponent(media.id)}.json`;
+  base.pathname = `${base.pathname.replace(/\/$/, '')}/meta/${media.type}/${encodeURIComponent(media.id)}.json`;
   const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl));
   if (!data.meta) return media;
   const detailed = mapStremioMeta(data.meta, addon, media.type);
@@ -147,7 +147,7 @@ export async function searchStremioAddons(addons: InstalledAddon[], query: strin
 
 async function fetchAddonStreams(addon: InstalledAddon, media: MediaItem, resourceId: string): Promise<StreamResult[]> {
   const base = transportBase(addon.manifestUrl);
-  base.pathname = `${base.pathname}/stream/${media.type}/${encodeURIComponent(resourceId)}.json`;
+  base.pathname = `${base.pathname.replace(/\/$/, '')}/stream/${media.type}/${encodeURIComponent(resourceId)}.json`;
   const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl), 20000);
   return (data.streams || []).map((stream: Record<string, any>, index: number) => {
     const url = typeof stream.url === 'string'
@@ -217,7 +217,7 @@ export async function findStremioSubtitles(
 
   const jobs = eligible.map(async (addon) => {
     const base = transportBase(addon.manifestUrl);
-    base.pathname = `${base.pathname}/subtitles/${media.type}/${encodeURIComponent(resourceId)}${suffix}.json`;
+    base.pathname = `${base.pathname.replace(/\/$/, '')}/subtitles/${media.type}/${encodeURIComponent(resourceId)}${suffix}.json`;
     const data = await fetchJson<{ subtitles?: Array<Record<string, any>> }>(withManifestQuery(base, addon.manifestUrl), 12000);
     return (data.subtitles || [])
       .filter((sub) => typeof sub.url === 'string' && sub.url.startsWith('http'))
@@ -262,7 +262,7 @@ export async function fetchStremioAddonCatalogs(addons: InstalledAddon[]): Promi
     ];
     return entries.slice(0, 3).map(async (cat) => {
       const base = transportBase(addon.manifestUrl);
-      base.pathname = `${base.pathname}/addon_catalog/${encodeURIComponent(cat.type)}/${encodeURIComponent(cat.id)}.json`;
+      base.pathname = `${base.pathname.replace(/\/$/, '')}/addon_catalog/${encodeURIComponent(cat.type)}/${encodeURIComponent(cat.id)}.json`;
       const data = await fetchJson<{ addons?: Array<{ transportUrl?: string; manifest?: StremioManifest }> }>(
         withManifestQuery(base, addon.manifestUrl),
         12000,

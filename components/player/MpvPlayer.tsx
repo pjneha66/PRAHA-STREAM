@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
-import { setImmersiveFullscreen } from '../../services/androidBridge';
+import { isAndroidApp, openExternalPlayer, setImmersiveFullscreen } from '../../services/androidBridge';
 import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
@@ -16,6 +16,14 @@ import { mediaErrorMessage, MAX_STALL_RETRIES } from './recovery';
 import './mpv-player.css';
 
 type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'settings' | 'help' | null;
+
+const PlayerMenu: React.FC<{ id: Exclude<MenuId, null>; title: string; active: MenuId; close: () => void; children: React.ReactNode }> = ({ id, title, active, close, children }) => (
+  <div className={`mpv-menu ${active === id ? 'open' : ''}`} role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
+    <header><span>{title}</span><button onClick={close} aria-label="Close menu"><X size={14} /></button></header>
+    <div className="mpv-menu-body">{children}</div>
+  </div>
+);
+
 
 interface MpvPlayerProps {
   stream: StreamResult;
@@ -64,6 +72,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const speedBoostRef = useRef<number | null>(null);
   const gestureRef = useRef<{ x: number; y: number; mode: 'none' | 'seek' | 'volume' | 'brightness'; base: number } | null>(null);
   const tapRef = useRef<{ time: number; zone: 'left' | 'center' | 'right' } | null>(null);
+  const lastTapRef = useRef<{ time: number; zone: 'left' | 'center' | 'right' } | null>(null);
   const osdTimer = useRef<number | null>(null);
 
   const [fatal, setFatal] = useState('');
@@ -321,7 +330,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   };
 
   const onTouchStart = (event: React.TouchEvent) => {
-    if (!settings.gestures || event.touches.length !== 1) return;
+    if (!settings.gestures || event.touches.length !== 1 || (event.target instanceof Element && event.target.closest('button, input, select, a, .mpv-seek, .mpv-menu, .mpv-help, [role=slider]'))) { gestureRef.current = null; tapRef.current = null; return; }
     const touch = event.touches[0];
     const zone = zoneOf(touch.clientX);
     tapRef.current = { time: Date.now(), zone };
@@ -384,9 +393,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     const tap = tapRef.current;
     tapRef.current = null;
     if (!tap || !settings.gestures) return;
-    const isDoubleTap = Date.now() - tap.time < 300;
-    if (tap.zone === 'center') { engine.toggle(); flash(playing ? 'Pause' : 'Play'); return; }
-    if (!isDoubleTap) return;
+    const previousTap = lastTapRef.current;
+    const isDoubleTap = Boolean(previousTap && previousTap.zone === tap.zone && tap.time - previousTap.time < 300);
+    lastTapRef.current = isDoubleTap ? null : tap;
+    if (tap.zone === 'center') { wakeControls(); return; }
+    if (!isDoubleTap) { wakeControls(); return; }
     const delta = tap.zone === 'left' ? -settings.seekStep : settings.seekStep;
     engine.seekBy(delta);
     showRipple(tap.zone === 'left' ? 'left' : 'right', `${delta > 0 ? '+' : '−'}${settings.seekStep}s`);
@@ -428,12 +439,6 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const activeSubtitle = textTracks.find((track) => track.id === currentText);
   const activeAudio = audioTracks.find((track) => track.id === currentAudio);
 
-  const Menu: React.FC<{ id: Exclude<MenuId, null>; title: string; children: React.ReactNode }> = ({ id, title, children }) => (
-    <div className={`mpv-menu ${menu === id ? 'open' : ''}`} role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
-      <header><span>{title}</span><button onClick={() => setMenu(null)} aria-label="Close menu"><X size={14} /></button></header>
-      <div className="mpv-menu-body">{children}</div>
-    </div>
-  );
 
   return (
     <div
@@ -660,12 +665,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
                 <SlidersHorizontal size={15} /> <span>{activeLevelLabel}</span>
               </button>
             )}
-            {audioTracks.length > 1 && (
-              <button className={`mpv-chip ${menu === 'audio' ? 'active' : ''}`} onClick={() => setMenu(menu === 'audio' ? null : 'audio')}>
-                <AudioLines size={15} /> <span>{activeAudio?.label || 'Audio'}</span>
-              </button>
-            )}
-            <button className={`mpv-chip ${menu === 'subs' ? 'active' : ''}`} onClick={() => setMenu(menu === 'subs' ? null : 'subs')}>
+            <button className={`mpv-chip ${menu === 'audio' ? 'active' : ''}`} onClick={() => setMenu(menu === 'audio' ? null : 'audio')} aria-label="Audio tracks" aria-expanded={menu === 'audio'}>
+              <AudioLines size={15} /> <span>{activeAudio?.label || 'Audio'}</span>
+            </button>
+            <button className={`mpv-chip ${menu === 'subs' ? 'active' : ''}`} onClick={() => setMenu(menu === 'subs' ? null : 'subs')} aria-label="Subtitles" aria-expanded={menu === 'subs'}>
               {currentText ? <Captions size={15} /> : <CaptionsOff size={15} />} <span>{activeSubtitle?.label || (preparedSubtitles.length ? `${preparedSubtitles.length} Subs` : 'Off')}</span>
             </button>
             {canCast && (
@@ -680,7 +683,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           </div>
         </div>
 
-        <Menu id="speed" title="Playback speed">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="speed" title="Playback speed">
           <div className="mpv-list">
             {PLAYBACK_SPEEDS.map((value) => (
               <button key={value} className={Math.abs(rate - value) < 0.01 ? 'active' : ''} onClick={() => { changeSpeed(value); setMenu(null); }}>
@@ -688,9 +691,9 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               </button>
             ))}
           </div>
-        </Menu>
+        </PlayerMenu>
 
-        <Menu id="quality" title="Quality">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="quality" title="Quality">
           <div className="mpv-list">
             <button className={currentLevel === -1 ? 'active' : ''} onClick={() => { engine.setLevel(-1); setMenu(null); }}>Auto{currentLevel === -1 && <Check size={14} />}</button>
             {[...levels].sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0)).map((level) => (
@@ -699,19 +702,28 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               </button>
             ))}
           </div>
-        </Menu>
+        </PlayerMenu>
 
-        <Menu id="audio" title="Audio track">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="audio" title="Audio track">
           <div className="mpv-list">
+            {!audioTracks.length && <p className="mpv-track-notice">This device did not expose selectable audio tracks. For MKV or Dolby Digital Plus, try VLC or an AAC source.</p>}
+            {isAndroidApp() ? (
+              <button onClick={() => openExternalPlayer(stream, media?.title || stream.title, 'vlc')}><AudioLines size={14} /> Open in VLC</button>
+            ) : (
+              <><p className="mpv-track-notice">Open VLC → Media → Open Network Stream, then paste this link. The link may contain private credentials.</p><button onClick={async () => {
+                try { await navigator.clipboard.writeText(stream.url); flash('Stream link copied'); }
+                catch { flash('Could not copy stream link'); }
+              }}>Copy stream link for VLC</button></>
+            )}
             {audioTracks.map((track) => (
               <button key={track.id} className={currentAudio === track.id ? 'active' : ''} onClick={() => { engine.selectAudio(track.id); setMenu(null); }}>
                 {track.label}{track.language ? ` (${track.language})` : ''}{currentAudio === track.id && <Check size={14} />}
               </button>
             ))}
           </div>
-        </Menu>
+        </PlayerMenu>
 
-        <Menu id="subs" title="Subtitles">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="subs" title="Subtitles">
           <div className="mpv-sub-upload-row">
             <button className="mpv-upload-btn" onClick={() => fileInputRef.current?.click()}>
               <Upload size={13} /> Load .srt / .vtt / .ass file
@@ -719,6 +731,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           </div>
           <div className="mpv-list">
             <button className={!currentText ? 'active' : ''} onClick={() => { engine.selectText(''); setMenu(null); }}>Off{!currentText && <Check size={14} />}</button>
+            {!textTracks.length && <p className="mpv-track-notice">No subtitles available. Load a subtitle file above or try another source.</p>}
             {textTracks.map((track) => (
               <button key={track.id} className={currentText === track.id ? 'active' : ''} onClick={() => { engine.selectText(track.id); setMenu(null); }}>
                 {track.label}{track.language ? ` (${track.language})` : ''}{currentText === track.id && <Check size={14} />}
@@ -749,9 +762,9 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               <input type="color" value={settings.subtitleColor} onChange={(event) => onSettingsChange({ subtitleColor: event.target.value })} />
             </label>
           </div>
-        </Menu>
+        </PlayerMenu>
 
-        <Menu id="settings" title="Player">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="settings" title="Player">
           <div className="mpv-menu-extra">
             <label>
               <span><Sun size={13} /> Brightness {Math.round(settings.brightness)}%</span>
@@ -794,7 +807,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               </button>
             </label>
           </div>
-        </Menu>
+        </PlayerMenu>
       </div>
 
       {!ready && !fatal && <div className="mpv-loading-hint"><CirclePlay size={16} /> Loading stream…</div>}

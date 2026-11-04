@@ -18,6 +18,7 @@ const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
 
 const DetailsModal: React.FC<{
   item: MediaItem;
+  tmdbEpisodesEnabled?: boolean;
   watchlist: MediaItem[];
   history: WatchProgress[];
   onClose: () => void;
@@ -29,6 +30,7 @@ const DetailsModal: React.FC<{
   inWatchlist: boolean;
 }> = ({
   item,
+  tmdbEpisodesEnabled = true,
   watchlist,
   history,
   onClose,
@@ -90,7 +92,7 @@ const DetailsModal: React.FC<{
   }, [animeSlug, item.id, item.type]);
 
   useEffect(() => {
-    if (item.type !== 'series' || !item.tmdbId || animeSlug) {
+    if (!tmdbEpisodesEnabled || item.type !== 'series' || !item.tmdbId || animeSlug) {
       setEpisodes([]);
       return;
     }
@@ -101,7 +103,7 @@ const DetailsModal: React.FC<{
       .catch(() => { if (active) setEpisodes([]); })
       .finally(() => { if (active) setEpisodesLoading(false); });
     return () => { active = false; };
-  }, [item.id, item.type, item.tmdbId, selectedSeason, animeSlug]);
+  }, [item.id, item.type, item.tmdbId, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();

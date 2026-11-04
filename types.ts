@@ -354,6 +354,18 @@ export type AppThemeAccent =
   | 'blue'
   | 'white';
 
+export interface TmdbEnrichmentSettings {
+  enabled: boolean;
+  trailers: boolean;
+  artwork: boolean;
+  basicInfo: boolean;
+  details: boolean;
+  credits: boolean;
+  episodes: boolean;
+  seasonPosters: boolean;
+  recommendations: boolean;
+}
+
 export interface AppSettings {
   autoplay: boolean;
   compactCards: boolean;
@@ -361,6 +373,7 @@ export interface AppSettings {
   preferredLanguage: string;
   accent: AppThemeAccent;
   tmdbApiKey: string;
+  tmdbEnrichment: TmdbEnrichmentSettings;
   /** Optional IMDb-style metadata from the IMDx / Tiffara API. TMDB stays the primary catalog. */
   imdx: ImdxSettings;
   /** Debrid service used to convert magnets/infoHashes into direct HTTP streams. */

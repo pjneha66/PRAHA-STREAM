@@ -5,11 +5,15 @@ import {
 import type { HomeCatalog, InstalledAddon, MediaItem, NuvioRepository, WatchProgress } from '../types';
 import { Artwork, ContinueCard, MediaRow } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
+import AddonHomeRows from './AddonHomeRows';
+import JellyfinHome from './JellyfinHome';
+import type { JellyfinSnapshot } from '../services/jellyfinService';
 import { DEFAULT_HOME_ROWS } from '../services/homeCache';
 import type { HomeRowId, HomeRowSettings } from '../services/homeCache';
 
 interface HomeViewProps {
   catalog: HomeCatalog;
+  jellyfinSnapshot?: JellyfinSnapshot | null;
   loading: boolean;
   error: string;
   tmdbReady: boolean;
@@ -36,7 +40,7 @@ interface HomeViewProps {
 }
 
 const HomeView: React.FC<HomeViewProps> = ({
-  catalog, loading, error, tmdbReady, history, watchlist, addons, repositories,
+  catalog, jellyfinSnapshot = null, loading, error, tmdbReady, history, watchlist, addons, repositories,
   onSelect, onPlay, onEmbeddedPlayers, onResumeEntry, onRemoveHistory, onToggleWatchlist,
   onOpenExtensions, onOpenLibrary, onOpenSettings, onRetry, compact, homeRows, onHomeRowsChange,
   imdxSpotlight = [], imdxEnabled = false,
@@ -47,6 +51,9 @@ const HomeView: React.FC<HomeViewProps> = ({
   const saved = featured ? watchlist.some((item) => item.id === featured.id) : false;
   const activeSources = addons.filter((addon) => addon.enabled).length + repositories.filter((repo) => repo.enabled).length;
   const moveFeatured = (direction: number) => setFeaturedIndex((current) => (current + direction + spotlight.length) % spotlight.length);
+
+  const jellyfinRow = <JellyfinHome snapshot={jellyfinSnapshot} onOpenSettings={onOpenSettings} />;
+  const addonRows = <AddonHomeRows addons={addons} watchlist={watchlist} compact={compact} onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} />;
 
   const sourceBanner = (
     <section className="source-banner">
@@ -80,6 +87,8 @@ const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </section>
         <TmdbSetupCard onOpenSettings={onOpenSettings} />
+        {jellyfinRow}
+        {addonRows}
         {sourceBanner}
       </div>
     );
@@ -93,6 +102,8 @@ const HomeView: React.FC<HomeViewProps> = ({
           <h1>Fetching tonight’s spotlight…</h1>
           <p>{tmdbReady ? 'Trending titles, artwork, and ratings are on their way from TMDB.' : 'Popular titles and ratings are on their way from IMDx.'}</p>
         </div></section>
+        {jellyfinRow}
+        {addonRows}
         <div className="media-grid">
           {Array.from({ length: 12 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>)}
         </div>
@@ -109,6 +120,8 @@ const HomeView: React.FC<HomeViewProps> = ({
             <button className="button button-secondary" onClick={onOpenSettings}>Check your API key</button>
           </div>
         </div>
+        {jellyfinRow}
+        {addonRows}
         {sourceBanner}
       </div>
     );
@@ -126,6 +139,8 @@ const HomeView: React.FC<HomeViewProps> = ({
             <button className="button button-secondary" onClick={onOpenSettings}>Check your API key</button>
           </div>
         </div>
+        {jellyfinRow}
+        {addonRows}
         {sourceBanner}
       </div>
     );
@@ -221,6 +236,8 @@ const HomeView: React.FC<HomeViewProps> = ({
           compact={compact}
         />
       )}
+      {jellyfinRow}
+      {addonRows}
       {sourceBanner}
     </div>
   );

@@ -67,6 +67,15 @@ export const CURATED_EXTENSIONS: CuratedExtensionItem[] = [
     manifestUrl: 'https://v3-channels.strem.io/manifest.json',
   },
   {
+    id: 'streaming-catalogs',
+    name: 'Streaming Catalogs',
+    kind: 'stremio',
+    category: 'Catalogs & Metadata',
+    description: 'Browse streaming service catalogs. Install the defaults or configure providers and paste the generated manifest URL in Stremio Addons.',
+    manifestUrl: 'https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/manifest.json',
+    configureUrl: 'https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/',
+  },
+  {
     id: 'cyberflix-catalog',
     name: 'Cyberflix Catalog',
     kind: 'stremio',

@@ -23,6 +23,7 @@ import {
 import { fetchStremioCatalog, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
 import { tmdbService } from './services/tmdbService';
+import type { JellyfinSnapshot } from './services/jellyfinService';
 import { animeService } from './services/animeService';
 import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
@@ -87,6 +88,7 @@ const App: React.FC = () => {
   const [catalog, setCatalog] = useState<HomeCatalog>(() => { try { return readHomeCache(window.localStorage) || EMPTY_HOME_CATALOG; } catch { return EMPTY_HOME_CATALOG; } });
   const [catalogState, setCatalogState] = useState<LoadState>('idle');
   const [catalogError, setCatalogError] = useState('');
+  const [jellyfinSnapshot, setJellyfinSnapshot] = useState<(JellyfinSnapshot & { profileId: string }) | null>(null);
   const [imdxSpotlight, setImdxSpotlight] = useState<MediaItem[]>([]);
   const [discoverItems, setDiscoverItems] = useState<MediaItem[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
@@ -133,6 +135,8 @@ const App: React.FC = () => {
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0] || DEFAULT_PROFILE,
     [profiles, activeProfileId],
   );
+
+  useEffect(() => { setJellyfinSnapshot(null); }, [activeProfile.id]);
 
   const watchlistKey = activeProfile.id === 'default'
     ? 'praha.v2.watchlist'
@@ -480,14 +484,14 @@ const App: React.FC = () => {
       const addon = addons.find((entry) => entry.manifestUrl === item.addonUrl);
       if (addon) {
         fetchStremioMeta(addon, item)
-          .then((metaItem) => (tmdbReady ? tmdbService.enrich(metaItem).catch(() => metaItem) : metaItem))
+          .then((metaItem) => (tmdbReady ? tmdbService.enrich(metaItem, settings.tmdbEnrichment).catch(() => metaItem) : metaItem))
           .then((enriched) => setSelected((current) => (current?.id === item.id ? enriched : current)))
           .catch(() => undefined);
         return;
       }
     }
     if (tmdbReady && (item.tmdbId || item.imdbId || item.id.startsWith('tt'))) {
-      tmdbService.enrich(item)
+      tmdbService.enrich(item, settings.tmdbEnrichment)
         .then((enriched) => {
           applyEnrichment(enriched);
           if (!enriched.cast?.length && !enriched.trailerKey) enrichWithImdx(enriched);
@@ -804,6 +808,7 @@ const App: React.FC = () => {
     page = (
       <HomeView
         catalog={catalog}
+        jellyfinSnapshot={jellyfinSnapshot?.profileId === activeProfile.id ? jellyfinSnapshot : null}
         loading={catalogState === 'loading'}
         error={catalogError}
         tmdbReady={tmdbReady}
@@ -920,6 +925,8 @@ const App: React.FC = () => {
     page = (
       <SettingsView
         settings={settings}
+        jellyfinSnapshot={jellyfinSnapshot?.profileId === activeProfile.id ? jellyfinSnapshot : null}
+        onJellyfinSnapshotChange={(snapshot) => setJellyfinSnapshot(snapshot ? { ...snapshot, profileId: activeProfile.id } : null)}
         onChange={setSettings}
         onReset={() => {
           setSettings({ ...DEFAULT_SETTINGS, tmdbApiKey: settings.tmdbApiKey || '' });
@@ -998,6 +1005,7 @@ const App: React.FC = () => {
       {selected && (
         <DetailsModal
           item={selected}
+          tmdbEpisodesEnabled={settings.tmdbEnrichment.enabled && settings.tmdbEnrichment.episodes}
           watchlist={watchlist}
           history={history}
           onClose={() => setSelected(null)}
