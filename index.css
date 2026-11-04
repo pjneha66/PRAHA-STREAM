@@ -2647,3 +2647,18 @@ html.dpad-mode select:focus {
   .yt-menu, .yt-menu.wide { right: 0; width: min(300px, calc(100vw - 40px)); }
   .yt-player-bar-actions > button span { display: none; }
 }
+
+.tmdb-enrichment-options { margin: 18px 0; border: 1px solid var(--border, #303035); border-radius: 14px; overflow: hidden; }
+.tmdb-enrichment-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.tmdb-enrichment-row strong { font-size: 14px; }
+.tmdb-enrichment-row p { margin: 4px 0 0; color: #9ca1aa; font-size: 13px; }
+.tmdb-enrichment-options > .api-privacy { padding: 12px 18px; }
+
+.jellyfin-home h2 { display: flex; align-items: center; gap: 9px; }
+.jellyfin-home-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 12px; }
+.jellyfin-home-card { display: flex; flex: 0 0 180px; min-height: 160px; flex-direction: column; gap: 7px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); color: var(--text); text-decoration: none; }
+.jellyfin-home-card:hover, .jellyfin-home-card:focus-visible { border-color: var(--accent); }
+.jellyfin-home-card strong { overflow-wrap: anywhere; }
+.jellyfin-home-card > span:not(.jellyfin-home-icon), .jellyfin-home-card small { color: var(--muted); font-size: 12px; }
+.jellyfin-home-card small { display: flex; align-items: center; gap: 5px; margin-top: auto; }
+.jellyfin-home-icon { color: var(--accent); }

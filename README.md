@@ -65,7 +65,7 @@ npm run build
 - **Stremio Subtitle Addons (`/subtitles/`)**: Automatically queries installed subtitle addons such as OpenSubtitles v3.
 - **SRT / ASS → WebVTT Converter, Local Upload & Sync Delay**: Converts `.srt` and `.ass` subtitles on the fly, supports loading local `.srt`/`.vtt`/`.ass` files from device storage, and adjusts subtitle timing offset (`Z`/`X` or `-0.25s`/`+0.25s`) and background opacity.
 - **Debrid Magnet Streaming**: Optional **Real-Debrid**, **AllDebrid**, and **TorBox** integration converts torrent magnets/`infoHash` streams into direct 4K HTTP streams inside the built-in player.
-- **Unified Source Finder & 1-Click Directory**: Searches Stremio and Nuvio (with per-scraper settings) providers together, with priority reordering (`↑`/`↓`), `/configure` links, and a built-in 1-click addon directory.
+- **Unified Source Finder & 1-Click Directory**: Searches Stremio and Nuvio (with per-scraper settings) providers together, with priority reordering (`↑`/`↓`), `/configure` links, and a built-in 1-click addon directory. The directory includes Streaming Catalogs: install its default catalogs or open Configure, select providers, and paste the generated manifest URL into the Stremio Addons install field. Remove an existing Streaming Catalogs installation first when switching configurations. This addon provides catalogs, not playback streams.
 
 ### Rich TMDB Metadata, Discover Filters, Profiles & Backup
 - **Rich Details Modal**: Inline YouTube trailers, real TMDB season & episode guides with thumbnails/air dates/watched bars, cast & director strip, and *More Like This* recommendations.

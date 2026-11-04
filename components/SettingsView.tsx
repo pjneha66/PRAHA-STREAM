@@ -9,6 +9,7 @@ import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/im
 import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
 import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
+import type { JellyfinSnapshot } from '../services/jellyfinService';
 import { PROFILE_PALETTE, ProfileAvatar } from './ProfilePicker';
 import type {
   AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
@@ -53,10 +54,12 @@ const SettingsView: React.FC<{
   onOpenProfilePicker?: () => void;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
+  jellyfinSnapshot: JellyfinSnapshot | null;
+  onJellyfinSnapshotChange: (snapshot: JellyfinSnapshot | null) => void;
 }> = ({
   settings, onChange, onReset, addons, repositories,
   profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile, onOpenProfilePicker,
-  onExportBackup, onImportBackup,
+  onExportBackup, onImportBackup, jellyfinSnapshot, onJellyfinSnapshotChange,
 }) => {
   const importFileRef = useRef<HTMLInputElement | null>(null);
 
@@ -225,6 +228,23 @@ const SettingsView: React.FC<{
           <section className="settings-card tmdb-settings-card">
             <div className="settings-card-heading"><span><KeyRound size={19} /></span><div><h2>TMDB API</h2><p>Use your own key for trending titles, search, trailers, cast, episode guides, and ID resolution.</p></div></div>
             <div className="tmdb-intro"><div><strong>Your key. Your metadata.</strong><p>PRAHA does not include a shared API key. Both v3 API keys and v4 read access tokens are supported.</p></div><a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">Get a free key <ExternalLink size={13} /></a></div>
+            <div className="tmdb-enrichment-options">
+              {([
+                ['enabled', 'Enable TMDB enrichment', 'Enhance title details with TMDB metadata.'],
+                ['trailers', 'Trailers', 'Use trailer candidates from TMDB.'],
+                ['artwork', 'Artwork', 'Use TMDB posters and backdrops.'],
+                ['basicInfo', 'Basic info', 'Use TMDB descriptions, genres and ratings.'],
+                ['details', 'Details', 'Use runtime and content ratings from TMDB.'],
+                ['credits', 'Credits', 'Use cast and director information from TMDB.'],
+                ['episodes', 'Episodes', 'Load TMDB episode guides for series.'],
+                ['seasonPosters', 'Season posters', 'Use TMDB season artwork.'],
+                ['recommendations', 'More like this', 'Use TMDB recommendations.'],
+              ] as const).map(([key, label, description]) => <div className="tmdb-enrichment-row" key={key}>
+                <div><strong>{label}</strong><p>{description}</p></div>
+                <Toggle checked={settings.tmdbEnrichment[key]} onChange={(checked) => update('tmdbEnrichment', { ...settings.tmdbEnrichment, [key]: checked })} label={label} />
+              </div>)}
+              <p className="api-privacy">These controls apply to detail enrichment; TMDB browsing and search still require your key.</p>
+            </div>
             <form className="api-key-form" onSubmit={verifyAndSave}>
               <label htmlFor="tmdb-api-key">TMDB API key or read access token</label>
               <div className="api-key-input"><KeyRound size={16} /><input id="tmdb-api-key" type={showApiKey ? 'text' : 'password'} value={apiDraft} onChange={(event) => { setApiDraft(event.target.value); setApiStatus('idle'); setApiMessage(''); }} placeholder="Paste your personal TMDB key here" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} disabled={apiStatus === 'checking'} /><button type="button" onClick={() => setShowApiKey((visible) => !visible)} aria-label={showApiKey ? 'Hide TMDB API key' : 'Show TMDB API key'}>{showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
@@ -409,7 +429,7 @@ const SettingsView: React.FC<{
             </div>
           </section>
 
-          <JellyfinSettings />
+          <JellyfinSettings snapshot={jellyfinSnapshot} onSnapshotChange={onJellyfinSnapshotChange} />
 
           {/* Android & TV Experience */}
           <section className="settings-card">

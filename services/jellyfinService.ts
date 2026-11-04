@@ -31,6 +31,8 @@ export async function signInJellyfin(base: string, username: string, password: s
 }
 
 export interface JellyfinItem { Id: string; Name: string; Type: string; ProductionYear?: number }
+/** An in-memory snapshot, never containing credentials or the Jellyfin token. */
+export interface JellyfinSnapshot { base: string; name: string; items: JellyfinItem[] }
 export async function listJellyfinItems(base: string, token: string, userId: string): Promise<JellyfinItem[]> {
   const query = new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', SortBy: 'SortName', SortOrder: 'Ascending', Limit: '50' });
   const response = await request<{ Items?: JellyfinItem[] }>(`${base}/Users/${encodeURIComponent(userId)}/Items?${query}`, { token });

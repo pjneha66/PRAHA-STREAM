@@ -500,3 +500,11 @@
 }
 
 .mpv-recovery-status { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); z-index: 5; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; text-align: center; pointer-events: none; }
+
+.mpv-stage.controls-off .mpv-osc { pointer-events: none; }
+.mpv-stage.controls-on .mpv-osc { pointer-events: auto; }
+.mpv-track-notice { margin: 8px; color: var(--osc-muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 760px) {
+  .mpv-right { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; justify-content: flex-start; }
+  .mpv-right .mpv-chip { flex: 0 0 auto; }
+}

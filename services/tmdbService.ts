@@ -1,5 +1,5 @@
 import type {
-  DiscoverFilters, MediaCastMember, MediaItem, TmdbEpisodeInfo, TmdbSeasonSummary,
+  DiscoverFilters, MediaCastMember, MediaItem, TmdbEpisodeInfo, TmdbSeasonSummary, TmdbEnrichmentSettings,
 } from '../types';
 import { getTmdbApiKey } from './tmdbConfig';
 
@@ -220,7 +220,8 @@ export const tmdbService = {
    * certification, official YouTube trailer, cast & director/creator,
    * real season summaries, and recommendations.
    */
-  async enrich(media: MediaItem): Promise<MediaItem> {
+  async enrich(media: MediaItem, options?: TmdbEnrichmentSettings): Promise<MediaItem> {
+    if (options && !options.enabled) return media;
     let tmdbId = media.tmdbId;
     if (!tmdbId) {
       const resolved = await this.resolveIds(media).catch(() => ({ tmdbId: undefined, imdbId: media.imdbId }));
@@ -277,7 +278,7 @@ export const tmdbService = {
 
     const recommendations = mapList(details.recommendations?.results, type).slice(0, 12);
 
-    return {
+    const enriched: MediaItem = {
       ...media,
       tmdbId,
       imdbId: details.external_ids?.imdb_id || details.imdb_id || media.imdbId,
@@ -301,6 +302,15 @@ export const tmdbService = {
       seasons: seasons.length ? seasons : media.seasons,
       numberOfSeasons: Number(details.number_of_seasons) || seasons.length || media.numberOfSeasons,
     };
+    if (!options) return enriched;
+    if (!options.basicInfo) Object.assign(enriched, { overview: media.overview, genres: media.genres, rating: media.rating, year: media.year });
+    if (!options.artwork) Object.assign(enriched, { poster: media.poster, backdrop: media.backdrop, logo: media.logo });
+    if (!options.details) Object.assign(enriched, { runtime: media.runtime, maturity: media.maturity });
+    if (!options.trailers) Object.assign(enriched, { trailerKey: media.trailerKey, trailerName: media.trailerName });
+    if (!options.credits) Object.assign(enriched, { cast: media.cast, director: media.director });
+    if (!options.recommendations) enriched.recommendations = media.recommendations;
+    if (!options.seasonPosters && enriched.seasons) enriched.seasons = enriched.seasons.map((season) => ({ ...season, poster: media.seasons?.find((old) => old.seasonNumber === season.seasonNumber)?.poster }));
+    return enriched;
   },
 
   /** Load full episode guide for one TV season (cached in-memory for instant switching). */
