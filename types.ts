@@ -107,10 +107,14 @@ export interface WatchProgress {
   lastStream?: StreamResult;
 }
 
+export type ProfileAvatarIcon = 'classic' | 'cool' | 'wink' | 'joy' | 'hero' | 'kids';
+
 export interface UserProfile {
   id: string;
   name: string;
   avatarColor: string;
+  avatarIcon?: ProfileAvatarIcon;
+  avatarImage?: string;
   isKids?: boolean;
   createdAt: number;
 }
@@ -365,6 +369,8 @@ export interface AppSettings {
   sync: SyncSettings;
   /** Enhanced D-Pad / Android TV spatial remote navigation. */
   dpadNavigation: boolean;
+  /** Show the Netflix-style "Who's watching?" profile screen at the start of each session. */
+  askProfileOnStartup: boolean;
   /** Route header-protected streams through native Android proxy when running in APK. */
   preferNativeProxy: boolean;
   player: PlayerSettings;

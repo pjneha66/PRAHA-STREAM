@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus,
+  Blocks, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, UserPlus, Users,
 } from 'lucide-react';
+import { ProfileAvatar } from './ProfilePicker';
 import type { AppView, UserProfile } from '../types';
 
 interface NavigationProps {
@@ -14,13 +15,14 @@ interface NavigationProps {
   profiles: UserProfile[];
   activeProfile: UserProfile;
   onSelectProfile: (profileId: string) => void;
+  onOpenProfilePicker?: () => void;
   children: React.ReactNode;
 }
 
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
-  { id: 'sanka' as const, label: 'Anime & Comics', icon: BookOpen },
+  { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
@@ -40,7 +42,7 @@ const mobileNavItems = [
 
 const Navigation: React.FC<NavigationProps> = ({
   view, onNavigate, query, onQueryChange, onSearch, sourceCount,
-  profiles, activeProfile, onSelectProfile, children,
+  profiles, activeProfile, onSelectProfile, onOpenProfilePicker, children,
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -76,8 +78,6 @@ const Navigation: React.FC<NavigationProps> = ({
     );
   };
 
-  const initial = (activeProfile.name || 'P').trim().charAt(0).toUpperCase();
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -108,7 +108,7 @@ const Navigation: React.FC<NavigationProps> = ({
               onClick={() => setProfileMenuOpen((open) => !open)}
               aria-expanded={profileMenuOpen}
             >
-              <span className="avatar" style={{ background: activeProfile.avatarColor, color: '#11150c' }}>{initial}</span>
+              <ProfileAvatar profile={activeProfile} size="sm" />
               <span>
                 <strong>{activeProfile.name}</strong>
                 <small>{activeProfile.isKids ? 'Kids profile' : `${profiles.length} local profile${profiles.length === 1 ? '' : 's'}`}</small>
@@ -119,7 +119,7 @@ const Navigation: React.FC<NavigationProps> = ({
             {profileMenuOpen && (
               <div className="profile-popover" role="menu">
                 <p>Switch profile</p>
-                {profiles.map((prof) => (
+                {profiles.map((prof, idx) => (
                   <button
                     key={prof.id}
                     className={prof.id === activeProfile.id ? 'active' : ''}
@@ -128,15 +128,24 @@ const Navigation: React.FC<NavigationProps> = ({
                       setProfileMenuOpen(false);
                     }}
                   >
-                    <span className="avatar small" style={{ background: prof.avatarColor, color: '#11150c' }}>
-                      {prof.name.charAt(0).toUpperCase()}
-                    </span>
+                    <ProfileAvatar profile={prof} size="xs" index={idx} />
                     <b>{prof.name}</b>
                     {prof.id === activeProfile.id && <Check size={14} />}
                   </button>
                 ))}
+                {onOpenProfilePicker && (
+                  <button
+                    className="profile-manage-link"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      onOpenProfilePicker();
+                    }}
+                  >
+                    <Users size={14} /> Who’s watching? screen
+                  </button>
+                )}
                 <button
-                  className="profile-manage-link"
+                  className={onOpenProfilePicker ? '' : 'profile-manage-link'}
                   onClick={() => {
                     setProfileMenuOpen(false);
                     onNavigate('settings');
@@ -174,12 +183,12 @@ const Navigation: React.FC<NavigationProps> = ({
             <Plus size={16} />
           </button>
           <button
-            className="top-avatar"
-            style={{ background: activeProfile.avatarColor, color: '#11150c' }}
-            onClick={() => onNavigate('settings')}
-            aria-label={`Profile: ${activeProfile.name}`}
+            className="top-avatar-btn"
+            onClick={() => (onOpenProfilePicker ? onOpenProfilePicker() : onNavigate('settings'))}
+            aria-label={`Switch profile (${activeProfile.name})`}
+            title={`Switch profile (${activeProfile.name})`}
           >
-            {initial}
+            <ProfileAvatar profile={activeProfile} size="sm" />
           </button>
         </header>
         <main className="main-content">{children}</main>

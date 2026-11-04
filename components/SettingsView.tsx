@@ -9,6 +9,7 @@ import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/im
 import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
 import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
+import { PROFILE_PALETTE, ProfileAvatar } from './ProfilePicker';
 import type {
   AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
   PlayerSettings, UserProfile,
@@ -20,7 +21,7 @@ export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) =
 
 type ApiStatus = 'idle' | 'checking' | 'success' | 'error';
 
-const AVATAR_COLORS = ['#d6f77a', '#a78bfa', '#60a5fa', '#f472b6', '#fbbf24', '#34d399'];
+const AVATAR_COLORS = PROFILE_PALETTE;
 
 const THEME_ACCENTS: Array<{ id: AppThemeAccent; label: string; color: string }> = [
   { id: 'gold', label: 'Gold', color: '#FFD45C' },
@@ -49,11 +50,12 @@ const SettingsView: React.FC<{
   onSelectProfile: (profileId: string) => void;
   onCreateProfile: (name: string, avatarColor: string, isKids: boolean) => void;
   onDeleteProfile: (profileId: string) => void;
+  onOpenProfilePicker?: () => void;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
 }> = ({
   settings, onChange, onReset, addons, repositories,
-  profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile,
+  profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile, onOpenProfilePicker,
   onExportBackup, onImportBackup,
 }) => {
   const importFileRef = useRef<HTMLInputElement | null>(null);
@@ -154,14 +156,28 @@ const SettingsView: React.FC<{
                 <h2>Profiles</h2>
                 <p>Each profile keeps its own watchlist, statuses, and Continue Watching history.</p>
               </div>
+              {onOpenProfilePicker && (
+                <button type="button" className="button button-secondary button-small settings-heading-action" onClick={onOpenProfilePicker}>
+                  <Users size={14} /> Who’s watching?
+                </button>
+              )}
+            </div>
+            <div className="setting-row">
+              <div>
+                <strong>Ask “Who’s watching?” on launch</strong>
+                <p>Show the Netflix-style profile selection screen whenever you open PRAHA STREAM.</p>
+              </div>
+              <Toggle
+                checked={settings.askProfileOnStartup !== false}
+                onChange={(checked) => update('askProfileOnStartup', checked)}
+                label="Ask Who's watching on launch"
+              />
             </div>
             <div className="profiles-list">
-              {profiles.map((prof) => (
+              {profiles.map((prof, idx) => (
                 <div key={prof.id} className={`profile-row-card ${prof.id === activeProfile.id ? 'active' : ''}`}>
                   <button className="profile-row-select" onClick={() => onSelectProfile(prof.id)}>
-                    <span className="avatar" style={{ background: prof.avatarColor, color: '#11150c' }}>
-                      {prof.name.charAt(0).toUpperCase()}
-                    </span>
+                    <ProfileAvatar profile={prof} size="sm" index={idx} />
                     <div>
                       <strong>{prof.name}</strong>
                       <small>{prof.isKids ? 'Kids profile' : 'Standard profile'}{prof.id === activeProfile.id ? ' · Active' : ''}</small>

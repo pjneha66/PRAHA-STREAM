@@ -130,6 +130,98 @@ export function resolvePlayableStreamUrl(stream: StreamResult, preferNativeProxy
   return stream.url;
 }
 
+const WP_MEDIA_HOST_RE = /(otakudesu|komikstation|bacakomik|komikindo|komikcast|kiryuu|westmanga|samehadaku|anoboy|kuramanime|komiku|mangakita|softkomik)/i;
+const GLOBAL_CDN_HOST_RE = /(^|\.)((i[0-3]\.wp\.com)|(media\.kitsu\.(io|app))|(s4\.anilist\.co)|(cdn\.myanimelist\.net)|(uploads\.mangadex\.org)|(wsrv\.nl)|(duckduckgo\.com))$/i;
+
+/**
+ * Ordered list of candidate URLs for external anime/manga cover & chapter images.
+ * Handles:
+ *  - Hosting HTTP `Referrer-Policy` headers overriding `<img referrerPolicy="no-referrer">`
+ *  - Hotlink-protected WordPress & manga chapter CDNs
+ *  - Regional ISP DNS/SNI blocks on `.best` / `.org` / `.my` / `.cloud` domains
+ */
+export function buildImageCandidates(url?: string): string[] {
+  if (!url) return [];
+  const trimmed = url.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('/sanka-img?')) {
+    return [trimmed];
+  }
+
+  const env = (import.meta as unknown as { env?: Record<string, string | boolean | undefined> }).env || {};
+  if (env.MODE === 'test') {
+    return [trimmed];
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return [trimmed];
+  } catch {
+    return [trimmed];
+  }
+
+  if (GLOBAL_CDN_HOST_RE.test(parsed.hostname)) {
+    return [trimmed, `https://external-content.duckduckgo.com/iu/?u=${encodeURIComponent(trimmed)}&f=1`];
+  }
+
+  const candidates: string[] = [];
+  const push = (candidate?: string | null) => {
+    if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
+  };
+
+  if (typeof window !== 'undefined' && window.PrahaNative?.proxyStreamUrl && hasNativeHeaderProxy()) {
+    try {
+      const proxied = window.PrahaNative.proxyStreamUrl(
+        trimmed,
+        JSON.stringify({
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        }),
+      );
+      if (proxied && proxied !== trimmed) push(proxied);
+    } catch {
+      // Ignore native bridge error and continue with web candidates.
+    }
+  }
+
+  if (env.VITE_API_PROXY === '1' && !isAndroidApp()) {
+    push(`/sanka-img?url=${encodeURIComponent(trimmed)}`);
+  }
+
+  const photonUrl = parsed.protocol === 'https:'
+    ? `https://i0.wp.com/${parsed.host}${parsed.pathname}`
+    : `https://i0.wp.com/${parsed.host}${parsed.pathname}`;
+  const ddgProxyUrl = `https://external-content.duckduckgo.com/iu/?u=${encodeURIComponent(trimmed)}&f=1`;
+  const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(trimmed)}&n=-1`;
+
+  const isWordPressMedia = parsed.pathname.includes('/wp-content/') || WP_MEDIA_HOST_RE.test(parsed.hostname);
+
+  if (isWordPressMedia) {
+    push(photonUrl);
+    push(ddgProxyUrl);
+    push(trimmed);
+    push(wsrvUrl);
+  } else {
+    push(trimmed);
+    push(ddgProxyUrl);
+    push(photonUrl);
+    push(wsrvUrl);
+  }
+
+  return candidates;
+}
+
+/**
+ * Fallback URL for hotlink-protected external comic/manga images when a direct
+ * `<img referrerPolicy="no-referrer">` request fails.
+ */
+export function buildFallbackImageUrl(url: string): string | null {
+  const candidates = buildImageCandidates(url);
+  const next = candidates.find((item) => item !== url);
+  return next || null;
+}
+
 export interface NativeHttpResult {
   ok: boolean;
   status: number;
@@ -171,7 +263,11 @@ export async function nativeFetchText(
         signal: controller.signal,
       });
       const data = await response.text();
-      return { ok: response.ok, status: response.status, data };
+      if (isAndroidApp() && !response.ok && (response.status === 403 || response.status === 0)) {
+        // Fall through to native HTTP when WebView's Origin or wv User-Agent is challenged.
+      } else {
+        return { ok: response.ok, status: response.status, data };
+      }
     } catch (fetchError) {
       if (!isAndroidApp()) throw fetchError;
       // On Android, fall through to native HTTP if WebView fetch hit CORS.
