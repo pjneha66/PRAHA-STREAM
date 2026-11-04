@@ -80,6 +80,12 @@ function logProbe(entry: SourceProbe): void {
   if (lastProbeLog.length > 24) lastProbeLog.length = 24;
 }
 
+/** Wall-clock budget for one mirror sweep; exposed so tests can shrink it. */
+export let mirrorSweepBudgetMs = 14000;
+export function setMirrorSweepBudget(ms: number): void {
+  mirrorSweepBudgetMs = Math.max(0, ms);
+}
+
 export function readMirrors(): string[] {
   let stored: string[] = [];
   try {
@@ -137,12 +143,20 @@ async function mirrorFetch<T>(
   parse: (payload: unknown, kind: MirrorKind) => T | null,
 ): Promise<T> {
   const problems: string[] = [];
+  // Hard budget for the whole sweep: twelve dead instances at 6s each would
+  // otherwise keep the spinner up for over a minute.
+  const deadline = Date.now() + mirrorSweepBudgetMs;
   for (const base of readMirrors()) {
+    if (Date.now() > deadline) {
+      problems.push(`${problems.length ? 'sweep' : 'mirrors'}: gave up after ${problems.length} failed hosts`);
+      break;
+    }
     for (const kind of kindsFor(base)) {
+      if (Date.now() > deadline) break;
       const started = Date.now();
       try {
         const response = await nativeFetchText(`${base}${paths[kind]}`, {
-          timeoutMs: 9000,
+          timeoutMs: 6000,
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) {
@@ -561,13 +575,15 @@ export async function fetchMirrorChannel(channelId: string): Promise<YtChannelFe
  * that answered the metadata call, so this is how a 360p-only row is upgraded.
  */
 async function fallbackStreams(videoId: string): Promise<{ audio: YtDetail['audioTracks']; video: YtDetail['videoTracks'] }> {
-  for (const base of MEDIA_FALLBACKS) {
+  const deadline = Date.now() + 8000;
+  for (const base of MEDIA_FALLBACKS.slice(0, 2)) {
+    if (Date.now() > deadline) break;
     for (const kind of kindsFor(base)) {
       try {
         const path = kind === 'piped'
           ? `${base}/streams/${encodeURIComponent(videoId)}`
           : `${base}/api/v1/videos/${encodeURIComponent(videoId)}`;
-        const response = await nativeFetchText(path, { timeoutMs: 9000, headers: { Accept: 'application/json' } });
+        const response = await nativeFetchText(path, { timeoutMs: 6000, headers: { Accept: 'application/json' } });
         if (!response.ok) continue;
         const payload = JSON.parse(response.data) as Record<string, unknown>;
         const audioSource = kind === 'piped' ? payload.audioStreams : payload.adaptiveFormats;

@@ -5,13 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import FlowView, { embedReferrerFor } from '../components/FlowView';
 import { youtubeMedia, youtubeStream } from '../services/flowService';
 import {
-  formatDuration, formatUrl, normalizeChannelInput, parseInnerTubeFormats, parseIsoDuration, parseVideoId,
-  youtubeChannelUrl, youtubeEmbedUrl, youtubeWatchUrl,
+  fetchYoutubeDetail, formatDuration, formatUrl, normalizeChannelInput, parseInnerTubeFormats, parseIsoDuration,
+  parseVideoId, youtubeChannelUrl, youtubeEmbedUrl, youtubeWatchUrl,
 } from '../services/youtubeService';
 import {
   DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, fetchMirrorHome, fetchMirrorMusic,
   isMusicVideo, kindsFor, lastProbeLog, normalizeMirrorUrl, pipedVideo, readMirrors, relativeTime,
-  resetDirectState, shouldTryDirect, streamHasAudio, summarise, withMirrorFallback,
+  resetDirectState, setMirrorSweepBudget, shouldTryDirect, streamHasAudio, summarise, withMirrorFallback,
 } from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
@@ -483,5 +483,55 @@ describe('Flow tab audio integrity', () => {
     expect(embedReferrerFor('127.0.0.1')).toBe('https://www.youtube.com/');
     expect(embedReferrerFor('3000-abc123.e2b.app')).toBe('https://www.youtube.com/');
     expect(embedReferrerFor('praha.example.com')).toBe('https://praha.example.com/');
+  });
+});
+
+describe('Flow tab speed', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); resetDirectState(); });
+
+  it('starts the "up next" request without waiting for the player payload', async () => {
+    const calls: string[] = [];
+    let releasePlayer: (() => void) | null = null;
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      const url = String(input);
+      calls.push(url.includes('/next') ? 'next' : url.includes('/player') ? 'player' : 'other');
+      if (url.includes('/next')) {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({})) });
+      }
+      // The player call stays pending until we release it.
+      return new Promise((resolve) => {
+        releasePlayer = () => resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ videoDetails: { title: 'T' }, streamingData: {} })) });
+      });
+    }));
+
+    const pending = fetchYoutubeDetail('dQw4w9WgXcQ');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toContain('next');
+    expect(calls).toContain('player');
+    (releasePlayer as unknown as () => void)();
+    await pending;
+  });
+
+  it('keeps muxed formats so the direct player always has sound', () => {
+    const muxed = { mimeType: 'video/mp4; codecs="avc1"', url: 'https://cdn/muxed', height: 360, audioQuality: 'AUDIO_QUALITY_LOW' };
+    const adaptive = { mimeType: 'video/mp4; codecs="avc1"', url: 'https://cdn/adaptive', height: 1080, audioQuality: 'AUDIO_QUALITY_UNKNOWN' };
+    const { videoTracks } = parseInnerTubeFormats([muxed, adaptive]);
+    const playable = videoTracks.find((track) => track.hasAudio !== false);
+    expect(playable?.url).toBe('https://cdn/muxed');
+  });
+
+  it('stops a dead mirror sweep once its budget is spent', async () => {
+    const fetchMock = vi.fn(() => new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 30)));
+    vi.stubGlobal('fetch', fetchMock);
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(DEFAULT_MIRRORS));
+    setMirrorSweepBudget(10);
+    const started = Date.now();
+    await expect(fetchMirrorHome()).rejects.toThrow();
+    // Without the budget this would walk every host in the list.
+    expect(fetchMock.mock.calls.length).toBeLessThan(DEFAULT_MIRRORS.length);
+    expect(Date.now() - started).toBeLessThan(2000);
+    setMirrorSweepBudget(14000);
+    window.localStorage.removeItem(MIRROR_STORAGE_KEY);
   });
 });

@@ -1,7 +1,7 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell, BellRing, Captions, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ExternalLink,
-  Film, Globe, Heart, Languages, ListMusic, LoaderCircle, Maximize2, Music, Play, Plus, Radio,
+  Film, Gauge, Globe, Heart, Languages, ListMusic, LoaderCircle, Maximize2, Music, Play, Plus, Radio,
   RefreshCw, Search, Settings, Share2, SkipBack, SkipForward, Sparkles, ThumbsDown, ThumbsUp,
   Trash2, TrendingUp, UserCircle2, Video, X,
 } from 'lucide-react';
@@ -15,7 +15,7 @@ import {
 import {
   DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowHomeViaMirror, flowMusicHome, flowMusicSearch,
   flowMusicViaMirror, flowSearch, isMusicVideo, lastProbeLog, normalizeMirrorUrl, probeMirrors,
-  proxiedImage, resetDirectState, youtubeMedia, youtubeStream,
+  proxiedImage, resetDirectState, resetFlowCache, youtubeMedia, youtubeStream,
   type FlowVideoRef, type YtBackend,
 } from '../services/flowService';
 
@@ -44,6 +44,10 @@ interface PlayerPrefs {
   quality: 'auto' | 'highest' | 'data-saver';
   autoplayNext: boolean;
   noCookie: boolean;
+  /** Remembered caption size for the direct player; applied straight to <track>. */
+  captionSize: 'small' | 'medium' | 'large';
+  /** Direct player speed. */
+  speed: number;
 }
 
 const FLOW_RELEASES = 'https://github.com/Flow-Tube/Flow/releases/latest';
@@ -60,6 +64,8 @@ const DEFAULT_PREFS: PlayerPrefs = {
   quality: 'auto',
   autoplayNext: true,
   noCookie: true,
+  captionSize: 'medium',
+  speed: 1,
 };
 
 const LANGUAGES: Array<{ id: string; label: string }> = [
@@ -384,6 +390,15 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     });
   }, [detail]);
 
+  // The saved default quality was only ever read for `auto`; switching the
+  // preference in settings never reached the <video>. Follow the preference
+  // unless the viewer picked an explicit height for this video.
+  useEffect(() => {
+    if (quality === 'auto') return;
+    setQuality('auto');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.quality]);
+
   const preferredQualityIndex = useMemo(() => {
     if (!qualities.length) return 0;
     if (prefs.quality === 'highest') return 0;
@@ -428,6 +443,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   /* ---------------- actions ---------------- */
   const retryFetch = () => {
     resetDirectState();
+    resetFlowCache();
     setReloadToken((token) => token + 1);
   };
 
@@ -546,7 +562,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 ) : activeSource ? (
                   <>
                     <video
-                      key={`${detail.id}-${quality}-${audioOnly}-${prefs.quality}`}
+                      key={`${detail.id}-${quality}-${audioOnly}-${prefs.quality}-${prefs.speed}`}
                       ref={videoRef}
                       className="yt-video"
                       src={activeSource}
@@ -559,6 +575,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       onSeeking={() => { if (duplicateAudio) syncAudio(); }}
                       onPlay={() => { if (duplicateAudio) void audioRef.current?.play().catch(() => undefined); }}
                       onPause={() => audioRef.current?.pause()}
+                    onLoadedMetadata={(event) => { event.currentTarget.playbackRate = prefs.speed; }}
                       onError={() => setPlayerError('This stream refused to load. Try the embed or another quality.')}
                       onEnded={() => {
                         if (prefs.autoplayNext && nextUp[0]) openVideo(nextUp[0]);
@@ -583,24 +600,28 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             </div>
 
             {/* player toolbar: quality + settings, never covering the picture */}
-            {detailState === 'idle' && detail && playerMode === 'stream' && (
+            {detailState === 'idle' && detail && (
               <div className="yt-player-bar">
                 <span className="yt-player-bar-state">
-                  <Settings size={12} /> {activeQualityLabel}
+                  <Settings size={12} /> {playerMode === 'embed' ? 'YouTube embed' : activeQualityLabel}
                   {activeIsSilent && <em>video-only</em>}
                   {prefs.captions && <em><Captions size={11} /> cc</em>}
                 </span>
                 <div className="yt-player-bar-actions">
-                  <button onClick={() => setQualityMenuOpen((open) => !open)} aria-expanded={qualityMenuOpen}>
-                    Quality <ChevronDown size={12} className={qualityMenuOpen ? 'flip' : undefined} />
-                  </button>
+                  {playerMode === 'stream' && (
+                    <button onClick={() => setQualityMenuOpen((open) => !open)} aria-expanded={qualityMenuOpen}>
+                      Quality <ChevronDown size={12} className={qualityMenuOpen ? 'flip' : undefined} />
+                    </button>
+                  )}
                   <button onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>
                     <Settings size={12} /> Player settings
                   </button>
-                  <button onClick={() => setPlayerMode('embed')}><Film size={12} /> Embed</button>
+                  <button onClick={() => setPlayerMode(playerMode === 'embed' ? 'stream' : 'embed')}>
+                    {playerMode === 'embed' ? <><Play size={12} /> Direct player</> : <><Film size={12} /> Embed</>}
+                  </button>
                 </div>
 
-                {qualityMenuOpen && (
+                {qualityMenuOpen && playerMode === 'stream' && (
                   <div className="yt-menu" role="menu">
                     <p className="yt-menu-title">Quality</p>
                     <button
@@ -706,6 +727,30 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       </select>
                     </label>
                     <label className="yt-menu-field">
+                      <span><Gauge size={12} /> Playback speed</span>
+                      <select
+                        value={String(prefs.speed)}
+                        onChange={(event) => setPrefs((current) => ({ ...current, speed: Number(event.target.value) }))}
+                      >
+                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                          <option key={rate} value={rate}>{rate === 1 ? 'Normal' : `${rate}×`}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {prefs.captions && (
+                      <label className="yt-menu-field">
+                        <span><Captions size={12} /> Caption size</span>
+                        <select
+                          value={prefs.captionSize}
+                          onChange={(event) => setPrefs((current) => ({ ...current, captionSize: event.target.value as PlayerPrefs['captionSize'] }))}
+                        >
+                          <option value="small">Small</option>
+                          <option value="medium">Medium</option>
+                          <option value="large">Large</option>
+                        </select>
+                      </label>
+                    )}
+                    <label className="yt-menu-field">
                       <span><SkipForward size={12} /> Autoplay next</span>
                       <button
                         className={`yt-switch ${prefs.autoplayNext ? 'on' : ''}`}
@@ -722,7 +767,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       <button onClick={() => setEmbedReferrer('')}><X size={11} /> Clear embed referrer</button>
                     </div>
                     <p className="yt-menu-note">
-                      Captions and language apply to YouTube's embedded player. Direct playback uses the stream's own audio.
+                      Language, captions and caption language apply to the YouTube embed. Speed and default quality apply to both players. Nothing is stored anywhere except this device.
                     </p>
                   </div>
                 )}
@@ -903,7 +948,12 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           <button role="tab" aria-selected={mode === 'music'} className={mode === 'music' ? 'active' : ''} onClick={() => { setMode('music'); setSection('home'); setResults(null); setSubmitted(''); }}>
             <Music size={13} /> Music
           </button>
-          <button className="yt-icon-btn" onClick={() => setSettingsOpen((open) => !open && !!detailId)} aria-label="Player settings" disabled={!detailId}>
+          <button
+            className="yt-icon-btn"
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-label="Player settings"
+            aria-expanded={settingsOpen}
+          >
             <Settings size={15} />
           </button>
         </div>
@@ -933,6 +983,22 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               <button className={`yt-switch ${prefs.captions ? 'on' : ''}`} role="switch" aria-checked={prefs.captions} onClick={() => setPrefs((current) => ({ ...current, captions: !current.captions }))}>
                 <span /> {prefs.captions ? 'On' : 'Off'}
               </button>
+            </label>
+            {prefs.captions && (
+              <label className="yt-menu-field">
+                <span><Languages size={12} /> Caption language</span>
+                <select value={prefs.captionLanguage} onChange={(event) => setPrefs((current) => ({ ...current, captionLanguage: event.target.value }))}>
+                  {LANGUAGES.map((language) => <option key={language.id} value={language.id}>{language.label}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="yt-menu-field">
+              <span><Gauge size={12} /> Playback speed</span>
+              <select value={String(prefs.speed)} onChange={(event) => setPrefs((current) => ({ ...current, speed: Number(event.target.value) }))}>
+                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                  <option key={rate} value={rate}>{rate === 1 ? 'Normal' : `${rate}×`}</option>
+                ))}
+              </select>
             </label>
             <label className="yt-menu-field">
               <span><Radio size={12} /> Flow radio</span>

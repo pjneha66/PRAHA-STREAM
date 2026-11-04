@@ -74,7 +74,9 @@ export function proxiedImage(url?: string, width = 480): string | undefined {
 }
 export type { FlowSource, MirrorKind, YtBackend } from './youtubeMirror';
 
-export const flowHome = () => withMirrorFallback<YtHome>(fetchYoutubeHome, fetchMirrorHome);
+export const flowHome = (): Promise<FlowSource<YtHome>> =>
+  cached(listCache as unknown as Map<string, { at: number; value: Promise<FlowSource<YtHome>> }>,
+    'home', LIST_TTL, () => withMirrorFallback<YtHome>(fetchYoutubeHome, fetchMirrorHome));
 export const flowMusicHome = () => withMirrorFallback<YtHome>(
   async () => {
     const home = await fetchYoutubeHome();
@@ -116,7 +118,33 @@ export const flowMusicSearch = (query: string) =>
       }
     },
   );
+/** Short-lived caches: re-opening a video or a shelf is instant instead of re-fetching. */
+const DETAIL_TTL = 10 * 60 * 1000;
+const LIST_TTL = 3 * 60 * 1000;
+const detailCache = new Map<string, { at: number; value: Promise<FlowSource<YtDetail>> }>();
+const listCache = new Map<string, { at: number; value: Promise<FlowSource<unknown>> }>();
+
+function cached<T>(store: Map<string, { at: number; value: Promise<T> }>, key: string, ttl: number, run: () => Promise<T>): Promise<T> {
+  const hit = store.get(key);
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  const value = run();
+  store.set(key, { at: Date.now(), value });
+  // A failed request must not poison the cache.
+  value.catch(() => { if (store.get(key)?.value === value) store.delete(key); });
+  return value;
+}
+
+/** Clears the caches — used by Retry so a stale failure is never replayed. */
+export function resetFlowCache(): void {
+  detailCache.clear();
+  listCache.clear();
+}
+
 export const flowDetail = (videoId: string) =>
+  cached(detailCache as unknown as Map<string, { at: number; value: Promise<FlowSource<YtDetail>> }>,
+    videoId, DETAIL_TTL, () => flowDetailUncached(videoId));
+
+const flowDetailUncached = (videoId: string) =>
   withMirrorFallback<YtDetail>(() => fetchYoutubeDetail(videoId), () => fetchMirrorDetail(videoId));
 export const flowChannel = (channelId: string) =>
   withMirrorFallback<YtChannelFeed>(() => fetchYoutubeChannel(channelId), () => fetchMirrorChannel(channelId));

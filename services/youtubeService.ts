@@ -408,7 +408,7 @@ const browserHeaders = { 'Content-Type': 'application/json' };
 export async function postInnerTube(path: string, body: Record<string, unknown>): Promise<unknown> {
   const url = `${INNERTUBE_ORIGIN}/youtubei/v1/${path}?key=${INNERTUBE_KEY}&prettyPrint=false`;
   const payload = JSON.stringify({ context: { client: { clientName: 'WEB', clientVersion: CLIENT_VERSION, hl: 'en', gl: 'US' } }, ...body });
-  const response = await nativeFetchText(url, { method: 'POST', headers: browserHeaders, body: payload, timeoutMs: 20000 });
+  const response = await nativeFetchText(url, { method: 'POST', headers: browserHeaders, body: payload, timeoutMs: 9000 });
   if (!response.ok) throw new Error(`YouTube responded with ${response.status}. Try again in a moment.`);
   try {
     return JSON.parse(response.data) as unknown;
@@ -491,7 +491,7 @@ export async function resolveChannelId(input: string): Promise<string> {
   const handle = normalizeChannelInput(input);
   if (/^UC[\w-]{20,}$/.test(handle)) return handle;
   const pageUrl = `${INNERTUBE_ORIGIN}/${handle.replace(/^\/+/, '')}`;
-  const response = await nativeFetchText(pageUrl, { timeoutMs: 20000 });
+  const response = await nativeFetchText(pageUrl, { timeoutMs: 9000 });
   if (!response.ok) throw new Error(`YouTube returned ${response.status} for that channel.`);
   const match = /"channelId":"(UC[\w-]{20,})"/.exec(response.data) || /channel\/(UC[\w-]{20,})/.exec(response.data);
   if (!match) throw new Error('Could not resolve that channel. Paste the /channel/UC… URL instead.');
@@ -500,7 +500,7 @@ export async function resolveChannelId(input: string): Promise<string> {
 
 export async function fetchYoutubeChannel(channelId: string): Promise<YtChannelFeed> {
   if (!/^UC[\w-]{20,}$/.test(channelId)) throw new Error('That is not a valid YouTube channel ID.');
-  const response = await nativeFetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, { timeoutMs: 20000 });
+  const response = await nativeFetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, { timeoutMs: 9000 });
   if (!response.ok) throw new Error(`YouTube returned ${response.status} for this channel feed.`);
   const xml = response.data;
   const feedTitle = /<title>([\s\S]*?)<\/title>/.exec(xml)?.[1]?.trim() || 'YouTube channel';
@@ -609,6 +609,8 @@ export function parseInnerTubeFormats(formats: Array<Record<string, unknown>>): 
 }
 
 export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
+  // Kicked off first so it overlaps with the player call instead of following it.
+  const nextPayloadPromise = tryInnerTube('next', { videoId });
   const watch = await postInnerTube('player', {
     videoId,
     contentCheckOk: true,
@@ -620,16 +622,24 @@ export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
   const micro = (watch.microformat ?? {}) as Record<string, unknown>;
   const microPlayer = (micro.playerMicroformatRenderer ?? {}) as Record<string, unknown>;
   const streaming = (watch.streamingData ?? {}) as Record<string, unknown>;
-  const formats = (Array.isArray(streaming.adaptiveFormats) ? streaming.adaptiveFormats : []) as Array<Record<string, unknown>>;
+  // `formats` are the muxed 360p/720p streams (they carry audio); `adaptiveFormats`
+  // are the higher-quality video-only ones. Keeping both means the direct player
+  // has sound, and the quality menu can still offer 1080p.
+  const formats = [
+    ...(Array.isArray(streaming.formats) ? streaming.formats : []),
+    ...(Array.isArray(streaming.adaptiveFormats) ? streaming.adaptiveFormats : []),
+  ] as Array<Record<string, unknown>>;
 
   const { audioTracks, videoTracks } = parseInnerTubeFormats(formats);
-  const playbackUrl = videoTracks[0]?.url;
+  const playbackUrl = (videoTracks.find((track) => track.hasAudio !== false) || videoTracks[0])?.url;
 
   let comments: YtComment[] = [];
   let related: YtVideo[] = [];
   let chapters: YtChapter[] = [];
 
-  const next = await tryInnerTube('next', { videoId });
+  // Details and "up next" are independent, so they run together: the watch page
+  // used to wait up to 20s for comments before it could even show the video.
+  const next = await nextPayloadPromise;
   if (next) {
     comments = collectComments(next);
     related = collectVideos(next).filter((video) => video.id !== videoId).slice(0, 24);
