@@ -3,7 +3,8 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 /**
- * Dev/preview relay for the key-free metadata APIs PRAHA reads in the browser.
+ * Dev/preview relay for the key-free metadata APIs PRAHA reads in the browser,
+ * including AniCore, Anikura, IMDx, and Sanka.
  * Production builds call the public origins directly; this keeps `npm run dev`
  * and `vite preview` working on hosts where the remote CORS headers are absent.
  * Point the *_PROXY_TARGET variables at a mirror or a local fixture server when
@@ -29,6 +30,12 @@ const apiProxy = {
     changeOrigin: true,
     secure: true,
     rewrite: (requestPath: string) => requestPath.replace(/^\/imdx/, ''),
+  },
+  '/sanka': {
+    target: upstream('SANKA_PROXY_TARGET', 'https://www.sankavollerei.web.id'),
+    changeOrigin: true,
+    secure: true,
+    rewrite: (requestPath: string) => requestPath.replace(/^\/sanka/, ''),
   },
 };
 

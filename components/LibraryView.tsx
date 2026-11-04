@@ -30,11 +30,24 @@ const LibraryView: React.FC<{
 }) => {
   const [tab, setTab] = useState<'watchlist' | 'history'>('watchlist');
   const [statusFilter, setStatusFilter] = useState<'all' | LibraryStatus>('all');
+  const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'added' | 'title' | 'year' | 'rating'>('added');
 
   const visibleWatchlist = useMemo(() => {
-    if (statusFilter === 'all') return watchlist;
-    return watchlist.filter((item) => (item.libraryStatus || 'plan') === statusFilter);
-  }, [watchlist, statusFilter]);
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const filtered = watchlist.filter((item) => {
+      if (statusFilter !== 'all' && (item.libraryStatus || 'plan') !== statusFilter) return false;
+      if (normalizedQuery && !item.title.toLocaleLowerCase().includes(normalizedQuery)) return false;
+      return true;
+    });
+
+    if (sortBy === 'added') return filtered;
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'title') return a.title.localeCompare(b.title);
+      if (sortBy === 'year') return (b.year || '').localeCompare(a.year || '') || a.title.localeCompare(b.title);
+      return (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title);
+    });
+  }, [watchlist, statusFilter, query, sortBy]);
 
   return (
     <div className="standard-page page-enter">
@@ -73,6 +86,28 @@ const LibraryView: React.FC<{
                   {item.label}
                 </button>
               ))}
+            </div>
+          )}
+
+          {watchlist.length > 0 && (
+            <div className="discover-select-group library-tools">
+              <label className="source-select">
+                <input
+                  type="search"
+                  aria-label="Search saved titles"
+                  placeholder="Search your library"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </label>
+              <label className="source-select">
+                <select aria-label="Sort library" value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
+                  <option value="added">Recently added</option>
+                  <option value="title">Title A–Z</option>
+                  <option value="year">Newest year</option>
+                  <option value="rating">Highest rated</option>
+                </select>
+              </label>
             </div>
           )}
 

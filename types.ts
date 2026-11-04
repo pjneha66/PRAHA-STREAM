@@ -1,5 +1,5 @@
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'discover' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 

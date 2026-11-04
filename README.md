@@ -71,8 +71,9 @@ npm run build
 - **Rich Details Modal**: Inline YouTube trailers, real TMDB season & episode guides with thumbnails/air dates/watched bars, cast & director strip, and *More Like This* recommendations.
 - **Advanced Discover**: Filter TMDB’s `/discover` catalog by Genre, Year, Minimum Rating, Original Language, and Sort Order with *Load More* pagination. Search also merges AniCore anime and the optional IMDx provider.
 - **Anime tab (AniCore + Anikura)**: A dedicated index of 32,000+ shows with trending, seasonal, top-rated, airing and film rows, format/score/genre filters, full episode guides, and per-episode Anikura comment threads.
+- **Anime & Comics tab (Sanka API)**: Browse/search anime and manga/comics. The comic browser supports source-specific latest/popular/search feeds, manga details, chapter lists, and an image reader when the upstream endpoints provide them. Sanka/API source availability and rights remain controlled by those providers.
 - **Optional IMDx (Tiffara) metadata**: IMDb-style titles, ratings, plots, cast and episodes from `api.tiffara.com`, switched on in Settings. TMDB remains the primary catalog and your TMDB key is never replaced.
-- **Household Profiles & Library Statuses**: Multiple local profiles with separate watchlists (`Watching`, `Plan to Watch`, `On Hold`, `Completed`, `Dropped`) and histories.
+- **Household Profiles & Library Statuses**: Multiple local profiles with separate watchlists (`Watching`, `Plan to Watch`, `On Hold`, `Completed`, `Dropped`) and histories. Fresh installs start with a “Who’s watching?” profile picker; the choice is remembered for subsequent launches.
 - **Full JSON Backup & Trakt / Simkl Scrobbling**: Export/share or import a single `.json` bundle containing all addons, repositories, profiles, library items, watch history, and settings—plus optional Trakt.tv and Simkl watch-history scrobbling.
 
 ### Anime tab, Anikura discussions and optional IMDx metadata
@@ -83,6 +84,8 @@ The **Anime** tab reads two key-free public APIs directly from the device:
 - **Anikura** (`https://anikura.club/api/v1`) — `GET /catalog` for catalog lookups and `GET /comments?…&episode=` for episode discussion. Comments are gathered by Anikura from MyAnimeList forums, Anikoto and Reanime and belong to their authors.
 
 Open any anime's details modal to load its AniCore episode guide and Anikura discussion for a chosen episode; those threads are also available for TMDB/Stremio titles once AniCore can match the title. Both APIs are requested only while the Anime tab or a discussion panel is open, responses are cached in memory for ten minutes, and no credentials are sent.
+
+The separate **Anime & Comics** tab uses the public endpoints documented by [Sanka's Anime and Comic API](https://github.com/SankaVollereii/Rest-Api-Anime-and-Comic). Anime uses `/anime/home` and `/anime/{source}/search/{query}`. Comic feeds use `/comic/homepage` or `/comic/{source}/latest|popular`, search uses `/comic/{source}/search/{query}`, manga details use `/comic/{source}/manga/{slug}`, and chapter pages use `/comic/{source}/chapter/{slug}`. The comic source selector intentionally lists non-adult source options. Provider availability, CORS policy, artwork, and response fields are controlled by the upstream project. For local development, `VITE_API_PROXY=1` routes its requests through Vite; `SANKA_PROXY_TARGET` can point to a mirror or fixture server.
 
 **IMDx / Tiffara** is disabled by default. When enabled in **Settings → IMDx · Tiffara**, PRAHA adds IMDb-style search results to Discover and the Anime tab, an extra *Popular on IMDx* home row, richer plots/cast/episode stills in details (used when TMDB has no data), and — if no TMDB key is configured — a fallback home catalog. The base URL is editable (`https://api.tiffara.com` by default) and an optional `x-api-key` can be supplied for self-hosted deployments. Turning IMDx off does not affect TMDB.
 

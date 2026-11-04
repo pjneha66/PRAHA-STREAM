@@ -8,6 +8,8 @@ import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
+import SankaExplorer from './components/SankaExplorer';
+import ProfilePicker from './components/ProfilePicker';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
@@ -34,7 +36,7 @@ import type {
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'anime', 'discover', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'anime', 'sanka', 'discover', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -112,6 +114,10 @@ const App: React.FC = () => {
 
   const [profiles, setProfiles] = usePersistentState<UserProfile[]>('praha.v2.profiles', [DEFAULT_PROFILE]);
   const [activeProfileId, setActiveProfileId] = usePersistentState<string>('praha.v2.active-profile', DEFAULT_PROFILE.id);
+  const [profilePickerCompleted, setProfilePickerCompleted] = usePersistentState<boolean>(
+    'praha.v2.profile-picker-completed',
+    typeof window !== 'undefined' && window.localStorage.getItem('praha.v2.profiles') !== null,
+  );
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0] || DEFAULT_PROFILE,
@@ -296,11 +302,14 @@ const App: React.FC = () => {
     return () => { active = false; };
   }, [tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
-  useEffect(() => loadCatalog(), [loadCatalog]);
+  useEffect(() => {
+    if (!profilePickerCompleted) return;
+    return loadCatalog();
+  }, [loadCatalog, profilePickerCompleted]);
 
   // Optional IMDx (Tiffara) spotlight row. Runs alongside TMDB — it never replaces it.
   useEffect(() => {
-    if (!imdxEnabled) {
+    if (!profilePickerCompleted || !imdxEnabled) {
       setImdxSpotlight([]);
       return;
     }
@@ -312,11 +321,11 @@ const App: React.FC = () => {
       if (active) setImdxSpotlight(uniqueMedia([...movies, ...series]).slice(0, 20));
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [imdxEnabled, imdxBaseUrl, imdxApiKey]);
+  }, [profilePickerCompleted, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   // Discover search & filtered TMDB /discover + Stremio catalogs
   useEffect(() => {
-    if (view !== 'discover') return;
+    if (!profilePickerCompleted || view !== 'discover') return;
     let active = true;
     const timer = window.setTimeout(async () => {
       setDiscoverLoading(true);
@@ -370,7 +379,7 @@ const App: React.FC = () => {
       }
     }, query ? 380 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [view, query, discoverFilters, addons, tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
+  }, [profilePickerCompleted, view, query, discoverFilters, addons, tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   const loadMoreDiscover = useCallback(async () => {
     if (discoverLoadingMore || !discoverHasMore) return;
@@ -800,6 +809,8 @@ const App: React.FC = () => {
         onClearSearch={() => setQuery('')}
       />
     );
+  } else if (view === 'sanka') {
+    page = <SankaExplorer />;
   } else if (view === 'discover') {
     page = (
       <DiscoverView
@@ -889,6 +900,8 @@ const App: React.FC = () => {
     );
   }
 
+  if (!profilePickerCompleted) page = null;
+
   return (
     <>
       <Navigation
@@ -908,6 +921,17 @@ const App: React.FC = () => {
       >
         {page}
       </Navigation>
+
+      {!profilePickerCompleted && (
+        <ProfilePicker
+          profiles={profiles.length ? profiles : [DEFAULT_PROFILE]}
+          activeProfile={activeProfile}
+          onContinue={(profileId) => {
+            setActiveProfileId(profileId);
+            setProfilePickerCompleted(true);
+          }}
+        />
+      )}
 
       {selected && (
         <DetailsModal
