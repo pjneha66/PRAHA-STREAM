@@ -3,7 +3,7 @@ import {
   Activity, AudioLines, Captions, CaptionsOff, Cast, Check, ChevronLeft, ChevronRight,
   CirclePlay, CircleX, FastForward, Gauge, Keyboard, Maximize, Minimize, Pause,
   PictureInPicture2, Play, Repeat, Repeat1, RotateCcw, Scissors, Settings2,
-  SkipBack, SkipForward, SlidersHorizontal, Sun, Upload, Volume1, Volume2, VolumeX, X,
+  SkipBack, SkipForward, SlidersHorizontal, Smartphone, Sun, Upload, Volume1, Volume2, VolumeX, X,
 } from 'lucide-react';
 import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
@@ -35,8 +35,10 @@ interface MpvPlayerProps {
   media?: MediaItem;
   season?: number;
   episode?: number;
+  episodeTitle?: string;
   nextEpisodeLabel?: string;
   onNextEpisode?: () => void;
+  nextEpisodeLoading?: boolean;
   onProgress?: (currentTime: number, duration: number) => void;
   autoplay: boolean;
   settings: PlayerSettings;
@@ -55,8 +57,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   media,
   season,
   episode,
+  episodeTitle,
   nextEpisodeLabel,
   onNextEpisode,
+  nextEpisodeLoading = false,
   onProgress,
   autoplay,
   settings,
@@ -93,6 +97,23 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [audioSubDialogOpen, setAudioSubDialogOpen] = useState(false);
   const [audioSubDialogTab, setAudioSubDialogTab] = useState<'audio' | 'subs'>('audio');
+  const [aspectFit, setAspectFit] = useState<'contain' | 'cover' | 'fill'>('contain');
+
+  const toggleAspectFit = () => {
+    setAspectFit((curr) => {
+      const next = curr === 'contain' ? 'cover' : curr === 'cover' ? 'fill' : 'contain';
+      flash(next === 'contain' ? 'Aspect: Fit (Contain)' : next === 'cover' ? 'Aspect: Crop (Cover)' : 'Aspect: Stretch (Fill)');
+      return next;
+    });
+  };
+
+  const displayTitle = useMemo(() => {
+    if (!media) return stream.title;
+    if (media.type === 'series' && season) {
+      return `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`;
+    }
+    return media.title;
+  }, [media, season, episode, episodeTitle, stream.title]);
 
   const rawSubtitles = useMemo(() => {
     const merged: StreamSubtitle[] = [];
@@ -486,7 +507,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       <video
         ref={videoRef}
         playsInline
-        style={{ filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)` }}
+        style={{
+          filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)`,
+          objectFit: aspectFit,
+        }}
         onError={(event) => {
           const error = event.currentTarget.error;
           if (error) setFatal(mediaErrorMessage(error.code));
@@ -503,6 +527,65 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           />
         ))}
       </video>
+
+      {/* PlayTorrio-style Top Overlay HUD Bar */}
+      <div className={`mpv-top-bar ${controlsVisible ? 'visible' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="mpv-top-left">
+          <button className="mpv-back-btn" onClick={onRequestClose} aria-label="Exit player">
+            <ChevronLeft size={24} />
+          </button>
+          <div className="mpv-title-meta">
+            <span className="mpv-title-main">{displayTitle}</span>
+            <span className="mpv-title-sub">
+              {stream.provider || stream.sourceName || 'Direct Stream'}
+              {stream.quality ? ` · ${stream.quality}` : ''}
+              {activeAudio?.label ? ` · ${activeAudio.label}` : ''}
+            </span>
+          </div>
+        </div>
+
+        <div className="mpv-top-right">
+          {onNextEpisode && nextEpisodeLabel && (
+            <button className="mpv-chip mpv-next-btn" onClick={onNextEpisode} disabled={nextEpisodeLoading} title={`Next: ${nextEpisodeLabel}`}>
+              <FastForward size={14} /> <span>{nextEpisodeLoading ? 'Finding…' : nextEpisodeLabel}</span>
+            </button>
+          )}
+
+          <button
+            className={`mpv-chip mpv-audiosub-btn ${audioSubDialogOpen ? 'active' : ''}`}
+            onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
+            aria-label="Audio & Subtitles"
+            title="Audio & Subtitles"
+          >
+            <AudioLines size={15} />
+            <span>Audio & Subs</span>
+          </button>
+
+          <button
+            className="mpv-chip"
+            onClick={toggleAspectFit}
+            aria-label="Aspect Ratio"
+            title={`Aspect Ratio: ${aspectFit}`}
+          >
+            <Maximize size={14} />
+            <span style={{ textTransform: 'capitalize' }}>{aspectFit}</span>
+          </button>
+
+          <div className="mpv-ext-players-inline">
+            <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'vlc')} title="Open in VLC">
+              <Smartphone size={13} /> <span>VLC</span>
+            </button>
+            <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'mpv')} title="Open in mpv-android">
+              <span>mpv</span>
+            </button>
+            {isAndroidApp() && (
+              <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'mx')} title="Open in MX Player">
+                <span>MX</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       <style>{`
         .mpv-stage video::cue {

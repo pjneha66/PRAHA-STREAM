@@ -1,5 +1,7 @@
+export const APP_VERSION = '2.5.0';
+
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'livetv' | 'audiobooks' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'livetv' | 'audiobooks' | 'music' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 

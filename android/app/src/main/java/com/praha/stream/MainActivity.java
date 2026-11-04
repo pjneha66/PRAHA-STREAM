@@ -1,15 +1,19 @@
 package com.praha.stream;
 
+import android.app.DownloadManager;
 import android.app.PictureInPictureParams;
 import android.app.UiModeManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.util.Rational;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -19,6 +23,7 @@ import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.core.content.FileProvider;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -33,6 +38,7 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -541,6 +547,58 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public boolean isVlcPlaying() {
             return vlcPlayer != null && vlcPlayer.isPlaying();
+        }
+
+        @JavascriptInterface
+        public boolean downloadAndInstallUpdate(final String apkUrl, final String versionName) {
+            if (apkUrl == null || apkUrl.isEmpty()) return false;
+            runOnUiThread(() -> {
+                try {
+                    DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                    Uri uri = Uri.parse(apkUrl);
+                    DownloadManager.Request request = new DownloadManager.Request(uri);
+                    request.setTitle("PRAHA Stream " + (versionName != null ? versionName : "Update"));
+                    request.setDescription("Downloading latest release APK...");
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    request.setDestinationInExternalFilesDir(MainActivity.this, Environment.DIRECTORY_DOWNLOADS, "praha-update.apk");
+                    request.setMimeType("application/vnd.android.package-archive");
+                    final long downloadId = dm.enqueue(request);
+
+                    BroadcastReceiver onComplete = new BroadcastReceiver() {
+                        @Override
+                        public void onReceive(Context ctxt, Intent intent) {
+                            try {
+                                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                                if (id == downloadId) {
+                                    File file = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "praha-update.apk");
+                                    if (file.exists()) {
+                                        Uri apkUri = FileProvider.getUriForFile(
+                                                MainActivity.this,
+                                                getPackageName() + ".fileprovider",
+                                                file
+                                        );
+                                        Intent install = new Intent(Intent.ACTION_VIEW);
+                                        install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                                        install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                        startActivity(install);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                openBrowser(apkUrl);
+                            }
+                        }
+                    };
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        registerReceiver(onComplete, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED);
+                    } else {
+                        registerReceiver(onComplete, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                    }
+                } catch (Exception e) {
+                    openBrowser(apkUrl);
+                }
+            });
+            return true;
         }
 
         @JavascriptInterface

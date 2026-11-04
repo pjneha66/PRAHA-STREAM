@@ -11,7 +11,8 @@ import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
 import type { JellyfinSnapshot } from '../services/jellyfinService';
 import { PROFILE_PALETTE, ProfileAvatar } from './ProfilePicker';
-import type {
+import {
+  APP_VERSION,
   AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
   PlayerSettings, UserProfile,
 } from '../types';
@@ -56,10 +57,12 @@ const SettingsView: React.FC<{
   onImportBackup: (file: File) => void;
   jellyfinSnapshot: JellyfinSnapshot | null;
   onJellyfinSnapshotChange: (snapshot: JellyfinSnapshot | null) => void;
+  onCheckUpdates?: () => void;
 }> = ({
   settings, onChange, onReset, addons, repositories,
   profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile, onOpenProfilePicker,
   onExportBackup, onImportBackup, jellyfinSnapshot, onJellyfinSnapshotChange,
+  onCheckUpdates,
 }) => {
   const importFileRef = useRef<HTMLInputElement | null>(null);
 
@@ -555,7 +558,20 @@ const SettingsView: React.FC<{
           </section>
           <section className="settings-card privacy-card"><span className="settings-side-icon"><ShieldCheck size={21} /></span><h2>Private by design</h2><p>Your library, profiles, history, API keys, and extension settings stay local on your device.</p></section>
           <button className="reset-button" onClick={onReset}><RotateCcw size={15} /> Reset preferences</button>
-          <span className="version-label">PRAHA STREAM · 2.2.0</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: '12px' }}>
+            <span className="version-label">PRAHA STREAM · {APP_VERSION}</span>
+            {onCheckUpdates && (
+              <button
+                type="button"
+                className="button button-secondary compact-btn"
+                onClick={onCheckUpdates}
+                style={{ fontSize: '10px', padding: '0 8px', height: '26px', borderRadius: '6px' }}
+                title="Check for updates on GitHub"
+              >
+                <RefreshCw size={11} /> Check update
+              </button>
+            )}
+          </div>
         </aside>
       </div>
     </div>

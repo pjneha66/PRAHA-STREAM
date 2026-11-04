@@ -6,10 +6,27 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface inspired 
 
 ---
 
-## Android & Android TV Features (`v2.4.0`)
+## Android & Android TV Features (`v2.5.0`)
 
 PRAHA STREAM is built first-class for Android phones, tablets, and Android TV / Fire TV boxes via Capacitor + custom native Android Java bridges (`MainActivity.java`, `PrahaStreamProxy.java`, and `PrahaVlcPlayer.java`):
 
+- **True Immersive Fullscreen Video Player (PlayTorrio v3 Parity)**:
+  - 100vw x 100vh edge-to-edge native video canvas with no windowed borders or modal gutters.
+  - Auto-hiding liquid glass top HUD with back navigation, media title, episode subtitle, quick Audio & Subtitle manager, aspect ratio cycling (Contain / Cover / Fill), and one-tap external player switcher (VLC, mpv, MX).
+  - Bottom OSC with responsive seek scrubber, time formatting, double-tap left/right 10s seek ripples, volume and brightness vertical touch gesture indicators.
+- **Dedicated Music Streaming Tab (Octave Engine)**:
+  - Curated chart toppers, Top Hits, Synthwave, Pop Essentials, Anime OSTs, and Hip-Hop.
+  - Search tracks, artist discographies, and albums.
+  - Floating and expandable background audio player with playback queue, scrub bar, and Android MediaSession notification controls.
+- **In-App Auto-Updater**:
+  - Live GitHub Releases API query on startup and manual check button in Settings.
+  - In-app update alert dialog displaying release notes, tag name, and APK file size.
+  - Direct background APK download via Android's `DownloadManager` with automatic package installer prompt upon completion.
+- **Mobile Layout & Performance Optimization**:
+  - Clean 5-tab mobile navigation bar (`Home`, `Live TV`, `Anime`, `Comics`, `More`) with proper Android safe-area insets (`env(safe-area-inset-bottom)`), eliminating button overlap and gesture-pill clipping.
+  - Frosted glass "More Features" drawer sheet for Music, Audiobooks, Flow, Discover, Library, Addons, and Settings.
+  - Responsive mobile Details Modal with unconstrained aspect-ratio poster and full-width action buttons.
+  - Optimized Audiobook search with zero regex backtracking, native DOMParser parsing, and no auto-scraping on mount, completely eliminating thread freezing and device overheating.
 - **Live TV & Sports Tab (PlayTorrio Engine)**:
   - **Channels Hub**: 50+ curated high-definition sports and entertainment channels (UFC, Formula 1, MotoGP, beIN Sports, Sky Sports, TNT Sports, UEFA Champions League, Premier League, La Liga, Serie A, ESPN, NBA TV, NFL Network, Cricket, HBO, CNN, etc.) with 1-click multi-source stream scanning.
   - **Live Matches & PPV**: Real-time sports schedule and live event countdowns scraping Dami-TV and PPV.to feeds with team logos, viewer metrics, and instant stream playback.

@@ -39,6 +39,7 @@ export interface PrahaNativeInterface {
   enterPip(): boolean;
   openExternalPlayer(url: string, title: string, packageName: string, headersJson: string): boolean;
   shareText(filename: string, content: string): boolean;
+  downloadAndInstallUpdate?(apkUrl: string, versionName: string): boolean;
   exitApp(): void;
 
   // LibVLC Player APIs
@@ -462,6 +463,18 @@ export async function exportBackupFile(filename: string, jsonText: string): Prom
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
   return 'downloaded';
+}
+
+export function downloadAndInstallUpdate(apkUrl: string, versionName: string): boolean {
+  try {
+    if (window.PrahaNative?.downloadAndInstallUpdate) {
+      return window.PrahaNative.downloadAndInstallUpdate(apkUrl, versionName);
+    }
+  } catch {
+    // Fall back to opening URL in browser
+  }
+  window.open(apkUrl, '_blank');
+  return true;
 }
 
 export function exitAndroidApp(): void {

@@ -23,7 +23,7 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 async function fetchHtml(url: string, headers: Record<string, string> = {}): Promise<string> {
   const res = await nativeFetchText(url, {
     headers: { 'User-Agent': USER_AGENT, ...headers },
-    timeoutMs: 8000,
+    timeoutMs: 5000,
   });
   return res.data || '';
 }
@@ -53,28 +53,58 @@ function cleanTitle(raw: string): string {
 
 function parseWpResults(html: string, source: string, sourceName: string, prefix: string): AudiobookItem[] {
   const books: AudiobookItem[] = [];
-  const articleRegex = /<(?:article|div|li)[^>]*class="[^"]*post[^"]*"[\s\S]*?<\/(?:article|div|li)>/gi;
-  let matches = html.match(articleRegex);
-  const blocks = matches && matches.length ? matches : [html];
+  if (!html) return books;
 
-  for (const block of blocks) {
-    const titleMatch = block.match(/<h[23][^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/i);
-    if (!titleMatch) continue;
+  if (typeof DOMParser !== 'undefined') {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const nodes = doc.querySelectorAll('article, .post, .type-post, li.post');
+      const elements = nodes.length ? Array.from(nodes) : Array.from(doc.querySelectorAll('h2, h3'));
+      for (const el of elements) {
+        const link = (el.querySelector('h2 a, h3 a, a') || el) as HTMLAnchorElement | null;
+        if (!link) continue;
+        const href = link.getAttribute('href') || link.href;
+        if (!href || href.startsWith('#') || href.includes('javascript:')) continue;
 
-    const url = titleMatch[1];
-    const rawTitle = titleMatch[2];
-    const title = cleanTitle(rawTitle);
+        const rawTitle = link.textContent || '';
+        const title = cleanTitle(rawTitle);
+        if (!title || title.length < 2) continue;
 
-    let coverImage = '';
-    const imgMatch = block.match(/<img[^>]+(?:data-lazy-src|data-src|src)="([^"]+)"/i);
-    if (imgMatch && !imgMatch[1].startsWith('data:image') && !imgMatch[1].includes('histats')) {
-      coverImage = imgMatch[1];
+        let coverImage = '';
+        const img = el.querySelector('img') as HTMLImageElement | null;
+        if (img) {
+          coverImage = img.getAttribute('data-lazy-src') || img.getAttribute('data-src') || img.getAttribute('src') || '';
+          if (coverImage.startsWith('data:image') || coverImage.includes('histats') || coverImage.includes('logo')) {
+            coverImage = '';
+          }
+        }
+
+        books.push({
+          id: `${prefix}_${href}`,
+          title,
+          coverImage,
+          source,
+          sourceName,
+          pageUrl: href,
+        });
+      }
+      if (books.length > 0) return books;
+    } catch {
+      // Fallback to fast linear regex
     }
+  }
 
+  // Linear regex fallback without nested catastrophic backtracking
+  const hMatches = html.matchAll(/<h[23][^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gi);
+  for (const m of hMatches) {
+    const url = m[1];
+    const rawTitle = m[2];
+    const title = cleanTitle(rawTitle);
+    if (!title) continue;
     books.push({
       id: `${prefix}_${url}`,
       title,
-      coverImage,
+      coverImage: '',
       source,
       sourceName,
       pageUrl: url,
@@ -101,27 +131,52 @@ async function searchAudiobookBay(query: string): Promise<AudiobookItem[]> {
   try {
     const url = `https://audiobookbay.lu/?s=${encodeURIComponent(query)}&tt=1&sc=1`;
     const html = await fetchHtml(url);
-    const postExp = /<div class="post[^"]*">([\s\S]*?)(?:<div class=['"]postMeta['"]|div<!-- end \.post -->)/gi;
+    if (!html) return [];
     const books: AudiobookItem[] = [];
-    let m: RegExpExecArray | null;
 
-    while ((m = postExp.exec(html)) !== null) {
-      let block = m[1];
-      const titleMatch = block.match(/<a[^>]*href="(\/abss\/[^"]+)"[^>]*>([^<]+)<\/a>/i);
-      if (!titleMatch) continue;
+    if (typeof DOMParser !== 'undefined') {
+      try {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const posts = doc.querySelectorAll('.post');
+        for (const post of posts) {
+          const link = post.querySelector('a[href*="/abss/"]') as HTMLAnchorElement | null;
+          if (!link) continue;
+          const href = link.getAttribute('href') || '';
+          const pageUrl = href.startsWith('/') ? `https://audiobookbay.lu${href}` : href;
+          const title = cleanTitle(link.textContent || '');
+          if (!title) continue;
 
-      const pageUrl = titleMatch[1].startsWith('/') ? `https://audiobookbay.lu${titleMatch[1]}` : titleMatch[1];
-      const title = cleanTitle(titleMatch[2]);
-      const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i);
-      let coverImage = '';
-      if (imgMatch && !imgMatch[1].includes('logo') && !imgMatch[1].includes('default_cover')) {
-        coverImage = imgMatch[1].startsWith('/') ? `https://audiobookbay.lu${imgMatch[1]}` : imgMatch[1];
-      }
+          const img = post.querySelector('img') as HTMLImageElement | null;
+          let coverImage = '';
+          if (img) {
+            const src = img.getAttribute('src') || '';
+            if (!src.includes('logo') && !src.includes('default_cover')) {
+              coverImage = src.startsWith('/') ? `https://audiobookbay.lu${src}` : src;
+            }
+          }
 
+          books.push({
+            id: `abb_${pageUrl}`,
+            title,
+            coverImage,
+            source: 'audiobookbay',
+            sourceName: 'AudiobookBay',
+            pageUrl,
+          });
+        }
+        if (books.length > 0) return books;
+      } catch {}
+    }
+
+    const matches = html.matchAll(/<a[^>]*href="(\/abss\/[^"]+)"[^>]*>([^<]+)<\/a>/gi);
+    for (const m of matches) {
+      const pageUrl = `https://audiobookbay.lu${m[1]}`;
+      const title = cleanTitle(m[2]);
+      if (!title) continue;
       books.push({
         id: `abb_${pageUrl}`,
         title,
-        coverImage,
+        coverImage: '',
         source: 'audiobookbay',
         sourceName: 'AudiobookBay',
         pageUrl,

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library, Play, Plus, Search, Settings, Sparkles, Tv, Tv2, UserPlus, Users,
+  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library,
+  MoreHorizontal, Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
+  UserPlus, Users, X,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
 import type { AppView, UserProfile } from '../types';
@@ -24,6 +26,7 @@ const mainNav = [
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
+  { id: 'music' as const, label: 'Music Streaming', icon: Music2 },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
@@ -31,17 +34,21 @@ const mainNav = [
   { id: 'library' as const, label: 'My Library', icon: Library },
 ];
 
-const mobileNavItems = [
+const primaryMobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
-  { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
-  { id: 'discover' as const, label: 'Discover', icon: Compass },
-  { id: 'flow' as const, label: 'Flow', icon: Play },
-  { id: 'library' as const, label: 'Library', icon: Library },
-  { id: 'extensions' as const, label: 'Addons', icon: Blocks },
-  { id: 'settings' as const, label: 'Settings', icon: Settings },
+];
+
+const moreNavItems = [
+  { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
+  { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones, desc: '9 audiobook sources & player' },
+  { id: 'flow' as const, label: 'Flow · YouTube', icon: Play, desc: 'Video streams & trending clips' },
+  { id: 'discover' as const, label: 'Discover', icon: Compass, desc: 'Recommendations & genres' },
+  { id: 'library' as const, label: 'My Library', icon: Library, desc: 'Watchlist & history' },
+  { id: 'extensions' as const, label: 'Addons & Plugins', icon: Blocks, desc: 'Stremio & Nuvio sources' },
+  { id: 'settings' as const, label: 'Settings', icon: Settings, desc: 'Debrid, player & auto-updates' },
 ];
 
 const Navigation: React.FC<NavigationProps> = ({
@@ -50,6 +57,9 @@ const Navigation: React.FC<NavigationProps> = ({
 }) => {
   const searchRef = useRef<HTMLInputElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const isMoreActive = moreNavItems.some((item) => item.id === view);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -198,29 +208,90 @@ const Navigation: React.FC<NavigationProps> = ({
         <main className="main-content">{children}</main>
       </div>
 
+      {/* Mobile Bottom Navigation: 4 Primary Tabs + More Hub */}
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {mobileNavItems.map((item) => {
+        {primaryMobileNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = view === item.id;
           return (
             <button
               key={item.id}
               className={`mobile-nav-btn ${isActive ? 'active' : ''}`}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => {
+                setMoreOpen(false);
+                onNavigate(item.id);
+              }}
               aria-label={item.label}
               aria-current={isActive ? 'page' : undefined}
             >
               <div className="mobile-nav-icon-wrap">
                 <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} />
-                {item.id === 'extensions' && sourceCount > 0 && (
-                  <span className="mobile-nav-badge">{sourceCount}</span>
-                )}
               </div>
               <span className="mobile-nav-label">{item.label}</span>
             </button>
           );
         })}
+
+        {/* 5th Tab: More Button */}
+        <button
+          className={`mobile-nav-btn ${isMoreActive || moreOpen ? 'active' : ''}`}
+          onClick={() => setMoreOpen((prev) => !prev)}
+          aria-label="More features"
+          aria-expanded={moreOpen}
+        >
+          <div className="mobile-nav-icon-wrap">
+            <LayoutGrid size={20} strokeWidth={isMoreActive || moreOpen ? 2.4 : 1.8} />
+            {sourceCount > 0 && <span className="mobile-nav-badge">{sourceCount}</span>}
+          </div>
+          <span className="mobile-nav-label">
+            {isMoreActive
+              ? (moreNavItems.find((i) => i.id === view)?.label.split(' ')[0] || 'More')
+              : 'More'}
+          </span>
+        </button>
       </nav>
+
+      {/* Sleek Mobile Bottom Sheet for More Features */}
+      {moreOpen && (
+        <div className="mobile-more-backdrop" onClick={() => setMoreOpen(false)}>
+          <div className="mobile-more-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-more-handle" />
+            <div className="mobile-more-header">
+              <h3>More Features</h3>
+              <button className="mobile-more-close" onClick={() => setMoreOpen(false)} aria-label="Close menu">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mobile-more-grid">
+              {moreNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = view === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    className={`mobile-more-item ${isActive ? 'active' : ''}`}
+                    onClick={() => {
+                      onNavigate(item.id);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <div className="mobile-more-item-icon">
+                      <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} />
+                      {item.id === 'extensions' && sourceCount > 0 && (
+                        <span className="mobile-nav-badge">{sourceCount}</span>
+                      )}
+                    </div>
+                    <div className="mobile-more-item-text">
+                      <strong>{item.label}</strong>
+                      <span>{item.desc}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

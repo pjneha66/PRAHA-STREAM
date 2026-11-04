@@ -14,7 +14,7 @@ const TRENDING_SUGGESTIONS = [
 ];
 
 const AudiobooksView: React.FC = () => {
-  const [query, setQuery] = useState('Dune');
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [books, setBooks] = useState<AudiobookItem[]>([]);
   const [error, setError] = useState('');
@@ -27,31 +27,35 @@ const AudiobooksView: React.FC = () => {
 
   // Audio player state
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const searchIdRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
 
   const performSearch = async (searchTerm: string) => {
-    if (!searchTerm.trim()) return;
+    const trimmed = searchTerm.trim();
+    if (!trimmed) return;
+    const currentId = ++searchIdRef.current;
     setLoading(true);
     setError('');
     try {
-      const results = await searchAllAudiobooks(searchTerm);
+      const results = await searchAllAudiobooks(trimmed);
+      if (searchIdRef.current !== currentId) return;
       setBooks(results);
       if (results.length === 0) {
         setError('No audiobooks found across the 9 sources. Try another title or author.');
       }
     } catch {
-      setError('Failed to query audiobook sources.');
+      if (searchIdRef.current === currentId) {
+        setError('Failed to query audiobook sources.');
+      }
     } finally {
-      setLoading(false);
+      if (searchIdRef.current === currentId) {
+        setLoading(false);
+      }
     }
   };
-
-  useEffect(() => {
-    performSearch(query);
-  }, []);
 
   const openBook = async (book: AudiobookItem) => {
     setSelectedBook(book);
@@ -208,7 +212,7 @@ const AudiobooksView: React.FC = () => {
           <LoaderCircle size={36} className="spin" color="#e50914" />
           <p style={{ color: '#aaa' }}>Searching all 9 audiobook repositories in parallel…</p>
         </div>
-      ) : (
+      ) : books.length > 0 ? (
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
@@ -269,7 +273,37 @@ const AudiobooksView: React.FC = () => {
             </div>
           ))}
         </div>
-      )}
+      ) : !error ? (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '4rem 1rem',
+          textAlign: 'center',
+          background: 'rgba(255,255,255,0.02)',
+          borderRadius: '16px',
+          border: '1px dashed rgba(255,255,255,0.1)',
+        }}>
+          <Headphones size={48} style={{ color: 'var(--accent, #e50914)', marginBottom: '1rem', opacity: 0.8 }} />
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 700, margin: '0 0 0.5rem 0' }}>Explore Unabridged Audiobooks</h2>
+          <p style={{ color: '#888', maxWidth: '500px', fontSize: '0.9rem', margin: '0 0 1.5rem 0' }}>
+            Choose a trending title above or search by book name, author, or narrator to stream full audiobooks with chapter navigation.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', justifyContent: 'center', maxWidth: '600px' }}>
+            {['Sci-Fi & Fantasy', 'Mystery & Thriller', 'Philosophy', 'Classics', 'Self-Development'].map((genre) => (
+              <button
+                key={genre}
+                onClick={() => { setQuery(genre.split(' ')[0]); performSearch(genre.split(' ')[0]); }}
+                className="button button-secondary"
+                style={{ borderRadius: '20px', padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+              >
+                <Sparkles size={13} style={{ marginRight: '6px' }} /> {genre}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* Book Detail & Chapter Selector Modal */}
       {selectedBook && (

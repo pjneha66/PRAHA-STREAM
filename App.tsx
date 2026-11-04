@@ -10,12 +10,14 @@ import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
 import AudiobooksView from './components/AudiobooksView';
+import MusicView from './components/MusicView';
 import LiveTvView from './components/LiveTvView';
 import FlowView from './components/FlowView';
 import ProfilePicker from './components/ProfilePicker';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
+import UpdateModal from './components/UpdateModal';
 import { usePersistentState } from './hooks/usePersistentState';
 import { useSpatialNavigation } from './hooks/useSpatialNavigation';
 import {
@@ -32,7 +34,9 @@ import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } f
 import type { HomeRowSettings } from './services/homeCache';
 import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
-import type {
+import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
+import {
+  APP_VERSION,
   AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
   LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, ProfileAvatarIcon, StreamResult, ToastMessage,
   UserProfile, WatchProgress, PrahaBackupBundle,
@@ -42,7 +46,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'audiobooks', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'music', 'audiobooks', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -130,6 +134,7 @@ const App: React.FC = () => {
     }
   });
   const [profileSwitcherOpen, setProfileSwitcherOpen] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const profilePickerCompleted = sessionProfilePicked || settings.askProfileOnStartup === false;
   const showProfileGate = profileSwitcherOpen || !profilePickerCompleted;
 
@@ -164,6 +169,34 @@ const App: React.FC = () => {
   const notify = useCallback((message: string, tone: 'default' | 'success' | 'error' = 'default') => {
     setToast({ id: Date.now(), message, tone });
   }, []);
+
+  // Autonomous In-App Update check on launch
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      checkForUpdates(APP_VERSION)
+        .then((info) => {
+          if (info && info.hasUpdate) {
+            setAvailableUpdate(info);
+          }
+        })
+        .catch(() => {});
+    }, 2800);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const manualCheckUpdates = useCallback(async () => {
+    notify('Checking for updates…');
+    try {
+      const info = await checkForUpdates(APP_VERSION);
+      if (info && info.hasUpdate) {
+        setAvailableUpdate(info);
+      } else {
+        notify(`PRAHA STREAM is up to date (v${APP_VERSION}).`, 'success');
+      }
+    } catch {
+      notify('Unable to check for updates right now.', 'error');
+    }
+  }, [notify]);
 
   useEffect(() => {
     if (!toast) return;
@@ -862,6 +895,8 @@ const App: React.FC = () => {
     );
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
+  } else if (view === 'music') {
+    page = <MusicView />;
   } else if (view === 'flow') {
     page = (
       <FlowView
@@ -958,6 +993,7 @@ const App: React.FC = () => {
         onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
+        onCheckUpdates={manualCheckUpdates}
       />
     );
   }
@@ -1084,6 +1120,13 @@ const App: React.FC = () => {
             onClose={() => setPlayer(null)}
           />
         </React.Suspense>
+      )}
+
+      {availableUpdate && (
+        <UpdateModal
+          update={availableUpdate}
+          onClose={() => setAvailableUpdate(null)}
+        />
       )}
 
       {toast && (
