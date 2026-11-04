@@ -1,7 +1,7 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Bell, BellRing, Check, ChevronRight, CircleAlert, Clock, ExternalLink, Film, ListMusic,
-  LoaderCircle, Music, Play, Plus, Radio, RefreshCw, Search, Share2, Trash2, Video, X,
+  Bell, BellRing, Check, ChevronDown, ChevronRight, CircleAlert, Clock, ExternalLink, Film, ListMusic,
+  LoaderCircle, Music, Play, Plus, Radio, RefreshCw, Search, Settings, Share2, Trash2, Video, X,
 } from 'lucide-react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openSafeExternalUrl } from '../services/androidBridge';
@@ -148,6 +148,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [playerMode, setPlayerMode] = useState<'stream' | 'embed'>('stream');
   /** Index into the quality list, or 'auto' to let the browser pick. */
   const [quality, setQuality] = useState<'auto' | number>('auto');
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [audioOnly, setAudioOnly] = useState(false);
 
   /* ---------------- mirrors ---------------- */
   const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
@@ -315,6 +317,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setCopied(false);
     setPlayerMode('stream');
     setQuality('auto');
+    setAudioOnly(false);
+    setQualityMenuOpen(false);
     flowDetail(id)
       .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
@@ -401,17 +405,24 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     const tracks = detail?.videoTracks ?? [];
     const seen = new Set<string>();
     return tracks.filter((track) => {
-      const key = `${track.height ?? 0}`;
+      const key = track.height ? `${track.height}` : track.label;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
   }, [detail]);
 
-  const activeSource = quality === 'auto' ? detail?.playbackUrl : qualities[quality]?.url;
-  const activeQualityLabel = quality === 'auto'
-    ? qualities[0]?.label
-    : qualities[quality]?.label;
+  const audioTrack = detail?.audioTracks?.[0];
+  const activeSource = audioOnly
+    ? audioTrack?.url
+    : quality === 'auto'
+      ? (detail?.playbackUrl || qualities[0]?.url)
+      : qualities[quality]?.url || qualities[0]?.url;
+  const activeQualityLabel = audioOnly
+    ? 'Audio only'
+    : quality === 'auto'
+      ? (qualities[0]?.height ? `Auto · ${qualities[0].height}p` : 'Auto')
+      : (qualities[quality]?.height ? `${qualities[quality].height}p` : qualities[quality]?.label || 'Auto');
 
   const tabs: Array<{ id: FlowTab; label: string; subtitle: string; icon: typeof Video }> = [
     { id: 'home', label: 'Home', subtitle: 'Recommendations & trending', icon: Video },
@@ -858,39 +869,77 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                       preload="metadata"
                     />
                     <div className="flow-quality-bar">
-                      <span className="flow-quality-label">Video quality</span>
-                      <div className="flow-quality-options">
-                        <button
-                          className={quality === 'auto' ? 'active' : ''}
-                          onClick={() => setQuality('auto')}
-                        >
-                          Auto{qualities[0]?.height ? ` · ${qualities[0].height}p` : ''}
-                        </button>
-                        {qualities.map((track, index) => (
-                          <button
-                            key={`${track.height}-${index}`}
-                            className={quality === index ? 'active' : ''}
-                            onClick={() => setQuality(index)}
-                          >
-                            {track.height ? `${track.height}p` : track.label}
-                          </button>
-                        ))}
+                      <div className="flow-quality-summary">
+                        <Settings size={12} />
+                        <span>{activeQualityLabel}</span>
+                        {!audioOnly && qualities.length > 1 && (
+                          <small>{qualities.length} qualities available</small>
+                        )}
+                        {!audioOnly && qualities.length <= 1 && (
+                          <small>this source only had {qualities[0]?.height ? `${qualities[0].height}p` : 'one quality'}</small>
+                        )}
+                        {audioOnly && <small>audio in the background</small>}
                       </div>
-                      {qualities.length <= 1 && (
-                        <span className="flow-quality-hint">
-                          Only {activeQualityLabel || 'one quality'} was returned by the source
-                        </span>
-                      )}
                       <button
-                        className="flow-quality-best"
-                        onClick={() => openSafeExternalUrl(youtubeWatchUrl(detail.id))}
-                        title="YouTube serves every quality up to 4K"
+                        className="flow-quality-toggle"
+                        onClick={() => setQualityMenuOpen((open) => !open)}
+                        aria-expanded={qualityMenuOpen}
+                        aria-haspopup="menu"
                       >
-                        Higher quality on YouTube <ExternalLink size={11} />
+                        Quality <ChevronDown size={12} className={qualityMenuOpen ? 'flip' : undefined} />
                       </button>
+                      {qualityMenuOpen && (
+                        <div className="flow-quality-menu" role="menu">
+                          <p className="flow-quality-menu-title">Playback quality</p>
+                          <button
+                            role="menuitemradio"
+                            aria-checked={!audioOnly && quality === 'auto'}
+                            className={!audioOnly && quality === 'auto' ? 'active' : ''}
+                            onClick={() => { setQuality('auto'); setAudioOnly(false); setQualityMenuOpen(false); }}
+                          >
+                            <span>Auto</span>
+                            {qualities[0]?.height ? <small>{qualities[0].height}p</small> : null}
+                            {!audioOnly && quality === 'auto' && <Check size={13} />}
+                          </button>
+                          {qualities.map((track, index) => (
+                            <button
+                              key={`${track.height}-${index}`}
+                              role="menuitemradio"
+                              aria-checked={!audioOnly && quality === index}
+                              className={!audioOnly && quality === index ? 'active' : ''}
+                              onClick={() => { setQuality(index); setAudioOnly(false); setQualityMenuOpen(false); }}
+                            >
+                              <span>{track.height ? `${track.height}p` : track.label}</span>
+                              <small>{(track.bitrate || 0) ? `${Math.round((track.bitrate || 0) / 1000)} kbps` : track.mime.split(';')[0]}</small>
+                              {!audioOnly && quality === index && <Check size={13} />}
+                            </button>
+                          ))}
+                          {audioTrack && (
+                            <button
+                              role="menuitemradio"
+                              aria-checked={audioOnly}
+                              className={audioOnly ? 'active' : ''}
+                              onClick={() => { setAudioOnly(true); setQualityMenuOpen(false); }}
+                            >
+                              <span>Audio only</span>
+                              <small>{audioTrack.label}</small>
+                              {audioOnly && <Check size={13} />}
+                            </button>
+                          )}
+                          <div className="flow-quality-menu-foot">
+                            <button onClick={() => { setPlayerMode('embed'); setQualityMenuOpen(false); }}>
+                              <Film size={11} /> Use YouTube embed
+                            </button>
+                            <button onClick={() => { openSafeExternalUrl(youtubeWatchUrl(detail.id)); setQualityMenuOpen(false); }}>
+                              <ExternalLink size={11} /> Up to 4K on YouTube
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : (
+
                   <div className="flow-stage-error">
                     <CircleAlert size={22} />
                     <p>No direct stream was returned for this video — YouTube sometimes withholds them from key-free clients.</p>

@@ -544,7 +544,9 @@ export function parseInnerTubeFormats(formats: Array<Record<string, unknown>>): 
     if (!url) return null;
     const mime = String(format.mimeType ?? '');
     const bitrate = Number(format.bitrate || 0);
-    const height = Number((format.height as number | undefined) ?? 0) || undefined;
+    const height = Number((format.height as number | undefined) ?? 0)
+      || Number(String(format.qualityLabel ?? '').replace(/[^0-9]/g, ''))
+      || undefined;
     return {
       url,
       mime,

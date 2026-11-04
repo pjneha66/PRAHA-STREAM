@@ -333,6 +333,21 @@ const invidiousList = (payload: unknown): YtVideo[] => {
     .filter((video): video is YtVideo => Boolean(video));
 };
 
+/**
+ * Height for a mirror video stream. Piped sends `quality: "720p"`, Invidious
+ * sends `resolution: "720p"` or only `res=` inside the mime string, and both may
+ * include a numeric `height`. Missing this collapsed every quality into one
+ * button labelled "?p".
+ */
+export function trackHeight(stream: Record<string, unknown>, mime: string): number | undefined {
+  const direct = num(stream.height);
+  if (direct) return direct;
+  const fromLabel = Number(String(stream.qualityLabel ?? stream.quality ?? stream.resolution ?? '').replace(/[^0-9]/g, ''));
+  if (fromLabel) return fromLabel;
+  const fromMime = Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0);
+  return fromMime || undefined;
+}
+
 const videoList = (payload: unknown, kind: MirrorKind): YtVideo[] =>
   (kind === 'piped' ? pipedList(payload) : invidiousList(payload));
 
@@ -553,10 +568,8 @@ async function fallbackStreams(videoId: string): Promise<{ audio: YtDetail['audi
           .map((raw) => {
             const stream = raw as Record<string, unknown>;
             const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
-            const parsedHeight = Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0);
             const quality = str(stream.qualityLabel) || str(stream.quality);
-            const height = num(stream.height) ?? (Number(String(quality || '').replace(/[^0-9]/g, '')) || parsedHeight || undefined);
-            return { url: str(stream.url) || '', mime, bitrate: num(stream.bitrate) ?? 0, height, quality };
+            return { url: str(stream.url) || '', mime, bitrate: num(stream.bitrate) ?? 0, height: trackHeight(stream, mime), quality };
           })
           .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))
           // Prefer muxed mp4 (has audio) and cap at 1080p; AVC mp4 plays everywhere.
@@ -600,15 +613,13 @@ export async function fetchMirrorDetail(videoId: string): Promise<YtDetail> {
     .map((raw) => {
       const stream = raw as Record<string, unknown>;
       const mime = String(stream.mimeType ?? stream.type ?? 'video/mp4');
-      const parsedHeight = Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0);
-      const height = num(stream.height) ?? (parsedHeight || undefined);
+      const height = trackHeight(stream, mime);
       return {
         url: str(stream.url) || '',
         mime,
         bitrate: num(stream.bitrate) ?? 0,
         height,
-        label: `${height ?? '?'}p · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
-        hasAudio: stream.audioQuality !== undefined || mime.includes('mp4') ? true : undefined,
+        label: `${height ? `${height}p` : String(stream.quality ?? 'auto')} · ${mime.split(';')[0].replace('video/', '').toUpperCase()}`,
       };
     })
     .filter((track) => track.url.startsWith('https://') && track.mime.startsWith('video/'))

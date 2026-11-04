@@ -378,3 +378,65 @@ describe('Flow tab quality handling', () => {
     expect(Number(/res=([0-9]+)x/.exec(mime)?.[1] || 0)).toBe(1080);
   });
 });
+
+describe('Flow tab quality menu', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.localStorage.removeItem('praha.v2.flow-mirrors');
+  });
+
+  it('opens a quality menu listing every muxed height, audio-only and the embed', async () => {
+    const { render, screen, fireEvent, act } = await import('@testing-library/react');
+    window.localStorage.setItem('praha.v2.flow-mirrors', JSON.stringify(['https://pipedapi.test']));
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      const url = String(input);
+      const respond = (status: number, body: unknown) => Promise.resolve({
+        ok: status < 400, status, data: JSON.stringify(body), text: () => Promise.resolve(JSON.stringify(body)),
+      });
+      // Let the direct YouTube tier fail so the mirror path answers.
+      if (url.includes('youtubei/v1') || url.includes('youtube.com/feeds')) return respond(500, {});
+      if (url.includes('/trending')) {
+        return respond(200, [
+          { url: '/watch?v=dQw4w9WgXcQ', title: 'Test video', uploaderName: 'Tester', duration: 200, views: 10, uploadedDate: '1 day ago' },
+        ]);
+      }
+      if (url.includes('/streams/')) {
+        return respond(200, {
+          title: 'Test video',
+          uploader: 'Tester',
+          uploaderUrl: '/channel/UC12345678901234567890',
+          description: '',
+          videoStreams: [
+            { url: 'https://cdn/720', mimeType: 'video/mp4', quality: '720p', bitrate: 1500000 },
+            { url: 'https://cdn/360', mimeType: 'video/mp4', quality: '360p', bitrate: 700000 },
+          ],
+          audioStreams: [{ url: 'https://cdn/audio', mimeType: 'audio/webm', bitrate: 160000 }],
+          relatedStreams: [],
+        });
+      }
+      return respond(404, {});
+    }));
+
+    const view = render(<FlowView onPlay={() => undefined} onEmbed={() => undefined} />);
+    // Trending may also return the same row as "Trending music", so take the first card.
+    const cards = await screen.findAllByRole('button', { name: /play test video/i });
+    await act(async () => { fireEvent.click(cards[0]); });
+
+    const toggle = await screen.findByRole('button', { name: /^quality/i });
+    await act(async () => { fireEvent.click(toggle); });
+
+    const menu = screen.getByRole('menu');
+    expect(menu).toBeTruthy();
+    // Each muxed height gets its own row (720p also appears in the summary, hence the scope).
+    const labels = Array.from(menu.querySelectorAll('button > span')).map((node) => node.textContent);
+    expect(labels).toEqual(expect.arrayContaining(['Auto', '720p', '360p', 'Audio only']));
+    expect(screen.getByText('Use YouTube embed')).toBeTruthy();
+
+    // Choosing a height swaps the <video> source.
+    const button360 = Array.from(menu.querySelectorAll('button')).find((node) => node.textContent?.startsWith('360p'));
+    await act(async () => { fireEvent.click(button360 as HTMLElement); });
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('https://cdn/360');
+    view.unmount();
+  });
+});
