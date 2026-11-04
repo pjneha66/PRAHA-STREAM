@@ -11,8 +11,9 @@ import {
   type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult, type YtShelf, type YtVideo,
 } from '../services/youtubeService';
 import {
-  DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowMusicHome, flowMusicSearch, flowSearch,
-  isMusicVideo, normalizeMirrorUrl, youtubeMedia, youtubeStream,
+  DEFAULT_MIRRORS, flowChannel, flowDetail, flowHome, flowHomeViaMirror, flowMusicHome, flowMusicSearch,
+  flowMusicViaMirror, flowSearch, isMusicVideo, lastProbeLog, normalizeMirrorUrl, proxiedImage,
+  youtubeMedia, youtubeStream,
   type FlowVideoRef, type YtBackend,
 } from '../services/flowService';
 
@@ -40,14 +41,29 @@ const LEGACY_CHANNELS_KEY = 'praha.v2.flow-channels';
 
 const MUSIC_MOODS = ['Lo-fi beats', 'Jazz playlist', 'Synthwave mix', 'Live sessions', 'Music videos 4K'];
 
+/** YouTube's image CDN occasionally refuses a direct load; fall back to a proxy. */
+const Thumb: React.FC<{ src?: string; alt?: string; className?: string; width?: number }> = ({ src, alt = '', className, width }) => {
+  const [stage, setStage] = useState<0 | 1 | 2>(0);
+  const candidate = stage === 0 ? src : stage === 1 ? proxiedImage(src, width) : undefined;
+  useEffect(() => { setStage(0); }, [src]);
+  if (!candidate) return <span className={`flow-thumb-fallback ${className || ''}`}><Video size={16} /></span>;
+  return (
+    <img
+      src={candidate}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      onError={() => setStage((current) => (current === 0 ? 1 : 2))}
+    />
+  );
+};
+
 const VideoCard: React.FC<{ video: FlowVideo; onOpen: () => void }> = ({ video, onOpen }) => {
   const meta = [video.views, video.published].filter(Boolean).join(' · ');
   return (
     <article className="flow-card">
       <button className="flow-card-art" onClick={onOpen} aria-label={`Play ${video.title}`}>
-        {video.thumbnail
-          ? <img src={video.thumbnail} alt="" loading="lazy" />
-          : <span className="flow-card-placeholder"><Video size={22} /></span>}
+        <Thumb src={video.thumbnail} width={480} className="flow-card-thumb" />
         {video.live
           ? <span className="flow-card-live">LIVE</span>
           : video.duration && <span className="flow-card-time">{video.duration}</span>}
@@ -131,11 +147,25 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [mirrorDraft, setMirrorDraft] = useState('');
   const [mirrorError, setMirrorError] = useState('');
   const [showMirrors, setShowMirrors] = useState(false);
+  /** 0 = normal, 1 = refresh mirrors before the last resort, 2 = stop retrying YouTube. */
+  const [retryStage, setRetryStage] = useState<0 | 1 | 2>(0);
+  const [probeTick, setProbeTick] = useState(0);
 
   const [radioOn, setRadioOn] = useState(false);
   const android = isAndroidApp();
 
   const isSubscribed = useCallback((id?: string) => Boolean(id && subs.some((entry) => entry.id === id)), [subs]);
+
+  /**
+   * Retrying used to repeat the same failing path. Now each press moves on:
+   * 1) re-run everything, 2) skip YouTube and use mirrors only, 3) stop and
+   * point at Mirror settings.
+   */
+  const retryFetch = () => {
+    setRetryStage((stage) => (stage === 0 ? 1 : stage === 1 ? 2 : 2));
+    setHomeAttempt((n) => n + 1);
+    setProbeTick((n) => n + 1);
+  };
 
   const toggleSubscribe = (channel: { id?: string; name?: string; avatar?: string }) => {
     if (!channel.id) return;
@@ -169,7 +199,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     let active = true;
     setHomeState((state) => (state === 'ready' ? state : 'loading'));
     setHomeError('');
-    flowHome()
+    (retryStage >= 2 ? flowHomeViaMirror : flowHome)()
       .then(({ data, backend: source }) => {
         if (!active) return;
         setHome(data);
@@ -182,7 +212,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
         setHomeError(error instanceof Error ? error.message : 'Could not reach YouTube.');
       });
     return () => { active = false; };
-  }, [homeAttempt]);
+  }, [homeAttempt, retryStage]);
 
   /* ---------------- music load ---------------- */
   useEffect(() => {
@@ -190,7 +220,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     let active = true;
     setMusicState((state) => (state === 'ready' ? state : 'loading'));
     setMusicError('');
-    flowMusicHome()
+    (retryStage >= 2 ? flowMusicViaMirror : flowMusicHome)()
       .then(({ data, backend: source }) => {
         if (!active) return;
         setMusicHome(data);
@@ -203,7 +233,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
         setMusicError(error instanceof Error ? error.message : 'Could not load music.');
       });
     return () => { active = false; };
-  }, [tab, homeAttempt]);
+  }, [tab, homeAttempt, retryStage]);
 
   /* ---------------- search ---------------- */
   useEffect(() => {
@@ -440,9 +470,17 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   </button>
                 </div>
               ))}
-              <button className="flow-link-button" onClick={() => { setMirrors(DEFAULT_MIRRORS); setHomeAttempt((n) => n + 1); }}>
+              <button className="flow-link-button" onClick={() => { setMirrors(DEFAULT_MIRRORS); retryFetch(); }}>
                 Reset to defaults
               </button>
+              <p className="explore-list-label" style={{ marginTop: 6 }}>LAST CHECK {probeTick ? '' : '(idle)'}</p>
+              {lastProbeLog.length === 0 && <p className="flow-channel-empty">Press “Check mirrors” or retry to test each instance.</p>}
+              {lastProbeLog.slice(0, 10).map((probe) => (
+                <div key={`${probe.base}-${probe.kind}-${probe.detail}`} className={`flow-probe ${probe.ok ? 'ok' : 'bad'}`}>
+                  <span>{probe.base.replace(/^https:\/\//, '')} <small>{probe.kind}</small></span>
+                  <b>{probe.ok ? `${probe.videos ?? 0} videos` : probe.detail}</b>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -477,8 +515,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               <span><CircleAlert size={28} /></span>
               <h2>YouTube did not answer</h2>
               <p>{homeError} YouTube rate-limits key-free requests and every configured mirror failed. Add another mirror under Mirror settings, or retry in a minute.</p>
-              <button className="button button-primary" onClick={() => setHomeAttempt((n) => n + 1)}>
-                <RefreshCw size={15} /> Try again
+              <button className="button button-primary" onClick={retryFetch}>
+                <RefreshCw size={15} /> {retryStage >= 2 ? 'Mirrors only' : 'Try again'}
+              </button>
+              <button className="button button-secondary" onClick={() => { setShowMirrors(true); setProbeTick((n) => n + 1); }}>
+                Check mirrors
               </button>
             </div>
           )}
@@ -531,9 +572,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                             className="flow-channel-pill-main"
                             onClick={() => { setFeed(null); loadChannel(channel.id); setTab('channels'); }}
                           >
-                            {channel.thumbnail
-                              ? <img src={channel.thumbnail} alt="" loading="lazy" />
-                              : <span className="flow-channel-initial">{channel.name.charAt(0)}</span>}
+                            <Thumb src={channel.thumbnail} width={96} className="flow-avatar" />
                             <span>
                               <strong>{channel.name}</strong>
                               <small>{channel.subscribers || channel.handle || 'Channel'}</small>
@@ -621,7 +660,13 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           {!musicResults && !musicSearching && (
             <>
               {musicState === 'loading' && <div className="flow-loading"><LoaderCircle size={20} className="spin" /> Tuning the music shelves…</div>}
-              {musicState === 'error' && <div className="flow-inline-error"><CircleAlert size={16} /> {musicError}</div>}
+              {musicState === 'error' && (
+                <div className="flow-inline-error">
+                  <CircleAlert size={16} />
+                  <span style={{ flex: 1 }}>{musicError}</span>
+                  <button className="flow-link-button" onClick={retryFetch}>Retry</button>
+                </div>
+              )}
               {musicState === 'ready' && musicHome?.shelves.map((shelf) => (
                 <Shelf
                   key={shelf.id}
@@ -747,9 +792,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               {detailState === 'idle' && detail && detailChannel?.id && (
                 <div className="flow-inplayer-bar">
                   <span className="flow-inplayer-channel">
-                    {detailChannel.avatar
-                      ? <img src={detailChannel.avatar} alt="" />
-                      : <span className="flow-channel-initial">{detailChannel.name.charAt(0)}</span>}
+                    <Thumb src={detailChannel.avatar} width={96} className="flow-avatar" />
                     <span>
                       <strong>{detailChannel.name}</strong>
                       <small>{detail.channelSubscribers || 'YouTube channel'}</small>
@@ -838,7 +881,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                   {detail.related.slice(0, 12).map((video) => (
                     <button key={video.id} className="flow-related" onClick={() => openVideo(video)}>
                       <span className="flow-related-art">
-                        {video.thumbnail ? <img src={video.thumbnail} alt="" loading="lazy" /> : <Video size={16} />}
+                        <Thumb src={video.thumbnail} width={320} className="flow-related-thumb" />
                         {video.duration && <small>{video.duration}</small>}
                       </span>
                       <span>

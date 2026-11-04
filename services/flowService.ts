@@ -15,6 +15,7 @@ import {
   fetchMirrorChannel, fetchMirrorDetail, fetchMirrorHome, fetchMirrorMusic, isMusicVideo,
   searchMirror, searchMirrorMusic, withMirrorFallback,
 } from './youtubeMirror';
+import type { FlowSource } from './youtubeMirror';
 import type { MediaItem, StreamResult } from '../types';
 
 /** Minimal video shape the Flow cards and player mapping need. */
@@ -50,6 +51,17 @@ export function youtubeStream(video: FlowVideoRef): StreamResult {
 }
 
 export { DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, normalizeMirrorUrl, readMirrors, isMusicVideo } from './youtubeMirror';
+export { lastProbeLog, describeFailure, type SourceProbe } from './youtubeMirror';
+
+/**
+ * YouTube's image CDN sends no CORS headers, but `<img>` does not need them —
+ * yet a missing referer or a blocked CDN can still fail. This free image proxy
+ * is only used as an `onError` fallback for thumbnails, never for data.
+ */
+export function proxiedImage(url?: string, width = 480): string | undefined {
+  if (!url || !/^https:\/\//i.test(url)) return undefined;
+  return `https://images.weserv.nl/?url=${encodeURIComponent(url.replace(/^https:\/\//i, ''))}&w=${width}&output=webp`;
+}
 export type { FlowSource, MirrorKind, YtBackend } from './youtubeMirror';
 
 export const flowHome = () => withMirrorFallback<YtHome>(fetchYoutubeHome, fetchMirrorHome);
@@ -64,6 +76,14 @@ export const flowMusicHome = () => withMirrorFallback<YtHome>(
   },
   fetchMirrorMusic,
 );
+/** Mirror-only variants, used by "Mirrors only" retries after YouTube is ruled out. */
+export const flowHomeViaMirror = async (): Promise<FlowSource<YtHome>> => ({
+  data: await fetchMirrorHome(), backend: 'mirror',
+});
+export const flowMusicViaMirror = async (): Promise<FlowSource<YtHome>> => ({
+  data: await fetchMirrorMusic(), backend: 'mirror',
+});
+
 export const flowSearch = (query: string) =>
   withMirrorFallback<YtSearchResult>(() => searchYoutube(query), () => searchMirror(query));
 export const flowMusicSearch = (query: string) =>
@@ -74,7 +94,17 @@ export const flowMusicSearch = (query: string) =>
       if (!videos.length) throw new Error('No music results from YouTube.');
       return { ...result, videos, channels: [] };
     },
-    () => searchMirrorMusic(query),
+    async () => {
+      try {
+        return await searchMirrorMusic(query);
+      } catch (musicError) {
+        // Some instances only implement the plain video search; filter it here.
+        const broad = await searchMirror(query);
+        const videos = broad.videos.filter(isMusicVideo);
+        if (!videos.length) throw musicError;
+        return { ...broad, videos, channels: [] };
+      }
+    },
   );
 export const flowDetail = (videoId: string) =>
   withMirrorFallback<YtDetail>(() => fetchYoutubeDetail(videoId), () => fetchMirrorDetail(videoId));

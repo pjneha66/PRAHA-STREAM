@@ -2092,3 +2092,16 @@ html.dpad-mode select:focus {
 .flow-stage-note > span { flex: 1; min-width: 160px; }
 .flow-stage-note > button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-2); color: #d9dce0; font-size: 8px; }
 .flow-stage-note > button:hover { background: var(--surface-3); }
+
+/* ---------- Flow tab: thumbnail fallbacks + mirror diagnostics ---------- */
+.flow-card-thumb, .flow-related-thumb { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.flow-thumb-fallback { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; background: linear-gradient(140deg, #1a1f24, #101315); color: #5d646c; }
+.flow-avatar { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; object-fit: cover; }
+.flow-inplayer-channel .flow-avatar { width: 30px; height: 30px; border: 1px solid rgba(255, 255, 255, .16); }
+.flow-probe { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 8px; }
+.flow-probe > span { display: flex; align-items: center; gap: 5px; overflow: hidden; color: #b6bcc2; text-overflow: ellipsis; white-space: nowrap; }
+.flow-probe small { padding: 1px 4px; border-radius: 4px; background: var(--surface-2); color: var(--muted-2); font-size: 6.5px; text-transform: uppercase; letter-spacing: .6px; }
+.flow-probe > b { flex: 0 0 auto; max-width: 52%; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.flow-probe.ok > b { color: #8fc78a; }
+.flow-probe.bad > b { color: #d99a92; }
+.flow-inline-error .flow-link-button { flex: 0 0 auto; color: #e0b872; }

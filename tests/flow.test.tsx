@@ -9,8 +9,8 @@ import {
   youtubeEmbedUrl, youtubeWatchUrl,
 } from '../services/youtubeService';
 import {
-  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, isMusicVideo, normalizeMirrorUrl,
-  pipedVideo, readMirrors, relativeTime, withMirrorFallback,
+  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, describeFailure, durationSeconds, fetchMirrorHome, fetchMirrorMusic,
+  isMusicVideo, lastProbeLog, normalizeMirrorUrl, pipedVideo, readMirrors, relativeTime, withMirrorFallback,
 } from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
@@ -129,11 +129,12 @@ describe('Flow tab mirror tier', () => {
   it('reports both tiers when they both fail', async () => {
     const direct = vi.fn(() => Promise.reject(new Error('YouTube responded with 500.')));
     const mirror = vi.fn(() => Promise.reject(new Error('mirror down')));
-    await expect(withMirrorFallback(direct, mirror)).rejects.toThrow('YouTube responded with 500. Mirrors: mirror down.');
+    await expect(withMirrorFallback(direct, mirror)).rejects.toThrow('YouTube: YouTube responded with 500. mirror down.');
   });
 
   it('turns opaque browser network errors into an explanation', () => {
-    expect(describeFailure(new TypeError('Failed to fetch'))).toBe('the request was blocked before it reached the server (CORS or offline)');
+    expect(describeFailure(new TypeError('Failed to fetch'))).toBe('blocked before it reached the server (CORS/offline)');
+    expect(describeFailure(new Error('The operation was aborted.'))).toBe('timed out');
     expect(describeFailure(new Error('YouTube responded with 500.'))).toBe('YouTube responded with 500');
   });
 
@@ -178,5 +179,74 @@ describe('Flow tab music + published-date fixes', () => {
     expect(isMusicVideo({ id: 'ccccccccccc', title: 'Clip', duration: '0:29' })).toBe(false);
     expect(durationSeconds('1:02:03')).toBe(3723);
     expect(durationSeconds(undefined)).toBe(0);
+  });
+});
+
+describe('Flow tab mirror sweep', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    window.localStorage.removeItem(MIRROR_STORAGE_KEY);
+  });
+
+  const responder = (handler: (url: string) => { status: number; body: string }) =>
+    vi.fn((input: unknown) => {
+      const { status, body } = handler(String(input));
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        data: body,
+        text: () => Promise.resolve(body),
+      });
+    });
+
+  it('skips a broken host and uses the Invidious API when Piped fails', async () => {
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(['https://pipedapi.broken.test', 'https://inv.good.test']));
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', responder((url) => {
+      calls.push(url);
+      if (url.includes('broken.test')) return { status: 500, body: '{}' };
+      if (url.includes('/api/v1/trending')) {
+        return {
+          status: 200,
+          body: JSON.stringify([{
+            videoId: 'dQw4w9WgXcQ', title: 'A song', author: 'Artist', authorId: 'UC12345678901234567890',
+            viewCount: 1234, publishedText: '1 day ago', lengthSeconds: 200,
+            videoThumbnails: [{ url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hq.jpg', quality: 'high' }],
+          }]),
+        };
+      }
+      return { status: 404, body: '{}' };
+    }));
+
+    const home = await fetchMirrorHome();
+    expect(home.shelves[0].videos[0]).toMatchObject({ id: 'dQw4w9WgXcQ', channel: 'Artist', duration: '3:20' });
+    expect(calls.some((url) => url.includes('/api/v1/trending'))).toBe(true);
+    expect(lastProbeLog.some((probe) => probe.ok && probe.base.includes('inv.good.test'))).toBe(true);
+  });
+
+  it('reports every failure instead of a bare "failed"', async () => {
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(['https://a.test', 'https://b.test']));
+    vi.stubGlobal('fetch', responder(() => ({ status: 500, body: '{}' })));
+    await expect(fetchMirrorHome()).rejects.toThrow(/every mirror/);
+    await expect(fetchMirrorHome()).rejects.toThrow(/HTTP 500/);
+  });
+
+  it('keeps the Music tab alive when one row source is down', async () => {
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(['https://inv.good.test']));
+    vi.stubGlobal('fetch', responder((url) => {
+      if (url.includes('/api/v1/trending')) return { status: 500, body: '{}' };
+      if (url.includes('/api/v1/search')) {
+        return {
+          status: 200,
+          body: JSON.stringify([{ videoId: 'aaaaaaaaaaa', title: 'Track', author: 'Band', lengthSeconds: 240 }]),
+        };
+      }
+      return { status: 404, body: '{}' };
+    }));
+
+    const music = await fetchMirrorMusic();
+    expect(music.shelves.length).toBeGreaterThan(0);
+    expect(music.shelves[0].videos[0].title).toBe('Track');
   });
 });
