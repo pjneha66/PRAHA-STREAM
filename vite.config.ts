@@ -37,26 +37,6 @@ const apiProxy = {
     secure: true,
     rewrite: (requestPath: string) => requestPath.replace(/^\/sanka/, ''),
   },
-  // Flow tab (YouTube): the InnerTube endpoints and RSS feeds send no CORS
-  // headers, so the dev relay mirrors the exact hosts the tab talks to.
-  '/__youtube/www.youtube.com': {
-    target: upstream('YOUTUBE_PROXY_TARGET', 'https://www.youtube.com'),
-    changeOrigin: true,
-    secure: true,
-    rewrite: (requestPath: string) => requestPath.replace(/^\/__youtube\/www\.youtube\.com/, ''),
-  },
-  '/__youtube/i.ytimg.com': {
-    target: 'https://i.ytimg.com',
-    changeOrigin: true,
-    secure: true,
-    rewrite: (requestPath: string) => requestPath.replace(/^\/__youtube\/i\.ytimg\.com/, ''),
-  },
-  '/__youtube/yt3.googleusercontent.com': {
-    target: 'https://yt3.googleusercontent.com',
-    changeOrigin: true,
-    secure: true,
-    rewrite: (requestPath: string) => requestPath.replace(/^\/__youtube\/yt3\.googleusercontent\.com/, ''),
-  },
 };
 
 export default defineConfig({

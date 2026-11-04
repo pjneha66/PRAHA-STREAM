@@ -1890,6 +1890,20 @@ html.dpad-mode select:focus {
 }
 
 /* ---------- Flow tab (YouTube / YouTube Music without tracking) ---------- */
+.flow-source-state { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+.flow-source-state.youtube { border-color: rgba(var(--accent-rgb), .28); color: var(--accent); }
+.flow-source-state.mirror { border-color: rgba(214, 168, 96, .32); color: #e0b872; }
+.flow-link-button { padding: 0; border: 0; background: none; color: var(--muted-2); font-size: 8px; text-decoration: underline; text-underline-offset: 2px; }
+.flow-link-button:hover { color: var(--accent); }
+.flow-mirrors { display: flex; flex-direction: column; gap: 7px; width: 100%; padding-top: 4px; border-top: 1px solid var(--line); }
+.flow-mirrors > p { margin: 4px 0 0; color: var(--muted-2); font-size: 8px; line-height: 1.55; }
+.flow-mirrors form { display: flex; gap: 5px; }
+.flow-mirrors input { min-width: 0; flex: 1; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: #0b0d10; color: var(--text); font-size: 8.5px; }
+.flow-mirrors form .button { min-height: 30px; padding: 0 8px; }
+.flow-mirror-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.flow-mirror-row > span { overflow: hidden; flex: 1; color: #b6bcc2; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.flow-mirror-row > button { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: none; color: var(--muted-2); }
+.flow-mirror-row > button:hover { background: rgba(213, 108, 96, .12); color: #d99a92; }
 .flow-page { display: flex; flex-direction: column; gap: 22px; }
 .flow-hero { display: flex; align-items: stretch; justify-content: space-between; gap: 26px; padding: 26px 28px; border: 1px solid rgba(var(--accent-rgb), .16); border-radius: 18px; background: radial-gradient(circle at 88% -30%, rgba(var(--accent-rgb), .16), transparent 55%), linear-gradient(115deg, #151a18, #101315); }
 .flow-hero-copy { max-width: 640px; }

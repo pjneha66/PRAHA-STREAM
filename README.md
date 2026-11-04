@@ -83,7 +83,8 @@ npm run build
 - **Music**: audio-only playback of any video through PRAHA's player (so mixes keep playing with the screen off), plus a one-tap, account-free **Flow radio** stream.
 - **Channels**: follow a channel by `@handle`, `/channel/UC…`, `/c/`, or `/user/` link; its recent uploads are read from YouTube's public feed. The list is stored per device in `praha.v2.flow-channels`.
 - **Watching**: the video opens in an embedded (cookie-less `youtube-nocookie.com`) player with chapters, description, comments, and *Up next*; **Play in PRAHA** sends the audio stream to the native player, **Embedded player** opens PRAHA's embed engine, and **Get Flow for Android** links to the upstream [releases](https://github.com/Flow-Tube/Flow/releases/latest).
-- **Platform notes**: the Android APK routes these requests through the native HTTP bridge, so they work without CORS. For `npm run dev`, start with `VITE_API_PROXY=1` — `vite.config.ts` relays `www.youtube.com`, `i.ytimg.com`, and `yt3.googleusercontent.com` under `/__youtube/<host>/` purely to add CORS headers. Add `YOUTUBE_PROXY_TARGET` to point the relay at a mirror.
+- **Data tiers**: YouTube's own key-free endpoints are always tried first and talk to `youtube.com` directly — the PRAHA dev server is never in the path, and nothing goes to a third party. When YouTube blocks or rate-limits a client (HTTP 429/500 is common on shared IPs), the tab retries the same request through community **Piped** API mirrors and shows *“using a Piped mirror”* in the hero card. Mirrors are listed under **Mirror settings** and can be replaced with any Piped/Invidious API URL; dead ones are skipped automatically.
+- **Platform notes**: the Android APK routes the same requests through the native HTTP bridge, so they work without CORS.
 
 ### Anime tab, Anikura discussions and optional IMDx metadata
 

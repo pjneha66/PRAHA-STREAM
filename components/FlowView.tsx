@@ -7,11 +7,14 @@ import type { MediaItem, StreamResult } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openSafeExternalUrl } from '../services/androidBridge';
 import {
-  FLOW_RADIO, FLOW_SEARCH_SUGGESTIONS, fetchYoutubeChannel, fetchYoutubeDetail, fetchYoutubeHome,
-  normalizeChannelInput, parseVideoId, resolveChannelId, searchYoutube, youtubeChannelUrl, youtubeEmbedUrl,
-  youtubeWatchUrl,
+  FLOW_RADIO, FLOW_SEARCH_SUGGESTIONS, parseVideoId, resolveChannelId,
+  youtubeChannelUrl, youtubeEmbedUrl, youtubeWatchUrl,
   type YtChannelFeed, type YtDetail, type YtHome, type YtSearchResult, type YtShelf, type YtVideo,
 } from '../services/youtubeService';
+import {
+  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, flowChannel, flowDetail, flowHome, flowSearch,
+  normalizeMirrorUrl, type YtBackend,
+} from '../services/flowService';
 
 /**
  * Flow tab — a privacy-first YouTube / YouTube Music browser modelled after
@@ -102,6 +105,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   const [homeState, setHomeState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [homeError, setHomeError] = useState('');
   const [homeAttempt, setHomeAttempt] = useState(0);
+  const [backend, setBackend] = useState<YtBackend | null>(null);
+  const [mirrors, setMirrors] = usePersistentState<string[]>('praha.v2.flow-mirrors', DEFAULT_MIRRORS);
+  const [mirrorDraft, setMirrorDraft] = useState('');
+  const [mirrorError, setMirrorError] = useState('');
+  const [showMirrors, setShowMirrors] = useState(false);
 
   const [term, setTerm] = useState('');
   const [submitted, setSubmitted] = useState('');
@@ -131,8 +139,13 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     let active = true;
     setHomeState((state) => (state === 'ready' ? state : 'loading'));
     setHomeError('');
-    fetchYoutubeHome()
-      .then((payload) => { if (active) { setHome(payload); setHomeState('ready'); } })
+    flowHome()
+      .then(({ data, backend: source }) => {
+        if (!active) return;
+        setHome(data);
+        setBackend(source);
+        setHomeState('ready');
+      })
       .catch((error: unknown) => {
         if (!active) return;
         setHomeState('error');
@@ -147,8 +160,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     let active = true;
     setSearching(true);
     setSearchError('');
-    searchYoutube(submitted)
-      .then((payload) => { if (active) setResults(payload); })
+    flowSearch(submitted)
+      .then(({ data, backend: source }) => { if (active) { setResults(data); setBackend(source); } })
       .catch((error: unknown) => {
         if (!active) return;
         setResults(null);
@@ -163,8 +176,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setFeedId(id);
     setFeedState('loading');
     setFeedError('');
-    fetchYoutubeChannel(id)
-      .then((payload) => { setFeed(payload); setFeedState('ready'); })
+    flowChannel(id)
+      .then(({ data, backend: source }) => { setFeed(data); setBackend(source); setFeedState('ready'); })
       .catch((error: unknown) => {
         setFeed(null);
         setFeedState('error');
@@ -184,8 +197,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     setDetailState('loading');
     setDetailError('');
     setDetail(null);
-    fetchYoutubeDetail(id)
-      .then((payload) => { setDetail(payload); setDetailState('idle'); })
+    flowDetail(id)
+      .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
       .catch((error: unknown) => {
         setDetailState('error');
         setDetailError(error instanceof Error ? error.message : 'Could not load that video.');
@@ -292,6 +305,59 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
         <div className="flow-hero-side">
           <span className="flow-badge"><Film size={13} /> Flow tab</span>
           <p>Plays in PRAHA's native player, opens in the built-in embed, or hands off to the Flow app.</p>
+          <span className={`flow-source-state ${backend || 'unknown'}`}>
+            <span className="status-dot" />
+            {backend === 'youtube'
+              ? 'Served by YouTube directly'
+              : backend === 'mirror'
+                ? 'YouTube blocked — using a Piped mirror'
+                : 'YouTube API blocked — trying mirrors…'}
+          </span>
+          {homeState === 'error' && (
+            <button className="flow-link-button" onClick={() => setHomeAttempt((n) => n + 1)}>Retry YouTube</button>
+          )}
+          <button className="flow-link-button" onClick={() => setShowMirrors((open) => !open)}>
+            {showMirrors ? 'Hide mirror settings' : 'Mirror settings'}
+          </button>
+          {showMirrors && (
+            <div className="flow-mirrors">
+              <p>YouTube’s key-free API sometimes refuses requests. These Piped / Invidious API mirrors are only used when that happens.</p>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setMirrorError('');
+                  try {
+                    const url = normalizeMirrorUrl(mirrorDraft);
+                    setMirrors((current) => (current.includes(url) ? current : [url, ...current]));
+                    setMirrorDraft('');
+                    setHomeAttempt((n) => n + 1);
+                  } catch (error) {
+                    setMirrorError(error instanceof Error ? error.message : 'Invalid mirror URL.');
+                  }
+                }}
+              >
+                <input
+                  value={mirrorDraft}
+                  onChange={(event) => setMirrorDraft(event.target.value)}
+                  placeholder="https://pipedapi.example.com"
+                  aria-label="Add a Piped mirror"
+                />
+                <button type="submit" className="button button-secondary"><Plus size={14} /></button>
+              </form>
+              {mirrorError && <p className="flow-channel-error"><CircleAlert size={12} /> {mirrorError}</p>}
+              {mirrors.map((mirror) => (
+                <div key={mirror} className="flow-mirror-row">
+                  <span>{mirror.replace(/^https:\/\//, '')}</span>
+                  <button onClick={() => setMirrors((current) => current.filter((entry) => entry !== mirror))} aria-label={`Remove ${mirror}`}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+              <button className="flow-link-button" onClick={() => { setMirrors(DEFAULT_MIRRORS); setHomeAttempt((n) => n + 1); }}>
+                Reset to defaults
+              </button>
+            </div>
+          )}
           {android && (
             <button className="button button-secondary" onClick={() => openSafeExternalUrl(FLOW_RELEASES)}>
               Open Flow on this device <ExternalLink size={14} />
@@ -327,7 +393,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <div className="empty-state explore-empty">
               <span><CircleAlert size={28} /></span>
               <h2>YouTube did not answer</h2>
-              <p>{homeError} YouTube sometimes rate-limits key-free requests; retrying usually works.</p>
+              <p>{homeError} YouTube rate-limits key-free requests and every configured mirror failed. Add another mirror below, or retry in a minute.</p>
               <button className="button button-primary" onClick={() => setHomeAttempt((n) => n + 1)}>
                 <RefreshCw size={15} /> Try again
               </button>

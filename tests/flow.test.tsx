@@ -7,6 +7,9 @@ import {
   formatDuration, normalizeChannelInput, parseIsoDuration, parseVideoId, youtubeChannelUrl,
   youtubeEmbedUrl, youtubeWatchUrl,
 } from '../services/youtubeService';
+import {
+  DEFAULT_MIRRORS, MIRROR_STORAGE_KEY, normalizeMirrorUrl, pipedVideo, readMirrors, withMirrorFallback,
+} from '../services/youtubeMirror';
 
 describe('Flow tab link parsing', () => {
   it('accepts raw IDs, youtu.be, shorts, and watch links', () => {
@@ -76,5 +79,62 @@ describe('Flow tab UI smoke render', () => {
     expect(html).toContain('https://github.com/Flow-Tube/Flow');
     for (const label of ['Home', 'Search', 'Music', 'Channels']) expect(html).toContain(label);
     expect(html).toContain('role="tablist"');
+  });
+});
+
+describe('Flow tab mirror tier', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('normalises Piped API URLs and rejects unsafe ones', () => {
+    expect(normalizeMirrorUrl('https://pipedapi.kavin.rocks/')).toBe('https://pipedapi.kavin.rocks');
+    expect(normalizeMirrorUrl('pipedapi.example.org/api/')).toBe('https://pipedapi.example.org/api');
+    expect(() => normalizeMirrorUrl('http://insecure.example')).toThrow();
+    expect(() => normalizeMirrorUrl('https://user:pass@example.org')).toThrow();
+    expect(() => normalizeMirrorUrl('')).toThrow();
+  });
+
+  it('parses Piped stream payloads into YtVideo records', () => {
+    const video = pipedVideo({
+      url: '/watch?v=dQw4w9WgXcQ',
+      title: 'Never Gonna Give You Up',
+      uploaderName: 'Rick Astley',
+      uploaderUrl: '/channel/UCuAXFkgsw1L7xaCfnd5JJOw',
+      duration: 213,
+      views: 1600000000,
+      uploadedDate: '3 years ago',
+      thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+    });
+    expect(video).toMatchObject({
+      id: 'dQw4w9WgXcQ',
+      title: 'Never Gonna Give You Up',
+      channelId: 'UCuAXFkgsw1L7xaCfnd5JJOw',
+      duration: '3:33',
+      views: '1,600,000,000 views',
+    });
+    expect(pipedVideo({ url: '/watch?v=bad' })).toBeNull();
+  });
+
+  it('falls back to a mirror only when YouTube fails, and reports the tier', async () => {
+    const direct = vi.fn(() => Promise.reject(new Error('YouTube responded with 500.')));
+    const mirror = vi.fn(() => Promise.resolve({ shelves: [] }));
+    await expect(withMirrorFallback(direct, mirror)).resolves.toEqual({ data: { shelves: [] }, backend: 'mirror' });
+
+    const healthy = vi.fn(() => Promise.resolve({ shelves: [] }));
+    await expect(withMirrorFallback(healthy, mirror)).resolves.toEqual({ data: { shelves: [] }, backend: 'youtube' });
+    expect(mirror).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the YouTube error when both tiers fail', async () => {
+    const direct = vi.fn(() => Promise.reject(new Error('YouTube responded with 500.')));
+    const mirror = vi.fn(() => Promise.reject(new Error('mirror down')));
+    await expect(withMirrorFallback(direct, mirror)).rejects.toThrow('YouTube responded with 500.');
+  });
+
+  it('reads the mirror list from storage and prefers the last healthy one', () => {
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, JSON.stringify(['https://a.example', 'https://b.example']));
+    expect(readMirrors()).toEqual(['https://a.example', 'https://b.example']);
+    window.localStorage.setItem(MIRROR_STORAGE_KEY, 'not json');
+    expect(readMirrors().length).toBe(DEFAULT_MIRRORS.length);
+    window.localStorage.removeItem(MIRROR_STORAGE_KEY);
   });
 });

@@ -8,8 +8,12 @@
  *
  * Nothing is proxied through a third-party service and no API key or account is
  * required. On the Android build the request is issued by the native HTTP
- * bridge, which also dodges browser CORS; on the web the configured dev relay
- * (`VITE_API_PROXY=1`) supplies the CORS headers.
+ * bridge, which also dodges browser CORS.
+ *
+ * Everything here talks to YouTube directly. Nothing is proxied through this
+ * app's own dev server or a third party — `vite.config.ts` only relays the other
+ * metadata APIs (AniCore, Sanka, IMDx). YouTube's CDN *images* are not
+ * CORS-enabled, so thumbnails are loaded as plain `<img>` sources.
  */
 
 import { nativeFetchText } from './androidBridge';
@@ -17,12 +21,7 @@ import { nativeFetchText } from './androidBridge';
 const INNERTUBE_ORIGIN = 'https://www.youtube.com';
 const INNERTUBE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const CLIENT_VERSION = '2.20240101.00.00';
-const env = (import.meta as unknown as { env?: Record<string, string | boolean | undefined> }).env || {};
 const INTERNET_RADIO_URL = 'https://stream-relay-geo.ntslive.net/stream';
-/** Dev relay (see `vite.config.ts`); production builds talk to YouTube directly. */
-const USE_RELAY = env.VITE_API_PROXY === '1';
-
-const relay = (url: string): string => (USE_RELAY ? url.replace(/^https:\/\//, '/__youtube/') : url);
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -120,20 +119,6 @@ export interface YtMusicSection {
  * Helpers
  * ------------------------------------------------------------------ */
 
-/**
- * The dev relay (see `vite.config.ts`) rewrites absolute CDN URLs so the browser
- * can load them past CORS. Strip that prefix before handing a URL to a player or
- * an `<img>`: the prefixed form only resolves inside the dev server.
- */
-const stripProxy = (value: string | undefined): string | undefined => {
-  if (!value) return undefined;
-  const match = /\/__youtube\/([^/]+)(\/.*)$/.exec(value);
-  return match ? `https://${match[1]}${match[2]}` : value;
-};
-
-/** Thumbnails also need the relay in dev; absolute CDN URLs have no CORS headers. */
-const relayed = (url: string | undefined): string | undefined => (url ? relay(url) : undefined);
-
 export function normalizeChannelInput(input: string): string {
   const term = input.trim();
   if (!term) throw new Error('Enter a channel URL, @handle, or channel ID.');
@@ -208,9 +193,9 @@ export function formatDuration(totalSeconds?: number): string | undefined {
     : `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
-const thumbFor = (id: string) => relay(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`);
+export const thumbFor = (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 
-function textOf(value: unknown): string | undefined {
+export function textOf(value: unknown): string | undefined {
   if (typeof value === 'string') return value.trim() || undefined;
   if (!value || typeof value !== 'object') return undefined;
   const node = value as Record<string, unknown>;
@@ -254,12 +239,12 @@ function videoFromRenderer(renderer: Record<string, unknown>): YtVideo | null {
     views: textOf(renderer.viewCountText) || textOf(renderer.shortViewCountText) || textOf(renderer.videoInfo),
     published: textOf(renderer.publishedTimeText),
     duration: textOf(renderer.lengthText),
-    thumbnail: relayed(stripProxy(typeof best?.url === 'string' ? best.url : undefined)) || thumbFor(id),
+    thumbnail: (typeof best?.url === 'string' ? best.url : undefined) || thumbFor(id),
     live: Boolean(renderer.isLiveNow || /watching|live/i.test(textOf(renderer.viewCountText) || '')),
   };
 }
 
-function collectShelves(node: unknown, shelves: YtShelf[], depth = 0, maxDepth = 9): void {
+export function collectShelves(node: unknown, shelves: YtShelf[], depth = 0, maxDepth = 9): void {
   if (!node || typeof node !== 'object' || depth > maxDepth) return;
   if (Array.isArray(node)) {
     for (const child of node) collectShelves(child, shelves, depth, maxDepth);
@@ -288,7 +273,7 @@ function collectShelves(node: unknown, shelves: YtShelf[], depth = 0, maxDepth =
 }
 
 /** Depth-first walk that pulls every video renderer out of an arbitrary payload. */
-function collectVideos(node: unknown, depth = 0): YtVideo[] {
+export function collectVideos(node: unknown, depth = 0): YtVideo[] {
   const found: YtVideo[] = [];
   const seen = new Set<string>();
   const walk = (value: unknown, level: number) => {
@@ -308,7 +293,7 @@ function collectVideos(node: unknown, depth = 0): YtVideo[] {
   return found;
 }
 
-function collectComments(node: unknown): YtComment[] {
+export function collectComments(node: unknown): YtComment[] {
   const found: YtComment[] = [];
   const seen = new Set<string>();
   const walk = (value: unknown, level: number) => {
@@ -345,7 +330,7 @@ function collectComments(node: unknown): YtComment[] {
   return found;
 }
 
-function collectChapters(node: unknown): YtChapter[] {
+export function collectChapters(node: unknown): YtChapter[] {
   const chapters: YtChapter[] = [];
   const walk = (value: unknown, level: number) => {
     if (!value || typeof value !== 'object' || level > 14) return;
@@ -380,8 +365,8 @@ function collectChapters(node: unknown): YtChapter[] {
 
 const browserHeaders = { 'Content-Type': 'application/json' };
 
-async function postInnerTube(path: string, body: Record<string, unknown>): Promise<unknown> {
-  const url = relay(`${INNERTUBE_ORIGIN}/youtubei/v1/${path}?key=${INNERTUBE_KEY}&prettyPrint=false`);
+export async function postInnerTube(path: string, body: Record<string, unknown>): Promise<unknown> {
+  const url = `${INNERTUBE_ORIGIN}/youtubei/v1/${path}?key=${INNERTUBE_KEY}&prettyPrint=false`;
   const payload = JSON.stringify({ context: { client: { clientName: 'WEB', clientVersion: CLIENT_VERSION, hl: 'en', gl: 'US' } }, ...body });
   const response = await nativeFetchText(url, { method: 'POST', headers: browserHeaders, body: payload, timeoutMs: 20000 });
   if (!response.ok) throw new Error(`YouTube responded with ${response.status}. Try again in a moment.`);
@@ -393,7 +378,7 @@ async function postInnerTube(path: string, body: Record<string, unknown>): Promi
 }
 
 /** Best-effort: key-less endpoints sometimes rate-limit; callers keep their own fallbacks. */
-async function tryInnerTube(path: string, body: Record<string, unknown>): Promise<unknown | undefined> {
+export async function tryInnerTube(path: string, body: Record<string, unknown>): Promise<unknown | undefined> {
   try {
     return await postInnerTube(path, body);
   } catch {
@@ -444,7 +429,7 @@ export async function searchYoutube(term: string): Promise<YtSearchResult> {
           name: textOf(renderer.title) || 'YouTube channel',
           handle: textOf(renderer.subscriberCountText)?.startsWith('@') ? textOf(renderer.subscriberCountText) : undefined,
           subscribers: textOf(renderer.videoCountText) || textOf(renderer.subscriberCountText),
-          thumbnail: relayed(stripProxy(typeof thumbs[thumbs.length - 1]?.url === 'string' ? String(thumbs[thumbs.length - 1].url) : undefined)),
+          thumbnail: typeof thumbs[thumbs.length - 1]?.url === 'string' ? String(thumbs[thumbs.length - 1].url) : undefined,
           description: textOf(renderer.descriptionSnippet),
         });
       }
@@ -465,7 +450,7 @@ export async function searchYoutube(term: string): Promise<YtSearchResult> {
 export async function resolveChannelId(input: string): Promise<string> {
   const handle = normalizeChannelInput(input);
   if (/^UC[\w-]{20,}$/.test(handle)) return handle;
-  const pageUrl = relay(`${INNERTUBE_ORIGIN}/${handle.replace(/^\/+/, '')}`);
+  const pageUrl = `${INNERTUBE_ORIGIN}/${handle.replace(/^\/+/, '')}`;
   const response = await nativeFetchText(pageUrl, { timeoutMs: 20000 });
   if (!response.ok) throw new Error(`YouTube returned ${response.status} for that channel.`);
   const match = /"channelId":"(UC[\w-]{20,})"/.exec(response.data) || /channel\/(UC[\w-]{20,})/.exec(response.data);
@@ -475,7 +460,7 @@ export async function resolveChannelId(input: string): Promise<string> {
 
 export async function fetchYoutubeChannel(channelId: string): Promise<YtChannelFeed> {
   if (!/^UC[\w-]{20,}$/.test(channelId)) throw new Error('That is not a valid YouTube channel ID.');
-  const response = await nativeFetchText(relay(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`), { timeoutMs: 20000 });
+  const response = await nativeFetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, { timeoutMs: 20000 });
   if (!response.ok) throw new Error(`YouTube returned ${response.status} for this channel feed.`);
   const xml = response.data;
   const feedTitle = /<title>([\s\S]*?)<\/title>/.exec(xml)?.[1]?.trim() || 'YouTube channel';
@@ -492,7 +477,7 @@ export async function fetchYoutubeChannel(channelId: string): Promise<YtChannelF
       title,
       channel: feedTitle,
       channelId,
-      thumbnail: relayed(/<media:thumbnail[^>]*url="([^"]+)"/.exec(entry)?.[1]) || thumbFor(id),
+      thumbnail: /<media:thumbnail[^>]*url="([^"]+)"/.exec(entry)?.[1] || thumbFor(id),
       published: published ? new Date(published).toLocaleDateString() : undefined,
       views: stars ? `${Number(stars).toLocaleString()} ratings` : undefined,
     });
@@ -502,7 +487,7 @@ export async function fetchYoutubeChannel(channelId: string): Promise<YtChannelF
     channelId,
     title: feedTitle,
     description: decodeXml(/<media:description>([\s\S]*?)<\/media:description>/.exec(xml)?.[1] || ''),
-    avatar: relayed(/<media:thumbnail[^>]*url="([^"]+)"/.exec(xml)?.[1]),
+    avatar: /<media:thumbnail[^>]*url="([^"]+)"/.exec(xml)?.[1],
     videos,
   };
 }
@@ -537,7 +522,7 @@ export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
   const audioTracks = formats
     .filter((format) => String(format.mimeType ?? '').startsWith('audio/'))
     .map((format) => ({
-      url: stripProxy(typeof format.url === 'string' ? format.url : undefined) || '',
+      url: typeof format.url === 'string' ? format.url : '',
       mime: String(format.mimeType ?? ''),
       bitrate: Number(format.bitrate || 0),
     }))
@@ -585,13 +570,13 @@ export async function fetchYoutubeDetail(videoId: string): Promise<YtDetail> {
     description: String(details.shortDescription ?? micro.description ?? ''),
     channel: String(details.author ?? micro.ownerChannelName ?? 'YouTube'),
     channelId,
-    channelAvatar: channelId ? relay(`https://yt3.googleusercontent.com/${channelId}`) : undefined,
+    channelAvatar: channelId ? `https://yt3.googleusercontent.com/${channelId}` : undefined,
     views: typeof details.viewCount === 'string' ? `${Number(details.viewCount).toLocaleString()} views` : undefined,
     published: String(microPlayer.publishDate ?? details.publishDate ?? '') || undefined,
     likes: typeof details.likeCount === 'string' ? Number(details.likeCount).toLocaleString() : undefined,
     lengthSeconds,
     live: Boolean(details.isLiveContent || details.isLive),
-    thumbnail: relayed(stripProxy(typeof bestThumb?.url === 'string' ? String(bestThumb.url) : undefined)) || thumbFor(videoId),
+    thumbnail: (typeof bestThumb?.url === 'string' ? String(bestThumb.url) : undefined) || thumbFor(videoId),
     keywords: Array.isArray(details.keywords) ? (details.keywords as string[]).slice(0, 12) : undefined,
     comments,
     related,
@@ -624,4 +609,5 @@ export const FLOW_SEARCH_SUGGESTIONS = [
   'synthwave mix',
   'documentary 4k',
 ];
+
 
