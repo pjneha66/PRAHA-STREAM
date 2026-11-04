@@ -34,7 +34,8 @@ export const CINEMETA_ADDON: InstalledAddon = {
 export const DEFAULT_PROFILE: UserProfile = {
   id: 'default',
   name: 'Main Profile',
-  avatarColor: '#d6f77a',
+  avatarColor: '#e50914',
+  avatarIcon: 'classic',
   isKids: false,
   createdAt: Date.now(),
 };
@@ -94,6 +95,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     simklToken: '',
   },
   dpadNavigation: false,
+  askProfileOnStartup: true,
   preferNativeProxy: true,
   player: DEFAULT_PLAYER_SETTINGS,
 };

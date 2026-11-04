@@ -1,4 +1,4 @@
-const CACHE_NAME = 'praha-stream-shell-v2.2';
+const CACHE_NAME = 'praha-stream-shell-v2.3';
 const ARTWORK_CACHE = 'praha-stream-tmdb-artwork-v1';
 const MAX_ARTWORK = 120;
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
@@ -43,6 +43,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== self.location.origin) return;
+  if (/^\/(sanka|sanka-mirror|sanka-img|anicore|anikura|imdx)(\/|$)/.test(url.pathname)) return;
 
   event.respondWith(
     fetch(request)
