@@ -11,6 +11,7 @@ import {
   IptvScraper, IptvStore, M3uParser, type M3uChannel, type M3uPlaylist,
   LiveMatchesScraper, type LiveMatchEvent,
 } from '../services/iptvService';
+import { nativeFetchText } from '../services/androidBridge';
 
 interface LiveTvViewProps {
   onPlayStream: (media: MediaItem, stream: StreamResult) => void;
@@ -31,14 +32,26 @@ const CATEGORY_FILTERS = [
   'Music',
 ] as const;
 
-async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 8000): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = 8000,
+): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<any> }> {
+  const headers = (init?.headers as Record<string, string>) || {};
+  const method = init?.method || 'GET';
+  const body = typeof init?.body === 'string' ? init.body : undefined;
+  const res = await nativeFetchText(url, {
+    method,
+    headers,
+    body,
+    timeoutMs,
+  });
+  return {
+    ok: res.ok,
+    status: res.status,
+    text: async () => res.data,
+    json: async () => JSON.parse(res.data),
+  };
 }
 
 export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {

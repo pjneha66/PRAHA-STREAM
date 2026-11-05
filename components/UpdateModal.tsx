@@ -195,13 +195,13 @@ const UpdateModal: React.FC<UpdateModalProps> = ({ update, onClose }) => {
               Later
             </button>
             <a
-              href={update.htmlUrl}
+              href={update.apkUrl || update.htmlUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="button button-secondary"
               style={{ flex: 1, minHeight: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              Release Notes <ExternalLink size={13} />
+              Download in Browser <ExternalLink size={13} />
             </a>
           </div>
         </div>

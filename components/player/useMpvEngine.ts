@@ -54,6 +54,7 @@ type VideoWithAudioTracks = HTMLVideoElement & { audioTracks?: NativeAudioTrackL
 
 interface EngineOptions {
   url: string;
+  streamHeaders?: Record<string, string>;
   subtitles: StreamSubtitle[];
   autoplay: boolean;
   hasFatalError?: boolean;
@@ -85,6 +86,7 @@ const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
  */
 export function useMpvEngine({
   url,
+  streamHeaders,
   subtitles,
   autoplay,
   hasFatalError = false,
@@ -163,7 +165,7 @@ export function useMpvEngine({
       engineNameRef.current = 'LibVLC (Hardware)';
       video.style.opacity = '0';
       const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
-      nativeVlcPlay(url, {}, resumeMs);
+      nativeVlcPlay(url, streamHeaders || {}, resumeMs);
 
       const onVlcTime = (e: any) => {
         if (disposed) return;

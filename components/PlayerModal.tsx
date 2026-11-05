@@ -189,10 +189,23 @@ const PlayerModal: React.FC<{
     ? `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`
     : media.title;
 
+  useEffect(() => {
+    if (isNativeVlcAvailable() && isNative) {
+      document.documentElement.classList.add('player-vlc-active');
+      document.body.classList.add('player-vlc-active');
+      document.getElementById('root')?.classList.add('player-vlc-active');
+      return () => {
+        document.documentElement.classList.remove('player-vlc-active');
+        document.body.classList.remove('player-vlc-active');
+        document.getElementById('root')?.classList.remove('player-vlc-active');
+      };
+    }
+  }, [isNative]);
+
   if (isNative) {
     return (
       <div
-        className="player-fullscreen-root"
+        className={`player-fullscreen-root ${isNativeVlcAvailable() ? 'vlc-transparent' : ''}`}
         style={{ background: isNativeVlcAvailable() ? 'transparent' : '#000' }}
       >
         <MpvPlayer

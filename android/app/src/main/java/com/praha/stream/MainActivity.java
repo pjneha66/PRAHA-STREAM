@@ -217,19 +217,30 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void httpRequestAsync(final String requestId, final String urlString, final String method, final String headersJson, final String body, final int timeoutMs) {
             httpExecutor.execute(() -> {
-                HttpURLConnection conn = null;
-                JSONObject result = new JSONObject();
+                JSONObject result = executeHttpRequest(urlString, method, headersJson, body, timeoutMs);
+                deliverHttpCallback(requestId, result);
+            });
+        }
+
+        private JSONObject executeHttpRequest(String urlString, String method, String headersJson, String body, int timeoutMs) {
+            HttpURLConnection conn = null;
+            JSONObject result = new JSONObject();
+            int redirects = 0;
+            String currentUrl = urlString;
+            int timeout = (timeoutMs > 0) ? timeoutMs : 15000;
+
+            while (redirects < 5) {
                 try {
-                    URL url = new URL(urlString);
+                    URL url = new URL(currentUrl);
                     conn = (HttpURLConnection) url.openConnection();
-                    conn.setInstanceFollowRedirects(true);
-                    int timeout = (timeoutMs > 0) ? timeoutMs : 15000;
+                    conn.setInstanceFollowRedirects(false);
                     conn.setConnectTimeout(timeout);
                     conn.setReadTimeout(timeout);
                     String verb = (method == null || method.isEmpty()) ? "GET" : method.toUpperCase();
                     conn.setRequestMethod(verb);
 
                     boolean hasUa = false;
+                    boolean hasAcceptEncoding = false;
                     if (headersJson != null && !headersJson.isEmpty()) {
                         JSONObject headers = new JSONObject(headersJson);
                         Iterator<String> keys = headers.keys();
@@ -239,11 +250,15 @@ public class MainActivity extends BridgeActivity {
                             if (!value.isEmpty()) {
                                 conn.setRequestProperty(key, value);
                                 if ("user-agent".equalsIgnoreCase(key)) hasUa = true;
+                                if ("accept-encoding".equalsIgnoreCase(key)) hasAcceptEncoding = true;
                             }
                         }
                     }
                     if (!hasUa) {
                         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
+                    }
+                    if (!hasAcceptEncoding) {
+                        conn.setRequestProperty("Accept-Encoding", "gzip, deflate");
                     }
 
                     if (body != null && !body.isEmpty() && ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))) {
@@ -255,9 +270,29 @@ public class MainActivity extends BridgeActivity {
                     }
 
                     int status = conn.getResponseCode();
+                    if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+                        String location = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        if (location != null && !location.isEmpty()) {
+                            if (!location.startsWith("http://") && !location.startsWith("https://")) {
+                                location = new URL(url, location).toString();
+                            }
+                            currentUrl = location;
+                            redirects++;
+                            continue;
+                        }
+                    }
+
                     InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
                     String text = "";
                     if (in != null) {
+                        String encoding = conn.getContentEncoding();
+                        if ("gzip".equalsIgnoreCase(encoding)) {
+                            in = new java.util.zip.GZIPInputStream(in);
+                        } else if ("deflate".equalsIgnoreCase(encoding)) {
+                            in = new java.util.zip.InflaterInputStream(in);
+                        }
+
                         ByteArrayOutputStream bos = new ByteArrayOutputStream();
                         byte[] buf = new byte[8192];
                         int n;
@@ -270,18 +305,25 @@ public class MainActivity extends BridgeActivity {
                     result.put("ok", status >= 200 && status < 300);
                     result.put("status", status);
                     result.put("body", text);
+                    return result;
                 } catch (Exception e) {
                     try {
                         result.put("ok", false);
                         result.put("status", 0);
                         result.put("error", e.getMessage() != null ? e.getMessage() : "Native HTTP error");
                     } catch (Exception ignored) {}
+                    return result;
                 } finally {
                     if (conn != null) conn.disconnect();
                 }
+            }
 
-                deliverHttpCallback(requestId, result);
-            });
+            try {
+                result.put("ok", false);
+                result.put("status", 310);
+                result.put("error", "Too many redirects");
+            } catch (Exception ignored) {}
+            return result;
         }
 
         private void deliverHttpCallback(final String requestId, final JSONObject result) {
@@ -301,72 +343,8 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public String httpRequest(String urlString, String method, String headersJson, String body) {
-            HttpURLConnection conn = null;
-            try {
-                URL url = new URL(urlString);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setInstanceFollowRedirects(true);
-                conn.setConnectTimeout(18000);
-                conn.setReadTimeout(22000);
-                String verb = (method == null || method.isEmpty()) ? "GET" : method.toUpperCase();
-                conn.setRequestMethod(verb);
-
-                boolean hasUa = false;
-                if (headersJson != null && !headersJson.isEmpty()) {
-                    JSONObject headers = new JSONObject(headersJson);
-                    Iterator<String> keys = headers.keys();
-                    while (keys.hasNext()) {
-                        String key = keys.next();
-                        String value = headers.optString(key, "");
-                        if (!value.isEmpty()) {
-                            conn.setRequestProperty(key, value);
-                            if ("user-agent".equalsIgnoreCase(key)) hasUa = true;
-                        }
-                    }
-                }
-                if (!hasUa) {
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
-                }
-
-                if (body != null && !body.isEmpty() && ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))) {
-                    conn.setDoOutput(true);
-                    byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(payload);
-                    }
-                }
-
-                int status = conn.getResponseCode();
-                InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
-                String text = "";
-                if (in != null) {
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) != -1) {
-                        bos.write(buf, 0, n);
-                    }
-                    text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-                }
-
-                JSONObject result = new JSONObject();
-                result.put("ok", status >= 200 && status < 300);
-                result.put("status", status);
-                result.put("body", text);
-                return result.toString();
-            } catch (Exception e) {
-                try {
-                    JSONObject err = new JSONObject();
-                    err.put("ok", false);
-                    err.put("status", 0);
-                    err.put("error", e.getMessage() != null ? e.getMessage() : "Native HTTP error");
-                    return err.toString();
-                } catch (Exception ignored) {
-                    return "{\"ok\":false,\"status\":0,\"error\":\"Native HTTP error\"}";
-                }
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
+            JSONObject result = executeHttpRequest(urlString, method, headersJson, body, 18000);
+            return result.toString();
         }
 
         @JavascriptInterface
@@ -640,7 +618,7 @@ public class MainActivity extends BridgeActivity {
             try {
                 return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             } catch (Exception e) {
-                return "2.5.2";
+                return "2.5.3";
             }
         }
 
@@ -659,6 +637,17 @@ public class MainActivity extends BridgeActivity {
             if (apkUrl == null || apkUrl.isEmpty()) return false;
             runOnUiThread(() -> {
                 try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        if (!getPackageManager().canRequestPackageInstalls()) {
+                            try {
+                                Intent allowIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                                allowIntent.setData(Uri.parse("package:" + getPackageName()));
+                                allowIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                startActivity(allowIntent);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+
                     File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
                     if (downloadDir != null) {
                         File stale = new File(downloadDir, "praha-update.apk");
@@ -681,19 +670,14 @@ public class MainActivity extends BridgeActivity {
                         @Override
                         public void onReceive(Context ctxt, Intent intent) {
                             try {
+                                try {
+                                    unregisterReceiver(this);
+                                } catch (Exception ignored) {}
+
                                 long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
                                 if (id == downloadId) {
                                     File file = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "praha-update.apk");
                                     if (file.exists() && file.length() > 0) {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                            if (!getPackageManager().canRequestPackageInstalls()) {
-                                                Intent allowIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-                                                allowIntent.setData(Uri.parse("package:" + getPackageName()));
-                                                allowIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                                startActivity(allowIntent);
-                                            }
-                                        }
-
                                         Uri apkUri = FileProvider.getUriForFile(
                                                 MainActivity.this,
                                                 getPackageName() + ".fileprovider",

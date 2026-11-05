@@ -367,32 +367,26 @@ export async function nativeFetchText(
   const headers = options.headers || {};
   const timeoutMs = options.timeoutMs ?? 20000;
 
-  const hasForbiddenBrowserHeader = Object.keys(headers).some((key) =>
-    /^(referer|origin|user-agent|cookie|host)$/i.test(key),
-  );
-
-  // 1. Try browser fetch first when on web or no forbidden headers are needed.
-  if (!isAndroidApp() || !hasForbiddenBrowserHeader) {
-    const controller = new AbortController();
-    const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  // 1. On native Android Capacitor platform, use CapacitorHttp directly (bypasses CORS, handles gzip/redirects/forbidden headers off the main thread).
+  if (Capacitor.isNativePlatform()) {
     try {
-      const response = await fetch(url, {
+      const response = await CapacitorHttp.request({
+        url,
         method,
         headers,
-        body: options.body,
-        signal: controller.signal,
+        data: options.body,
+        responseType: 'text',
+        connectTimeout: timeoutMs,
+        readTimeout: timeoutMs,
       });
-      const data = await response.text();
-      if (isAndroidApp() && !response.ok && (response.status === 403 || response.status === 0)) {
-        // Fall through to native HTTP when WebView's Origin or wv User-Agent is challenged.
-      } else {
-        return { ok: response.ok, status: response.status, data };
-      }
-    } catch (fetchError) {
-      if (!isAndroidApp()) throw fetchError;
-      // On Android, fall through to native HTTP if WebView fetch hit CORS.
-    } finally {
-      globalThis.clearTimeout(timer);
+      const text = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? '');
+      return {
+        ok: response.status >= 200 && response.status < 300,
+        status: response.status,
+        data: text,
+      };
+    } catch {
+      // Fall through to custom native bridge or fetch
     }
   }
 
@@ -439,26 +433,21 @@ export async function nativeFetchText(
     }
   }
 
-  // 3. CapacitorHttp fallback when running on native Capacitor without custom bridge.
-  if (isAndroidApp()) {
-    const response = await CapacitorHttp.request({
-      url,
+  // 3. Browser / standard web fetch
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
       method,
       headers,
-      data: options.body,
-      responseType: 'text',
-      connectTimeout: timeoutMs,
-      readTimeout: timeoutMs,
+      body: options.body,
+      signal: controller.signal,
     });
-    const text = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? '');
-    return {
-      ok: response.status >= 200 && response.status < 300,
-      status: response.status,
-      data: text,
-    };
+    const data = await response.text();
+    return { ok: response.ok, status: response.status, data };
+  } finally {
+    globalThis.clearTimeout(timer);
   }
-
-  throw new Error('Network request failed.');
 }
 
 export async function setImmersiveFullscreen(enabled: boolean, lockLandscape = true): Promise<void> {

@@ -1101,4 +1101,191 @@
   }
 }
 
+/* PlayTorrio v3 Parity Layout & Liquid Glass Controls */
+html.player-vlc-active,
+body.player-vlc-active,
+#root.player-vlc-active,
+.player-fullscreen-root.vlc-transparent,
+.player-fullscreen-root.vlc-transparent .mpv-stage {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.playtorrio-bottom-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px 28px max(20px, env(safe-area-inset-bottom, 20px));
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.55) 60%, transparent 100%);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.mpv-stage.controls-on .playtorrio-bottom-bar {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.playtorrio-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.playtorrio-time-label {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 44px;
+}
+
+.playtorrio-time-label.right {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.playtorrio-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.playtorrio-left-group,
+.playtorrio-right-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.playtorrio-btn-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.playtorrio-btn-play:hover,
+.playtorrio-btn-play:active {
+  transform: scale(1.08);
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.playtorrio-btn-icon {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 16, 32, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.14s ease;
+}
+
+.playtorrio-btn-icon:hover,
+.playtorrio-btn-icon:active,
+.playtorrio-btn-icon.active {
+  background: rgba(177, 140, 255, 0.22);
+  border-color: rgba(177, 140, 255, 0.5);
+  color: #fff;
+  transform: scale(1.04);
+}
+
+.playtorrio-btn-icon .btn-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.playtorrio-btn-icon .badge-10 {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8px;
+  font-weight: 800;
+  color: #fff;
+  pointer-events: none;
+}
+
+.playtorrio-btn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s ease, transform 0.14s ease;
+}
+
+.playtorrio-btn-chip:hover {
+  background: rgba(255, 255, 255, 0.18);
+  transform: scale(1.03);
+}
+
+@media (max-width: 640px) {
+  .playtorrio-bottom-bar {
+    padding: 20px 14px max(14px, env(safe-area-inset-bottom, 14px));
+    gap: 8px;
+  }
+  .playtorrio-left-group,
+  .playtorrio-right-group {
+    gap: 8px;
+  }
+  .playtorrio-btn-play {
+    width: 44px;
+    height: 44px;
+  }
+  .playtorrio-btn-icon {
+    min-width: 38px;
+    height: 38px;
+    padding: 0 6px;
+  }
+  .playtorrio-btn-icon .btn-label {
+    display: none;
+  }
+}
+
+
 

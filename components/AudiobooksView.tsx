@@ -33,12 +33,8 @@ const AudiobooksView: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
 
-  // Load initial popular audiobooks on mount (matching PlayTorrio)
-  useEffect(() => {
-    let active = true;
-    performSearch('Harry Potter').catch(() => {});
-    return () => { active = false; };
-  }, []);
+  // Curated featured collection is displayed instantly on mount (zero freeze/load).
+  // Live scraper search only executes when the user initiates a query.
 
   const performSearch = async (searchTerm: string) => {
     const trimmed = searchTerm.trim();

@@ -7,7 +7,10 @@ import {
 } from 'lucide-react';
 import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
-import { isAndroidApp, isNativeVlcAvailable, nativeVlcSetAspectRatio, openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen } from '../../services/androidBridge';
+import {
+  extractStreamHeaders, isAndroidApp, isNativeVlcAvailable, nativeVlcSetAspectRatio,
+  openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen,
+} from '../../services/androidBridge';
 import AudioSubtitleDialog from './AudioSubtitleDialog';
 import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
@@ -199,8 +202,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
 
   const mediaMeta = useMemo(() => (media ? { media, season, episode } : undefined), [media, season, episode]);
 
+  const streamHeaders = useMemo(() => extractStreamHeaders(stream), [stream]);
+
   const engine = useMpvEngine({
     url: effectiveUrl,
+    streamHeaders,
     subtitles: preparedSubtitles,
     autoplay,
     hasFatalError: Boolean(fatal),
@@ -241,6 +247,30 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   useEffect(() => {
     if (menu) setControlsVisible(true);
   }, [menu]);
+
+  useEffect(() => {
+    if (isNativeVlcAvailable()) {
+      document.documentElement.classList.add('player-vlc-active');
+      document.body.classList.add('player-vlc-active');
+      document.getElementById('root')?.classList.add('player-vlc-active');
+      return () => {
+        document.documentElement.classList.remove('player-vlc-active');
+        document.body.classList.remove('player-vlc-active');
+        document.getElementById('root')?.classList.remove('player-vlc-active');
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAndroidApp()) {
+      setImmersiveFullscreen(true, settings.landscapeLock);
+    }
+    return () => {
+      if (isAndroidApp()) {
+        setImmersiveFullscreen(false, false);
+      }
+    };
+  }, [settings.landscapeLock]);
 
   useEffect(() => {
     const onChange = () => {
@@ -613,40 +643,6 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               <FastForward size={14} /> <span>{nextEpisodeLoading ? 'Finding…' : nextEpisodeLabel}</span>
             </button>
           )}
-
-          <button
-            className={`mpv-chip mpv-audiosub-btn ${audioSubDialogOpen ? 'active' : ''}`}
-            onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
-            aria-label="Audio & Subtitles"
-            title="Audio & Subtitles"
-          >
-            <AudioLines size={15} />
-            <span>Audio & Subs</span>
-          </button>
-
-          <button
-            className="mpv-chip"
-            onClick={toggleAspectFit}
-            aria-label="Aspect Ratio"
-            title={`Aspect Ratio: ${aspectFit}`}
-          >
-            <Maximize size={14} />
-            <span style={{ textTransform: 'capitalize' }}>{aspectFit}</span>
-          </button>
-
-          <div className="mpv-ext-players-inline">
-            <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'vlc')} title="Open in VLC">
-              <Smartphone size={13} /> <span>VLC</span>
-            </button>
-            <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'mpv')} title="Open in mpv-android">
-              <span>mpv</span>
-            </button>
-            {isAndroidApp() && (
-              <button className="mpv-chip" onClick={() => openExternalPlayer(stream, displayTitle, 'mx')} title="Open in MX Player">
-                <span>MX</span>
-              </button>
-            )}
-          </div>
         </div>
       </div>
 
@@ -784,102 +780,135 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         </div>
       )}
 
-      <div className="mpv-osc" onClick={(event) => event.stopPropagation()}>
-        <div
-          ref={seekRef}
-          className="mpv-seek"
-          role="slider"
-          aria-label="Seek"
-          aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
-          aria-valuenow={Math.round(currentTime)}
-          tabIndex={0}
-          onPointerMove={onScrubMove}
-          onPointerLeave={() => setScrub(null)}
-          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); onScrubCommit(event); }}
-        >
-          <div className="mpv-seek-track"><span className="buffered" style={{ width: `${bufferedRatio * 100}%` }} /><span className="played" style={{ width: `${progressRatio * 100}%` }} /></div>
-          <span className="mpv-seek-handle" style={{ left: `${progressRatio * 100}%` }} />
-          {scrub && <span className="mpv-seek-preview" style={{ left: `${scrub.ratio * 100}%` }}>{formatTime(scrub.seconds)}</span>}
-          {loop.a !== null && duration > 0 && <span className="mpv-loop-a" style={{ left: `${(loop.a / duration) * 100}%` }} />}
-          {loop.b !== null && duration > 0 && <span className="mpv-loop-b" style={{ left: `${(loop.b / duration) * 100}%` }} />}
+      <div className="playtorrio-bottom-bar" onClick={(event) => event.stopPropagation()}>
+        <div className="playtorrio-progress-row">
+          <span className="playtorrio-time-label">{formatTime(currentTime)}</span>
+          <div
+            ref={seekRef}
+            className="mpv-seek"
+            role="slider"
+            aria-label="Seek"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.round(currentTime)}
+            tabIndex={0}
+            onPointerMove={onScrubMove}
+            onPointerLeave={() => setScrub(null)}
+            onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); onScrubCommit(event); }}
+          >
+            <div className="mpv-seek-track">
+              <span className="buffered" style={{ width: `${bufferedRatio * 100}%` }} />
+              <span className="played" style={{ width: `${progressRatio * 100}%` }} />
+            </div>
+            <span className="mpv-seek-handle" style={{ left: `${progressRatio * 100}%` }} />
+            {scrub && <span className="mpv-seek-preview" style={{ left: `${scrub.ratio * 100}%` }}>{formatTime(scrub.seconds)}</span>}
+            {loop.a !== null && duration > 0 && <span className="mpv-loop-a" style={{ left: `${(loop.a / duration) * 100}%` }} />}
+            {loop.b !== null && duration > 0 && <span className="mpv-loop-b" style={{ left: `${(loop.b / duration) * 100}%` }} />}
+          </div>
+          <span className="playtorrio-time-label right">
+            {duration > 0 ? `-${formatTime(Math.max(0, duration - currentTime))}` : formatTime(0)}
+          </span>
         </div>
 
-        <div className="mpv-controls">
-          <div className="mpv-left">
-            <button onClick={engine.toggle} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={19} /> : <Play size={19} fill="currentColor" />}</button>
-            <button onClick={() => seek(-settings.seekStep)} aria-label={`Back ${settings.seekStep} seconds`}><SkipBack size={17} /></button>
-            <button onClick={() => seek(settings.seekStep)} aria-label={`Forward ${settings.seekStep} seconds`}><SkipForward size={17} /></button>
+        <div className="playtorrio-controls-row">
+          {/* Left Playback Group (PlayTorrio style) */}
+          <div className="playtorrio-left-group">
+            <button
+              className="playtorrio-btn-play"
+              onClick={engine.toggle}
+              aria-label={playing ? 'Pause' : 'Play'}
+              title={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? <Pause size={28} /> : <Play size={28} fill="currentColor" />}
+            </button>
+
+            <button
+              className="playtorrio-btn-icon"
+              onClick={() => seek(-settings.seekStep, `-${settings.seekStep}s`)}
+              aria-label={`Back ${settings.seekStep} seconds`}
+              title="Replay"
+            >
+              <RotateCcw size={20} />
+              <span className="badge-10">{settings.seekStep}</span>
+            </button>
+
+            <button
+              className="playtorrio-btn-icon"
+              onClick={() => seek(settings.seekStep, `+${settings.seekStep}s`)}
+              aria-label={`Forward ${settings.seekStep} seconds`}
+              title="Forward"
+            >
+              <RotateCcw size={20} style={{ transform: 'scaleX(-1)' }} />
+              <span className="badge-10">{settings.seekStep}</span>
+            </button>
+
             {media?.type === 'series' && (
-              <button className="mpv-chip" onClick={() => seek(85, '+85s Intro')} title="Skip 85s opening">
-                <FastForward size={14} /> <span>+85s</span>
+              <button
+                className="playtorrio-btn-chip"
+                onClick={() => seek(85, '+85s Intro')}
+                title="Skip 85s Opening"
+              >
+                <FastForward size={14} />
+                <span>+85s Intro</span>
               </button>
             )}
-            <div className="mpv-volume">
-              <button onClick={engine.toggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>
-                {muted || volume === 0 ? <VolumeX size={17} /> : volume < 55 ? <Volume1 size={17} /> : <Volume2 size={17} />}
-              </button>
-              <input
-                type="range" min={0} max={100} step={1} value={muted ? 0 : volume}
-                onChange={(event) => changeVolume(Number(event.target.value), false)}
-                aria-label="Volume"
-              />
-              <span className="mpv-volume-value">{muted ? 0 : volume}</span>
-            </div>
-            <span className="mpv-time">{formatTime(currentTime)} <i>/</i> {formatTime(duration)}</span>
           </div>
 
-          <div className="mpv-right">
-            {onNextEpisode && nextEpisodeLabel && (
-              <button className="mpv-chip" onClick={onNextEpisode} title={`Next: ${nextEpisodeLabel}`}>
-                <FastForward size={15} /> <span>{nextEpisodeLabel}</span>
-              </button>
-            )}
-            <button className={`mpv-chip ${loop.a !== null ? 'active' : ''}`} onClick={engine.toggleLoop} aria-label="A-B loop">
-              {loop.b !== null ? <Repeat1 size={15} /> : <Repeat size={15} />}
-            </button>
-            <button className={`mpv-chip ${menu === 'speed' ? 'active' : ''}`} onClick={() => setMenu(menu === 'speed' ? null : 'speed')}>
-              <Gauge size={15} /> <span>{formatSpeed(rate)}</span>
-            </button>
-            {levels.length > 1 && (
-              <button className={`mpv-chip ${menu === 'quality' ? 'active' : ''}`} onClick={() => setMenu(menu === 'quality' ? null : 'quality')}>
-                <SlidersHorizontal size={15} /> <span>{activeLevelLabel}</span>
-              </button>
-            )}
+          {/* Right Action Group (PlayTorrio 4 buttons: Aspect, Subs, Audio, Settings) */}
+          <div className="playtorrio-right-group">
             <button
-              className={`mpv-chip mpv-audiosub-btn ${audioSubDialogOpen ? 'active' : ''}`}
-              onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
-              aria-label="Audio & Subtitles"
-              title="Audio & Subtitles"
+              className="playtorrio-btn-icon"
+              onClick={toggleAspectFit}
+              aria-label="Aspect Ratio"
+              title={`Aspect: ${aspectFit}`}
             >
-              <AudioLines size={15} />
-              <span>Audio & Subs</span>
+              <Maximize size={20} />
+              <span className="btn-label">{aspectFit === 'contain' ? 'Fit' : aspectFit === 'cover' ? 'Zoom' : 'Fill'}</span>
             </button>
+
             <button
-              className={`mpv-chip ${audioSubDialogOpen && audioSubDialogTab === 'audio' ? 'active' : ''}`}
-              onClick={() => { setAudioSubDialogTab('audio'); setAudioSubDialogOpen(true); }}
-              aria-label="Audio tracks"
-              aria-expanded={audioSubDialogOpen && audioSubDialogTab === 'audio'}
-            >
-              <AudioLines size={15} /> <span>{activeAudio?.label || 'Audio'}</span>
-            </button>
-            <button
-              className={`mpv-chip ${audioSubDialogOpen && audioSubDialogTab === 'subs' ? 'active' : ''}`}
-              onClick={() => { setAudioSubDialogTab('subs'); setAudioSubDialogOpen(true); }}
+              className={`playtorrio-btn-icon ${audioSubDialogOpen && audioSubDialogTab === 'subs' ? 'active' : ''}`}
+              onClick={() => {
+                if (isAndroidApp() || (typeof window !== 'undefined' && window.innerWidth <= 768)) {
+                  setAudioSubDialogTab('subs');
+                  setAudioSubDialogOpen(true);
+                } else {
+                  setMenu(menu === 'subs' ? null : 'subs');
+                }
+              }}
               aria-label="Subtitles"
-              aria-expanded={audioSubDialogOpen && audioSubDialogTab === 'subs'}
+              title="Subtitles"
             >
-              {currentText ? <Captions size={15} /> : <CaptionsOff size={15} />} <span>{activeSubtitle?.label || (preparedSubtitles.length ? `${preparedSubtitles.length} Subs` : 'Off')}</span>
+              <Captions size={20} />
+              <span className="btn-label">{currentText ? 'Subs' : 'Off'}</span>
             </button>
-            {canCast && (
-              <button className="mpv-chip" onClick={engine.promptCast} aria-label="Cast to device"><Cast size={15} /></button>
-            )}
-            <button className={`mpv-chip ${menu === 'settings' ? 'active' : ''}`} onClick={() => setMenu(menu === 'settings' ? null : 'settings')} aria-label="Player settings"><Settings2 size={15} /></button>
-            <button className={`mpv-chip ${statsOpen ? 'active' : ''}`} onClick={() => setStatsOpen((open) => !open)} aria-label="Statistics"><Activity size={15} /></button>
-            <button className="mpv-chip" onClick={engine.saveFrame} aria-label="Save frame"><Scissors size={15} /></button>
-            <button className="mpv-chip" onClick={engine.togglePip} aria-label="Picture in picture"><PictureInPicture2 size={15} /></button>
-            <button className="mpv-chip" onClick={() => setMenu(menu === 'help' ? null : 'help')} aria-label="Keyboard shortcuts"><Keyboard size={15} /></button>
-            <button className="mpv-chip" onClick={engine.toggleFullscreen} aria-label="Fullscreen">{isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}</button>
+
+            <button
+              className={`playtorrio-btn-icon ${audioSubDialogOpen && audioSubDialogTab === 'audio' ? 'active' : ''}`}
+              onClick={() => {
+                if (isAndroidApp() || (typeof window !== 'undefined' && window.innerWidth <= 768)) {
+                  setAudioSubDialogTab('audio');
+                  setAudioSubDialogOpen(true);
+                } else {
+                  setMenu(menu === 'audio' ? null : 'audio');
+                }
+              }}
+              aria-label="Audio tracks"
+              title="Audio & Volume"
+            >
+              <Volume2 size={20} />
+              <span className="btn-label">Audio</span>
+            </button>
+
+            <button
+              className={`playtorrio-btn-icon ${menu === 'settings' ? 'active' : ''}`}
+              onClick={() => setMenu(menu === 'settings' ? null : 'settings')}
+              aria-label="Settings"
+              title="Settings"
+            >
+              <Settings2 size={20} />
+              <span className="btn-label">Settings</span>
+            </button>
           </div>
         </div>
 
@@ -964,8 +993,62 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           </div>
         </PlayerMenu>
 
-        <PlayerMenu active={menu} close={() => setMenu(null)} id="settings" title="Player">
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="settings" title="Playback Settings">
           <div className="mpv-menu-extra">
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase' }}>Playback Speed</span>
+              <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                {PLAYBACK_SPEEDS.map((value) => (
+                  <button
+                    key={value}
+                    style={{
+                      flex: '1 0 28%',
+                      padding: '6px 0',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: Math.abs(rate - value) < 0.01 ? 'var(--osc-accent)' : 'rgba(255,255,255,0.06)',
+                      color: Math.abs(rate - value) < 0.01 ? '#000' : '#fff',
+                      fontWeight: 700,
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => changeSpeed(value)}
+                  >
+                    {formatSpeed(value)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase' }}>External Players</span>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button
+                  className="mpv-chip"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                  onClick={() => openExternalPlayer(stream, displayTitle, 'vlc')}
+                >
+                  VLC
+                </button>
+                <button
+                  className="mpv-chip"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                  onClick={() => openExternalPlayer(stream, displayTitle, 'mpv')}
+                >
+                  mpv
+                </button>
+                {isAndroidApp() && (
+                  <button
+                    className="mpv-chip"
+                    style={{ flex: 1, justifyContent: 'center' }}
+                    onClick={() => openExternalPlayer(stream, displayTitle, 'mx')}
+                  >
+                    MX
+                  </button>
+                )}
+              </div>
+            </div>
+
             <label>
               <span><Sun size={13} /> Brightness {Math.round(settings.brightness)}%</span>
               <input type="range" min={20} max={150} step={5} value={settings.brightness}

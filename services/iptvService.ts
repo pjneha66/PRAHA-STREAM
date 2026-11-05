@@ -1,13 +1,26 @@
 import CryptoJS from 'crypto-js';
+import { nativeFetchText } from './androidBridge';
 
-async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 7000): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = 8000,
+): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<any> }> {
+  const headers = (init?.headers as Record<string, string>) || {};
+  const method = init?.method || 'GET';
+  const body = typeof init?.body === 'string' ? init.body : undefined;
+  const res = await nativeFetchText(url, {
+    method,
+    headers,
+    body,
+    timeoutMs,
+  });
+  return {
+    ok: res.ok,
+    status: res.status,
+    text: async () => res.data,
+    json: async () => JSON.parse(res.data),
+  };
 }
 
 // ── Models & Interfaces ────────────────────────────────────────────────────────
