@@ -58,6 +58,7 @@ export interface HardcodedChannel {
   exclude?: string[];
   gradient: [string, string];
   logo?: string;
+  defaultStreamUrl?: string;
 }
 
 export interface ChannelHit {
@@ -948,6 +949,21 @@ export class M3uParser {
     Spanish: 'https://iptv-org.github.io/iptv/languages/spa.m3u',
     Music: 'https://iptv-org.github.io/iptv/categories/music.m3u',
   };
+
+  static readonly fallbackChannels: M3uChannel[] = [
+    { name: 'Red Bull TV', url: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8', group: 'Sports', logo: 'https://upload.wikimedia.org/wikipedia/en/thumb/f/f5/Red_Bull_TV_logo.svg/1200px-Red_Bull_TV_logo.svg.png' },
+    { name: 'Sky News UK', url: 'https://skynews-live.akamaized.net/hls/live/2028678/skynews/live.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Sky_News_2020.svg/1200px-Sky_News_2020.svg.png' },
+    { name: 'Bloomberg TV', url: 'https://bloomberg.com/media-manifest/streams/us.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Bloomberg_Television_logo.svg/1200px-Bloomberg_Television_logo.svg.png' },
+    { name: 'France 24 English', url: 'https://static.france24.com/live/F24_EN_LO_HLS/live_tv.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/France_24_logo.svg/1200px-France_24_logo.svg.png' },
+    { name: 'DW News English', url: 'https://dwamdstream102.akamaized.net/hls/live/2015525/dwstream102/index.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Deutsche_Welle_symbol_2012.svg/1200px-Deutsche_Welle_symbol_2012.svg.png' },
+    { name: 'Al Jazeera English', url: 'https://live-hls-web-aje.getaj.net/AJE/01.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/en/thumb/f/f2/Aljazeera_eng.svg/1200px-Aljazeera_eng.svg.png' },
+    { name: 'Euronews English', url: 'https://euronews-euronews-world-1-gb.samsung.wurl.com/manifest/playlist.m3u8', group: 'News', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/Euronews_2016_logo.svg/1200px-Euronews_2016_logo.svg.png' },
+    { name: 'NASA TV HD', url: 'https://ntv1.akamaized.net/hls/live/2014075/NASA-NTV1-HLS/master.m3u8', group: 'Kids & Docs', logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/1200px-NASA_logo.svg.png' },
+    { name: 'Motorvision TV', url: 'https://motorvision-samsungau.amagi.tv/playlist.m3u8', group: 'Motorsport', logo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=300&q=80' },
+    { name: 'Fight Network TV', url: 'https://anthem-fightnetwork-1-us.plex.wurl.tv/playlist.m3u8', group: 'Combat', logo: 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&w=300&q=80' },
+    { name: 'Boxing Channel Live', url: 'https://stream.ecable.tv/boxing/index.m3u8', group: 'Combat', logo: 'https://images.unsplash.com/photo-1517438322307-e67111335449?auto=format&fit=crop&w=300&q=80' },
+    { name: 'World Poker Tour', url: 'https://wpt-samsungus.amagi.tv/playlist.m3u8', group: 'US Sports', logo: 'https://images.unsplash.com/photo-1511193311914-0346f16efe90?auto=format&fit=crop&w=300&q=80' },
+  ];
 }
 
 // ── Live Sports Matches Scraper (Dami-TV & PPV.to) ─────────────────────────────

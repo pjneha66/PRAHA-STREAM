@@ -12,7 +12,7 @@ import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
 import { TorrentStreamingEngine, type TorrentStreamStats } from '../services/torrentStreamingService';
 import {
-  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, openExternalPlayer,
+  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, isNativeVlcAvailable, openExternalPlayer,
   resolvePlayableStreamUrl, setImmersiveFullscreen,
 } from '../services/androidBridge';
 import MpvPlayer from './player/MpvPlayer';
@@ -191,7 +191,10 @@ const PlayerModal: React.FC<{
 
   if (isNative) {
     return (
-      <div className="player-fullscreen-root">
+      <div
+        className="player-fullscreen-root"
+        style={{ background: isNativeVlcAvailable() ? 'transparent' : '#000' }}
+      >
         <MpvPlayer
           stream={activeStream}
           effectiveUrl={effectiveUrl}

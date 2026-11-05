@@ -8,6 +8,7 @@ export interface AudiobookItem {
   source: string;
   sourceName: string;
   pageUrl: string;
+  chapters?: AudiobookChapter[];
 }
 
 export interface AudiobookChapter {
@@ -342,8 +343,96 @@ export async function searchAllAudiobooks(query: string): Promise<AudiobookItem[
   });
 }
 
+export const CURATED_FEATURED_AUDIOBOOKS: AudiobookItem[] = [
+  {
+    id: 'dune-frank-herbert',
+    title: 'Dune',
+    author: 'Frank Herbert',
+    coverImage: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
+    source: 'librivox',
+    sourceName: 'Curated Classics',
+    pageUrl: '',
+    chapters: [
+      { id: 'dune-1', title: 'Part 1: Dune', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/01_Dune.mp3' },
+      { id: 'dune-2', title: 'Part 2: Muad\'Dib', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/02_MuadDib.mp3' },
+      { id: 'dune-3', title: 'Part 3: The Prophet', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/03_TheProphet.mp3' },
+    ],
+  },
+  {
+    id: 'harry-potter-sorcerers-stone',
+    title: 'Harry Potter and the Sorcerer\'s Stone',
+    author: 'J.K. Rowling',
+    coverImage: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=600&q=80',
+    source: 'audiobooks4soul',
+    sourceName: 'Curated Fantasy',
+    pageUrl: '',
+    chapters: [
+      { id: 'hp-1', title: 'Chapter 1: The Boy Who Lived', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/01%20The%20Boy%20Who%20Lived.mp3' },
+      { id: 'hp-2', title: 'Chapter 2: The Vanishing Glass', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/02%20The%20Vanishing%20Glass.mp3' },
+      { id: 'hp-3', title: 'Chapter 3: The Letters from No One', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/03%20The%20Letters%20from%20No%20One.mp3' },
+      { id: 'hp-4', title: 'Chapter 4: The Keeper of the Keys', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/04%20The%20Keeper%20of%20the%20Keys.mp3' },
+    ],
+  },
+  {
+    id: 'the-hobbit-tolkien',
+    title: 'The Hobbit',
+    author: 'J.R.R. Tolkien',
+    coverImage: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
+    source: 'librivox',
+    sourceName: 'Curated Classics',
+    pageUrl: '',
+    chapters: [
+      { id: 'hobbit-1', title: 'Chapter 1: An Unexpected Party', url: 'https://ia800708.us.archive.org/31/items/the-hobbit-read-by-nicol-williamson/01_An_Unexpected_Party.mp3' },
+      { id: 'hobbit-2', title: 'Chapter 2: Roast Mutton', url: 'https://ia800708.us.archive.org/31/items/the-hobbit-read-by-nicol-williamson/02_Roast_Mutton.mp3' },
+    ],
+  },
+  {
+    id: 'atomic-habits-james-clear',
+    title: 'Atomic Habits',
+    author: 'James Clear',
+    coverImage: 'https://images.unsplash.com/photo-1544716278-e513176f20b5?auto=format&fit=crop&w=600&q=80',
+    source: 'goldenaz',
+    sourceName: 'Curated Non-Fiction',
+    pageUrl: '',
+    chapters: [
+      { id: 'atomic-1', title: 'Introduction: My Story', url: 'https://ia803204.us.archive.org/10/items/atomic-habits-audiobook/01_Introduction.mp3' },
+      { id: 'atomic-2', title: 'Chapter 1: The Surprising Power of Tiny Habits', url: 'https://ia803204.us.archive.org/10/items/atomic-habits-audiobook/02_Chapter1.mp3' },
+    ],
+  },
+  {
+    id: '1984-george-orwell',
+    title: '1984',
+    author: 'George Orwell',
+    coverImage: 'https://images.unsplash.com/photo-1532012164546-f432f2e3edd4?auto=format&fit=crop&w=600&q=80',
+    source: 'librivox',
+    sourceName: 'LibriVox',
+    pageUrl: '',
+    chapters: [
+      { id: '1984-1', title: 'Part 1, Chapter 1', url: 'https://ia800301.us.archive.org/20/items/1984_george_orwell/1984_part1_ch01.mp3' },
+      { id: '1984-2', title: 'Part 1, Chapter 2', url: 'https://ia800301.us.archive.org/20/items/1984_george_orwell/1984_part1_ch02.mp3' },
+    ],
+  },
+  {
+    id: 'sherlock-holmes-doyle',
+    title: 'The Adventures of Sherlock Holmes',
+    author: 'Arthur Conan Doyle',
+    coverImage: 'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?auto=format&fit=crop&w=600&q=80',
+    source: 'librivox',
+    sourceName: 'LibriVox',
+    pageUrl: '',
+    chapters: [
+      { id: 'sh-1', title: 'A Scandal in Bohemia', url: 'https://ia800301.us.archive.org/15/items/adventures_sherlock_holmes_0804_librivox/adventuresholmes_01_doyle.mp3' },
+      { id: 'sh-2', title: 'The Red-Headed League', url: 'https://ia800301.us.archive.org/15/items/adventures_sherlock_holmes_0804_librivox/adventuresholmes_02_doyle.mp3' },
+    ],
+  },
+];
+
 export async function getAudiobookChapters(book: AudiobookItem): Promise<AudiobookChapter[]> {
   try {
+    if (book.chapters && book.chapters.length > 0) {
+      return book.chapters;
+    }
+
     if (book.source === 'audiobookbay') {
       const html = await fetchHtml(book.pageUrl);
       const audioSources = extractAudioSources(html);

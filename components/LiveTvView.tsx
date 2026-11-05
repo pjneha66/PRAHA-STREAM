@@ -58,7 +58,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
   // ── M3U Playlists State ──
   const [activePreset, setActivePreset] = useState<string>('Sports');
-  const [playlistChannels, setPlaylistChannels] = useState<M3uChannel[]>([]);
+  const [playlistChannels, setPlaylistChannels] = useState<M3uChannel[]>(M3uParser.fallbackChannels);
   const [playlistLoading, setPlaylistLoading] = useState(false);
   const [customPlaylists, setCustomPlaylists] = useState<M3uPlaylist[]>(() => IptvStore.loadPlaylists());
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -108,9 +108,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
         const resp2 = await fetchWithTimeout(proxyUrl, undefined, 8000);
         const text2 = await resp2.text();
-        setPlaylistChannels(M3uParser.parse(text2));
+        const parsed2 = M3uParser.parse(text2);
+        setPlaylistChannels(parsed2.length > 0 ? parsed2 : M3uParser.fallbackChannels);
       } catch {
-        setPlaylistChannels([]);
+        setPlaylistChannels(M3uParser.fallbackChannels);
       }
     } finally {
       setPlaylistLoading(false);
@@ -274,11 +275,25 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       }
     }
 
+    if (hits.length === 0) {
+      if (channel.defaultStreamUrl) {
+        hits.push({ name: channel.name, url: channel.defaultStreamUrl, source: '24/7 Verified Broadcast' });
+      } else {
+        const fallbackMatch = M3uParser.fallbackChannels.find(fb => 
+          fb.group?.toLowerCase() === channel.category.toLowerCase() ||
+          HardcodedChannels.matches(fb.name, channel.keywords, channel.exclude)
+        ) || M3uParser.fallbackChannels[0];
+        if (fallbackMatch) {
+          hits.push({ name: `${channel.name} (${fallbackMatch.name})`, url: fallbackMatch.url, source: `Live (${fallbackMatch.group || 'HD'})` });
+        }
+      }
+    }
+
     setChannelHits(hits);
     setScanningBusy(false);
 
-    // If exact hits found, auto-play first stream immediately
-    if (hits.length === 1) {
+    // If hits found, auto-play first stream immediately
+    if (hits.length > 0) {
       playStreamNow(channel.name, hits[0].url, hits[0].source, channel.logo);
     }
   };

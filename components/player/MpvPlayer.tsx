@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
-import { isAndroidApp, openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen } from '../../services/androidBridge';
+import { isAndroidApp, isNativeVlcAvailable, nativeVlcSetAspectRatio, openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen } from '../../services/androidBridge';
 import AudioSubtitleDialog from './AudioSubtitleDialog';
 import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
@@ -103,6 +103,9 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     setAspectFit((curr) => {
       const next = curr === 'contain' ? 'cover' : curr === 'cover' ? 'fill' : 'contain';
       flash(next === 'contain' ? 'Aspect: Fit (Contain)' : next === 'cover' ? 'Aspect: Crop (Cover)' : 'Aspect: Stretch (Fill)');
+      if (isNativeVlcAvailable()) {
+        nativeVlcSetAspectRatio(next);
+      }
       return next;
     });
   };
@@ -543,7 +546,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     <div
       ref={stageRef}
       className={`mpv-stage ${controlsVisible ? 'controls-on' : 'controls-off'} ${waiting ? 'is-buffering' : ''}`}
-      style={themeVars}
+      style={{
+        ...themeVars,
+        background: isNativeVlcAvailable() ? 'transparent' : '#000',
+      }}
       onMouseMove={wakeControls}
       onMouseLeave={() => { if (!menu && settings.oscTimeout > 0) setControlsVisible(false); }}
       onTouchStart={onTouchStart}
@@ -564,10 +570,13 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         style={{
           filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)`,
           objectFit: aspectFit,
+          opacity: isNativeVlcAvailable() ? 0 : 1,
+          pointerEvents: isNativeVlcAvailable() ? 'none' : 'auto',
+          background: isNativeVlcAvailable() ? 'transparent' : '#000',
         }}
         onError={(event) => {
           const error = event.currentTarget.error;
-          if (error) setFatal(mediaErrorMessage(error.code));
+          if (error && !isNativeVlcAvailable()) setFatal(mediaErrorMessage(error.code));
         }}
       >
         {preparedSubtitles.map((subtitle, index) => (

@@ -32,7 +32,7 @@ import { animeService } from './services/animeService';
 import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
 import type { HomeRowSettings } from './services/homeCache';
-import { exitAndroidApp, exportBackupFile } from './services/androidBridge';
+import { exitAndroidApp, exportBackupFile, getNativeAppVersion } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import {
@@ -173,7 +173,8 @@ const App: React.FC = () => {
   // Autonomous In-App Update check on launch
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      checkForUpdates(APP_VERSION)
+      const activeVersion = getNativeAppVersion() || APP_VERSION;
+      checkForUpdates(activeVersion)
         .then((info) => {
           if (info && info.hasUpdate) {
             setAvailableUpdate(info);
@@ -187,11 +188,12 @@ const App: React.FC = () => {
   const manualCheckUpdates = useCallback(async () => {
     notify('Checking for updates…');
     try {
-      const info = await checkForUpdates(APP_VERSION);
+      const activeVersion = getNativeAppVersion() || APP_VERSION;
+      const info = await checkForUpdates(activeVersion);
       if (info && info.hasUpdate) {
         setAvailableUpdate(info);
       } else {
-        notify(`PRAHA STREAM is up to date (v${APP_VERSION}).`, 'success');
+        notify(`PRAHA STREAM is up to date (v${activeVersion}).`, 'success');
       }
     } catch {
       notify('Unable to check for updates right now.', 'error');

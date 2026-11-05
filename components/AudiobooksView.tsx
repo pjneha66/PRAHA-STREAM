@@ -4,7 +4,7 @@ import {
   RotateCcw, RotateCw, Search, Volume2, X, Sparkles,
 } from 'lucide-react';
 import {
-  searchAllAudiobooks, getAudiobookChapters,
+  searchAllAudiobooks, getAudiobookChapters, CURATED_FEATURED_AUDIOBOOKS,
   type AudiobookItem, type AudiobookChapter,
 } from '../services/audiobookService';
 
@@ -16,7 +16,7 @@ const TRENDING_SUGGESTIONS = [
 const AudiobooksView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [books, setBooks] = useState<AudiobookItem[]>([]);
+  const [books, setBooks] = useState<AudiobookItem[]>(CURATED_FEATURED_AUDIOBOOKS);
   const [error, setError] = useState('');
 
   // Selected book & chapters
@@ -33,6 +33,13 @@ const AudiobooksView: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
 
+  // Load initial popular audiobooks on mount (matching PlayTorrio)
+  useEffect(() => {
+    let active = true;
+    performSearch('Harry Potter').catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const performSearch = async (searchTerm: string) => {
     const trimmed = searchTerm.trim();
     if (!trimmed) return;
@@ -42,13 +49,14 @@ const AudiobooksView: React.FC = () => {
     try {
       const results = await searchAllAudiobooks(trimmed);
       if (searchIdRef.current !== currentId) return;
-      setBooks(results);
-      if (results.length === 0) {
-        setError('No audiobooks found across the 9 sources. Try another title or author.');
+      if (results.length > 0) {
+        setBooks(results);
+      } else {
+        setError('No audiobooks found across the 9 sources. Showing featured collection.');
       }
     } catch {
       if (searchIdRef.current === currentId) {
-        setError('Failed to query audiobook sources.');
+        setError('Failed to query live audiobook sources. Showing featured collection.');
       }
     } finally {
       if (searchIdRef.current === currentId) {

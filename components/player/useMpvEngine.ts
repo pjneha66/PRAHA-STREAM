@@ -5,6 +5,8 @@ import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
 import {
   enterNativeAndroidPip, getNativeAudioTracks, getNativeSpuTracks,
   getSelectedNativeAudioTrack, getSelectedNativeSpuTrack, isNativeVlcAvailable,
+  nativeVlcPlay, nativeVlcPause, nativeVlcResume, nativeVlcStop, nativeVlcSeek,
+  nativeVlcSetVolume, nativeVlcSetRate, nativeVlcSetAspectRatio,
   setImmersiveFullscreen, setNativeAudioTrack, setNativeSpuTrack,
   setNativeSubtitleDelay,
 } from '../../services/androidBridge';
@@ -157,7 +159,82 @@ export function useMpvEngine({
     engineNameRef.current = 'HTML5';
     const shouldAutoplay = autoplay || resumeRef.current !== null;
 
-    if (isHlsUrl(url) && Hls.isSupported()) {
+    if (isNativeVlcAvailable()) {
+      engineNameRef.current = 'LibVLC (Hardware)';
+      video.style.opacity = '0';
+      const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
+      nativeVlcPlay(url, {}, resumeMs);
+
+      const onVlcTime = (e: any) => {
+        if (disposed) return;
+        const detail = e.detail || {};
+        const cur = (detail.time || 0) / 1000;
+        const dur = (detail.duration || 0) / 1000;
+        if (cur >= 0) setCurrentTime(cur);
+        if (dur > 0) {
+          setDuration(dur);
+          setReady(true);
+        }
+        onProgressRef.current?.(cur, dur);
+      };
+
+      const onVlcState = (e: any) => {
+        if (disposed) return;
+        const detail = e.detail || {};
+        setPlaying(Boolean(detail.playing));
+        setWaiting(Boolean(detail.buffering));
+        if (detail.playing) setReady(true);
+      };
+
+      const onVlcTracks = () => {
+        if (disposed) return;
+        const nativeAudios = getNativeAudioTracks();
+        if (nativeAudios.length > 0) {
+          setAudioTracks(nativeAudios.map((t, idx) => ({
+            id: `vlc-audio:${t.id}`,
+            trackNumber: t.trackNumber || (idx + 1),
+            label: t.name || (nativeAudios.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
+            language: t.language || undefined,
+            languageName: t.languageName || resolveLanguageName(t.language),
+            codec: t.codec || undefined,
+            codecLabel: formatAudioCodec(t.codec),
+          })));
+          const selAudio = getSelectedNativeAudioTrack();
+          setCurrentAudio(selAudio >= 0 ? `vlc-audio:${selAudio}` : '');
+        }
+
+        const nativeSpus = getNativeSpuTracks();
+        if (nativeSpus.length > 0) {
+          setTextTracks(nativeSpus.map((t, idx) => ({
+            id: `vlc-spu:${t.id}`,
+            trackNumber: t.trackNumber || (idx + 1),
+            label: t.name || `Subtitle ${idx + 1}`,
+            language: t.language || undefined,
+            languageName: t.languageName || resolveLanguageName(t.language),
+            codec: t.codec || undefined,
+            codecLabel: formatSubtitleCodec(t.codec),
+          })));
+          const selSpu = getSelectedNativeSpuTrack();
+          setCurrentText(selSpu >= 0 ? `vlc-spu:${selSpu}` : '');
+        }
+      };
+
+      window.addEventListener('praha:vlc-time', onVlcTime);
+      window.addEventListener('praha:vlc-state', onVlcState);
+      window.addEventListener('praha:vlc-tracks', onVlcTracks);
+
+      setTimeout(onVlcTracks, 800);
+      setTimeout(onVlcTracks, 2000);
+
+      return () => {
+        disposed = true;
+        window.removeEventListener('praha:vlc-time', onVlcTime);
+        window.removeEventListener('praha:vlc-state', onVlcState);
+        window.removeEventListener('praha:vlc-tracks', onVlcTracks);
+        nativeVlcStop();
+        video.style.opacity = '1';
+      };
+    } else if (isHlsUrl(url) && Hls.isSupported()) {
       engineNameRef.current = 'hls.js';
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 60 });
       hlsRef.current = hls;
@@ -713,16 +790,47 @@ export function useMpvEngine({
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [currentLevel]);
 
-  const play = useCallback(() => videoRef.current?.play().catch(() => undefined), []);
-  const pause = useCallback(() => videoRef.current?.pause(), []);
+  const play = useCallback(() => {
+    if (isNativeVlcAvailable()) {
+      nativeVlcResume();
+      setPlaying(true);
+      return;
+    }
+    videoRef.current?.play().catch(() => undefined);
+  }, []);
+
+  const pause = useCallback(() => {
+    if (isNativeVlcAvailable()) {
+      nativeVlcPause();
+      setPlaying(false);
+      return;
+    }
+    videoRef.current?.pause();
+  }, []);
+
   const toggle = useCallback(() => {
+    if (isNativeVlcAvailable()) {
+      if (playing) {
+        nativeVlcPause();
+        setPlaying(false);
+      } else {
+        nativeVlcResume();
+        setPlaying(true);
+      }
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) video.play().catch(() => undefined);
     else video.pause();
-  }, []);
+  }, [playing]);
 
   const seekTo = useCallback((seconds: number) => {
+    if (isNativeVlcAvailable()) {
+      nativeVlcSeek(Math.round(seconds * 1000));
+      setCurrentTime(seconds);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     video.currentTime = clamp(seconds, 0, Number.isFinite(video.duration) ? video.duration : seconds);
@@ -730,16 +838,24 @@ export function useMpvEngine({
   }, []);
 
   const seekBy = useCallback((delta: number) => {
+    if (isNativeVlcAvailable()) {
+      seekTo(currentTime + delta);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     seekTo(video.currentTime + delta);
-  }, [seekTo]);
+  }, [currentTime, seekTo]);
 
   const seekToPercent = useCallback((percent: number) => {
+    if (isNativeVlcAvailable()) {
+      if (duration > 0) seekTo(duration * (percent / 100));
+      return;
+    }
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.duration)) return;
     seekTo(video.duration * (percent / 100));
-  }, [seekTo]);
+  }, [duration, seekTo]);
 
   /** mpv-style single-frame stepping. */
   const stepFrame = useCallback((direction: 1 | -1) => {
@@ -750,6 +866,9 @@ export function useMpvEngine({
   }, []);
 
   const setVolume = useCallback((percent: number) => {
+    if (isNativeVlcAvailable()) {
+      nativeVlcSetVolume(percent);
+    }
     const video = videoRef.current;
     if (!video) return;
     const next = clamp(Math.round(percent), 0, 100);
@@ -778,8 +897,11 @@ export function useMpvEngine({
   }, [onSettingsChange]);
 
   const setSpeed = useCallback((next: number) => {
-    const video = videoRef.current;
     const value = clamp(Number(next.toFixed(2)), 0.25, 4);
+    if (isNativeVlcAvailable()) {
+      nativeVlcSetRate(value);
+    }
+    const video = videoRef.current;
     if (video) video.playbackRate = value;
     setRate(value);
     onSettingsChange({ speed: value });

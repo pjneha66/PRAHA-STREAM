@@ -41,6 +41,7 @@ export interface PrahaNativeInterface {
   openExternalPlayer(url: string, title: string, packageName: string, headersJson: string): boolean;
   shareText(filename: string, content: string): boolean;
   downloadAndInstallUpdate?(apkUrl: string, versionName: string): boolean;
+  getAppVersionName?(): string;
   exitApp(): void;
 
   // LibVLC Player APIs
@@ -63,6 +64,7 @@ export interface PrahaNativeInterface {
   vlcSeek?(timeMs: number): void;
   vlcSetVolume?(volume: number): void;
   vlcSetRate?(rate: number): void;
+  vlcSetAspectRatio?(aspect: string): boolean;
   isVlcAvailable?(): boolean;
   isVlcPlaying?(): boolean;
 }
@@ -142,6 +144,16 @@ export function openPrivateDnsSettings(): boolean {
   } catch {
     return false;
   }
+}
+
+export function getNativeAppVersion(): string | null {
+  try {
+    if (typeof window !== 'undefined' && window.PrahaNative && typeof window.PrahaNative.getAppVersionName === 'function') {
+      const v = window.PrahaNative.getAppVersionName();
+      if (v && typeof v === 'string' && v.trim()) return v.trim();
+    }
+  } catch {}
+  return null;
 }
 
 /** The Android player uses a dedicated WebView with no privileged JavaScript bridge. */
@@ -673,6 +685,58 @@ export function setNativeAudioDelay(delaySeconds: number): boolean {
   try {
     const micros = Math.round(delaySeconds * 1000000);
     return Boolean(window.PrahaNative?.setAudioDelay?.(micros));
+  } catch {
+    return false;
+  }
+}
+
+export function nativeVlcPlay(url: string, headers: Record<string, string> = {}, resumeMs = 0): boolean {
+  try {
+    return Boolean(window.PrahaNative?.vlcPlay?.(url, JSON.stringify(headers), resumeMs));
+  } catch {
+    return false;
+  }
+}
+
+export function nativeVlcPause(): void {
+  try {
+    window.PrahaNative?.vlcPause?.();
+  } catch {}
+}
+
+export function nativeVlcResume(): void {
+  try {
+    window.PrahaNative?.vlcResume?.();
+  } catch {}
+}
+
+export function nativeVlcStop(): void {
+  try {
+    window.PrahaNative?.vlcStop?.();
+  } catch {}
+}
+
+export function nativeVlcSeek(timeMs: number): void {
+  try {
+    window.PrahaNative?.vlcSeek?.(timeMs);
+  } catch {}
+}
+
+export function nativeVlcSetVolume(volumePercent: number): void {
+  try {
+    window.PrahaNative?.vlcSetVolume?.(volumePercent);
+  } catch {}
+}
+
+export function nativeVlcSetRate(rate: number): void {
+  try {
+    window.PrahaNative?.vlcSetRate?.(rate);
+  } catch {}
+}
+
+export function nativeVlcSetAspectRatio(aspect: string): boolean {
+  try {
+    return Boolean(window.PrahaNative?.vlcSetAspectRatio?.(aspect));
   } catch {
     return false;
   }

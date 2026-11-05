@@ -14,6 +14,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.Settings;
 import android.util.Rational;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -629,6 +630,21 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public boolean vlcSetAspectRatio(String aspect) {
+            if (vlcPlayer == null) return false;
+            return vlcPlayer.setAspectRatio(aspect);
+        }
+
+        @JavascriptInterface
+        public String getAppVersionName() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "2.5.2";
+            }
+        }
+
+        @JavascriptInterface
         public boolean isVlcAvailable() {
             return vlcPlayer != null && vlcPlayer.isAvailable();
         }
@@ -643,6 +659,14 @@ public class MainActivity extends BridgeActivity {
             if (apkUrl == null || apkUrl.isEmpty()) return false;
             runOnUiThread(() -> {
                 try {
+                    File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                    if (downloadDir != null) {
+                        File stale = new File(downloadDir, "praha-update.apk");
+                        if (stale.exists()) {
+                            stale.delete();
+                        }
+                    }
+
                     DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
                     Uri uri = Uri.parse(apkUrl);
                     DownloadManager.Request request = new DownloadManager.Request(uri);
@@ -660,7 +684,16 @@ public class MainActivity extends BridgeActivity {
                                 long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
                                 if (id == downloadId) {
                                     File file = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "praha-update.apk");
-                                    if (file.exists()) {
+                                    if (file.exists() && file.length() > 0) {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            if (!getPackageManager().canRequestPackageInstalls()) {
+                                                Intent allowIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                                                allowIntent.setData(Uri.parse("package:" + getPackageName()));
+                                                allowIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                                startActivity(allowIntent);
+                                            }
+                                        }
+
                                         Uri apkUri = FileProvider.getUriForFile(
                                                 MainActivity.this,
                                                 getPackageName() + ".fileprovider",

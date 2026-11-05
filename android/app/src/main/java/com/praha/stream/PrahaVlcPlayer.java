@@ -303,6 +303,28 @@ public class PrahaVlcPlayer {
         }
     }
 
+    public synchronized boolean setAspectRatio(String aspect) {
+        if (mediaPlayer == null) return false;
+        try {
+            if (aspect == null || aspect.trim().isEmpty() || "contain".equalsIgnoreCase(aspect) || "fit".equalsIgnoreCase(aspect)) {
+                mediaPlayer.setAspectRatio(null);
+                mediaPlayer.setScale(0f);
+            } else if ("fill".equalsIgnoreCase(aspect) || "stretch".equalsIgnoreCase(aspect)) {
+                mediaPlayer.setAspectRatio("16:9");
+                mediaPlayer.setScale(0f);
+            } else if ("cover".equalsIgnoreCase(aspect)) {
+                mediaPlayer.setAspectRatio(null);
+                mediaPlayer.setScale(1.25f);
+            } else {
+                mediaPlayer.setAspectRatio(aspect);
+            }
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting aspect ratio", e);
+            return false;
+        }
+    }
+
     public boolean isPlaying() {
         return mediaPlayer != null && mediaPlayer.isPlaying();
     }

@@ -5,7 +5,7 @@ import {
   Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, VolumeX, X,
 } from 'lucide-react';
 import {
-  OctaveMusicService, type MusicAlbum, type MusicArtist,
+  OctaveMusicService, FALLBACK_FEATURED_SECTIONS, type MusicAlbum, type MusicArtist,
   type MusicTrack, type OctaveSearchData,
 } from '../services/musicService';
 
@@ -24,8 +24,8 @@ function formatTime(seconds: number): string {
 const MusicView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [featuredLoading, setFeaturedLoading] = useState(true);
-  const [featuredSections, setFeaturedSections] = useState<Record<string, MusicTrack[]>>({});
+  const [featuredLoading, setFeaturedLoading] = useState(false);
+  const [featuredSections, setFeaturedSections] = useState<Record<string, MusicTrack[]>>(FALLBACK_FEATURED_SECTIONS);
   const [searchResults, setSearchResults] = useState<OctaveSearchData | null>(null);
   const [error, setError] = useState('');
 
