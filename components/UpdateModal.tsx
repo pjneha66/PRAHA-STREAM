@@ -211,3 +211,4 @@ const UpdateModal: React.FC<UpdateModalProps> = ({ update, onClose }) => {
 };
 
 export default UpdateModal;
+

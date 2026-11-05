@@ -92,3 +92,4 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateInf
     return null;
   }
 }
+

@@ -47,9 +47,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends BridgeActivity {
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
+    private final ExecutorService httpExecutor = Executors.newCachedThreadPool();
     private PrahaVlcPlayer vlcPlayer;
     private VLCVideoLayout vlcVideoLayout;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
@@ -140,6 +143,7 @@ public class MainActivity extends BridgeActivity {
             vlcPlayer.release();
         }
         streamProxy.stop();
+        httpExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -207,6 +211,91 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public String proxyStreamUrl(String url, String headersJson) {
             return streamProxy.buildProxyUrl(url, headersJson);
+        }
+
+        @JavascriptInterface
+        public void httpRequestAsync(final String requestId, final String urlString, final String method, final String headersJson, final String body, final int timeoutMs) {
+            httpExecutor.execute(() -> {
+                HttpURLConnection conn = null;
+                JSONObject result = new JSONObject();
+                try {
+                    URL url = new URL(urlString);
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setInstanceFollowRedirects(true);
+                    int timeout = (timeoutMs > 0) ? timeoutMs : 15000;
+                    conn.setConnectTimeout(timeout);
+                    conn.setReadTimeout(timeout);
+                    String verb = (method == null || method.isEmpty()) ? "GET" : method.toUpperCase();
+                    conn.setRequestMethod(verb);
+
+                    boolean hasUa = false;
+                    if (headersJson != null && !headersJson.isEmpty()) {
+                        JSONObject headers = new JSONObject(headersJson);
+                        Iterator<String> keys = headers.keys();
+                        while (keys.hasNext()) {
+                            String key = keys.next();
+                            String value = headers.optString(key, "");
+                            if (!value.isEmpty()) {
+                                conn.setRequestProperty(key, value);
+                                if ("user-agent".equalsIgnoreCase(key)) hasUa = true;
+                            }
+                        }
+                    }
+                    if (!hasUa) {
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
+                    }
+
+                    if (body != null && !body.isEmpty() && ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))) {
+                        conn.setDoOutput(true);
+                        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+                        try (OutputStream os = conn.getOutputStream()) {
+                            os.write(payload);
+                        }
+                    }
+
+                    int status = conn.getResponseCode();
+                    InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                    String text = "";
+                    if (in != null) {
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) != -1) {
+                            bos.write(buf, 0, n);
+                        }
+                        text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                    }
+
+                    result.put("ok", status >= 200 && status < 300);
+                    result.put("status", status);
+                    result.put("body", text);
+                } catch (Exception e) {
+                    try {
+                        result.put("ok", false);
+                        result.put("status", 0);
+                        result.put("error", e.getMessage() != null ? e.getMessage() : "Native HTTP error");
+                    } catch (Exception ignored) {}
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+
+                deliverHttpCallback(requestId, result);
+            });
+        }
+
+        private void deliverHttpCallback(final String requestId, final JSONObject result) {
+            runOnUiThread(() -> {
+                try {
+                    if (getBridge() != null && getBridge().getWebView() != null) {
+                        String js = "window.__prahaNativeHttpCallback && window.__prahaNativeHttpCallback(" 
+                            + JSONObject.quote(requestId) + ", " 
+                            + JSONObject.quote(result.toString()) + ");";
+                        getBridge().getWebView().evaluateJavascript(js, null);
+                    }
+                } catch (Exception e) {
+                    android.util.Log.e("PrahaBridge", "Error delivering HTTP callback", e);
+                }
+            });
         }
 
         @JavascriptInterface

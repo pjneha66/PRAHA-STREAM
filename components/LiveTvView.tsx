@@ -31,6 +31,16 @@ const CATEGORY_FILTERS = [
   'Music',
 ] as const;
 
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [activeTab, setActiveTab] = useState<LiveTvTab>('channels');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -87,7 +97,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     if (!url) return;
     setPlaylistLoading(true);
     try {
-      const resp = await fetch(url);
+      const resp = await fetchWithTimeout(url, undefined, 8000);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const text = await resp.text();
       const parsed = M3uParser.parse(text);
@@ -96,7 +106,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       // Fallback: try proxy
       try {
         const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-        const resp2 = await fetch(proxyUrl);
+        const resp2 = await fetchWithTimeout(proxyUrl, undefined, 8000);
         const text2 = await resp2.text();
         setPlaylistChannels(M3uParser.parse(text2));
       } catch {
@@ -306,7 +316,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       let sourceUrl = importUrl.trim();
 
       if (sourceUrl) {
-        const resp = await fetch(sourceUrl);
+        const resp = await fetchWithTimeout(sourceUrl, undefined, 10000);
         const text = await resp.text();
         channels = M3uParser.parse(text);
       } else if (importText.trim()) {

@@ -30,21 +30,22 @@ function readKey<T>(key: string, fallback: T): T {
 export function usePersistentState<T>(key: string, initialValue: T) {
   const initialRef = useRef(initialValue);
   const [value, setValue] = useState<T>(() => readKey(key, initialValue));
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   useEffect(() => {
     setValue(readKey(key, initialRef.current));
   }, [key]);
 
   const setStoredValue = useCallback((next: T | ((current: T) => T)) => {
-    setValue((current) => {
-      const resolved = next instanceof Function ? next(current) : next;
-      try {
-        window.localStorage.setItem(key, JSON.stringify(resolved));
-      } catch (error) {
-        console.error(`Unable to persist ${key}`, error);
-      }
-      return resolved;
-    });
+    const resolved = next instanceof Function ? next(valueRef.current) : next;
+    valueRef.current = resolved;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(resolved));
+    } catch (error) {
+      console.error(`Unable to persist ${key}`, error);
+    }
+    setValue(resolved);
   }, [key]);
 
   return [value, setStoredValue] as const;

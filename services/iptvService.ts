@@ -1,5 +1,15 @@
 import CryptoJS from 'crypto-js';
 
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 7000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Models & Interfaces ────────────────────────────────────────────────────────
 
 export interface IptvPortal {
@@ -104,7 +114,7 @@ export class PasteShDecryptor {
       const slashIdx = baseUrl.lastIndexOf('/');
       const id = slashIdx >= 0 ? baseUrl.substring(slashIdx + 1) : '';
 
-      const resp = await fetch(`${baseUrl}.txt`, { headers: { 'User-Agent': this.UA } });
+      const resp = await fetchWithTimeout(`${baseUrl}.txt`, { headers: { 'User-Agent': this.UA } }, 6000);
       if (!resp.ok) return '';
       const raw = await resp.text();
       const lines = raw.split('\n');
@@ -386,7 +396,7 @@ export class IptvScraper {
     for (const tmpl of this.PROXIES) {
       try {
         const proxyUrl = tmpl.replace('{URL}', encodeURIComponent(targetUrl));
-        const resp = await fetch(proxyUrl, { headers: { Accept: 'application/json' } });
+        const resp = await fetchWithTimeout(proxyUrl, { headers: { Accept: 'application/json' } }, 5000);
         if (resp.ok) {
           const body = await resp.text();
           if (body.trim().startsWith('{')) {
@@ -945,11 +955,11 @@ export class M3uParser {
 export class LiveMatchesScraper {
   static async fetchDamiTvMatches(): Promise<LiveMatchEvent[]> {
     try {
-      const resp = await fetch('https://dami-tv.pro/papi/api/streams', {
+      const resp = await fetchWithTimeout('https://dami-tv.pro/papi/api/streams', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-      });
+      }, 7000);
       if (!resp.ok) return [];
       const body = await resp.json();
       if (!body?.streams) return [];
@@ -1002,11 +1012,11 @@ export class LiveMatchesScraper {
 
   static async fetchPpvMatches(): Promise<LiveMatchEvent[]> {
     try {
-      const resp = await fetch('https://old.ppv.to/api/streams', {
+      const resp = await fetchWithTimeout('https://old.ppv.to/api/streams', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-      });
+      }, 7000);
       if (!resp.ok) return [];
       const body = await resp.json();
       const categories = body?.streams || [];

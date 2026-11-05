@@ -281,64 +281,118 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   }, [duration, engine, flash]);
 
   /** Keyboard map, mirroring mpv bindings + Z/X subtitle sync & N next episode. */
+  const keyboardStateRef = useRef({
+    engine,
+    flash,
+    jumpRatio,
+    loop,
+    menu,
+    muted,
+    currentText,
+    textTracks,
+    onRequestClose,
+    onNextEpisode,
+    playing,
+    rate,
+    settings,
+    onSettingsChange,
+    changeSpeed,
+    changeVolume,
+    shiftSubtitleDelay,
+    seek,
+    volume,
+    wakeControls,
+    audioSubDialogOpen,
+    setAudioSubDialogOpen,
+    setMenu,
+    setStatsOpen,
+  });
+  keyboardStateRef.current = {
+    engine,
+    flash,
+    jumpRatio,
+    loop,
+    menu,
+    muted,
+    currentText,
+    textTracks,
+    onRequestClose,
+    onNextEpisode,
+    playing,
+    rate,
+    settings,
+    onSettingsChange,
+    changeSpeed,
+    changeVolume,
+    shiftSubtitleDelay,
+    seek,
+    volume,
+    wakeControls,
+    audioSubDialogOpen,
+    setAudioSubDialogOpen,
+    setMenu,
+    setStatsOpen,
+  };
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      const state = keyboardStateRef.current;
       const target = event.target as HTMLElement | null;
       if (target && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
       const key = event.key;
-      const step = settings.seekStep;
+      const step = state.settings.seekStep;
 
       if (key === 'Escape') {
-        if (audioSubDialogOpen) { setAudioSubDialogOpen(false); return; }
-        if (menu) { setMenu(null); return; }
+        if (state.audioSubDialogOpen) { state.setAudioSubDialogOpen(false); return; }
+        if (state.menu) { state.setMenu(null); return; }
         if (document.fullscreenElement) { document.exitFullscreen().catch(() => undefined); return; }
-        onRequestClose();
+        state.onRequestClose();
         return;
       }
       if (key === ' ' || key.toLowerCase() === 'k') {
         event.preventDefault();
-        engine.toggle();
-        flash(playing ? 'Pause' : 'Play');
+        state.engine.toggle();
+        state.flash(state.playing ? 'Pause' : 'Play');
         return;
       }
       switch (key) {
-        case 'ArrowLeft': seek(event.shiftKey ? -60 : -step); break;
-        case 'ArrowRight': seek(event.shiftKey ? 60 : step); break;
-        case 'ArrowUp': event.preventDefault(); changeVolume(volume + 5); break;
-        case 'ArrowDown': event.preventDefault(); changeVolume(volume - 5); break;
-        case 'n': case 'N': if (onNextEpisode) onNextEpisode(); break;
-        case ',': engine.stepFrame(-1); flash('Frame −'); break;
-        case '.': engine.stepFrame(1); flash('Frame +'); break;
-        case '[': changeSpeed(rate - 0.1); break;
-        case ']': changeSpeed(rate + 0.1); break;
-        case '{': changeSpeed(rate / 2); break;
-        case '}': changeSpeed(rate * 2); break;
-        case 'Backspace': changeSpeed(1); break;
-        case 'm': case 'M': engine.toggleMute(); flash(muted ? 'Unmute' : 'Mute'); break;
-        case 'j': case 'J': engine.cycleText(key === 'J' ? -1 : 1); flash('Subtitle track'); break;
-        case 'z': case 'Z': shiftSubtitleDelay(-0.25); break;
-        case 'x': case 'X': shiftSubtitleDelay(0.25); break;
-        case '#': engine.cycleAudio(); flash('Audio track'); break;
+        case 'ArrowLeft': state.seek(event.shiftKey ? -60 : -step); break;
+        case 'ArrowRight': state.seek(event.shiftKey ? 60 : step); break;
+        case 'ArrowUp': event.preventDefault(); state.changeVolume(state.volume + 5); break;
+        case 'ArrowDown': event.preventDefault(); state.changeVolume(state.volume - 5); break;
+        case 'n': case 'N': if (state.onNextEpisode) state.onNextEpisode(); break;
+        case ',': state.engine.stepFrame(-1); state.flash('Frame −'); break;
+        case '.': state.engine.stepFrame(1); state.flash('Frame +'); break;
+        case '[': state.changeSpeed(state.rate - 0.1); break;
+        case ']': state.changeSpeed(state.rate + 0.1); break;
+        case '{': state.changeSpeed(state.rate / 2); break;
+        case '}': state.changeSpeed(state.rate * 2); break;
+        case 'Backspace': state.changeSpeed(1); break;
+        case 'm': case 'M': state.engine.toggleMute(); state.flash(state.muted ? 'Unmute' : 'Mute'); break;
+        case 'j': case 'J': state.engine.cycleText(key === 'J' ? -1 : 1); state.flash('Subtitle track'); break;
+        case 'z': case 'Z': state.shiftSubtitleDelay(-0.25); break;
+        case 'x': case 'X': state.shiftSubtitleDelay(0.25); break;
+        case '#': state.engine.cycleAudio(); state.flash('Audio track'); break;
         case 'c': case 'C':
-          engine.selectText(currentText ? '' : (textTracks[0]?.id || ''));
-          flash(currentText ? 'Subtitles off' : 'Subtitles on');
+          state.engine.selectText(state.currentText ? '' : (state.textTracks[0]?.id || ''));
+          state.flash(state.currentText ? 'Subtitles off' : 'Subtitles on');
           break;
-        case 'q': case 'Q': onSettingsChange({ subtitleSize: clamp(settings.subtitleSize - 10, 50, 300) }); flash('Subtitles smaller'); break;
-        case 'w': case 'W': onSettingsChange({ subtitleSize: clamp(settings.subtitleSize + 10, 50, 300) }); flash('Subtitles larger'); break;
-        case 'f': case 'F': engine.toggleFullscreen(); break;
-        case 'p': case 'P': engine.togglePip(); break;
-        case 'i': case 'I': setStatsOpen((open) => !open); break;
-        case 'l': case 'L': engine.toggleLoop(); flash(loop.b !== null ? 'Loop cleared' : loop.a !== null ? 'Loop B set' : 'Loop A set'); break;
-        case 's': case 'S': engine.saveFrame(); break;
-        case '?': case 'h': case 'H': setMenu((current) => (current === 'help' ? null : 'help')); break;
+        case 'q': case 'Q': state.onSettingsChange({ subtitleSize: clamp(state.settings.subtitleSize - 10, 50, 300) }); state.flash('Subtitles smaller'); break;
+        case 'w': case 'W': state.onSettingsChange({ subtitleSize: clamp(state.settings.subtitleSize + 10, 50, 300) }); state.flash('Subtitles larger'); break;
+        case 'f': case 'F': state.engine.toggleFullscreen(); break;
+        case 'p': case 'P': state.engine.togglePip(); break;
+        case 'i': case 'I': state.setStatsOpen((open) => !open); break;
+        case 'l': case 'L': state.engine.toggleLoop(); state.flash(state.loop.b !== null ? 'Loop cleared' : state.loop.a !== null ? 'Loop B set' : 'Loop A set'); break;
+        case 's': case 'S': state.engine.saveFrame(); break;
+        case '?': case 'h': case 'H': state.setMenu((current) => (current === 'help' ? null : 'help')); break;
         default:
-          if (/^[0-9]$/.test(key)) jumpRatio(Number(key) * 10);
+          if (/^[0-9]$/.test(key)) state.jumpRatio(Number(key) * 10);
       }
-      wakeControls();
+      state.wakeControls();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [engine, flash, jumpRatio, loop, menu, muted, currentText, textTracks, onRequestClose, onNextEpisode, playing, rate, settings.seekStep, settings.subtitleSize, onSettingsChange, changeSpeed, changeVolume, shiftSubtitleDelay, seek, volume, wakeControls]);
+  }, []);
 
   const ratioFromEvent = (clientX: number) => {
     const bar = seekRef.current;

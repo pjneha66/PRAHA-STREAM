@@ -224,16 +224,18 @@ export class OctaveMusicService {
       'Hip-Hop & R&B': 'Kendrick Lamar',
     };
 
-    for (const [section, searchKeyword] of Object.entries(categories)) {
-      try {
-        const search = await this.searchFull(searchKeyword);
-        if (search.tracks.length > 0) {
-          results[section] = search.tracks.slice(0, 10);
+    await Promise.all(
+      Object.entries(categories).map(async ([section, searchKeyword]) => {
+        try {
+          const search = await this.searchFull(searchKeyword);
+          if (search.tracks.length > 0) {
+            results[section] = search.tracks.slice(0, 10);
+          }
+        } catch {
+          // Ignored
         }
-      } catch {
-        // Ignored
-      }
-    }
+      })
+    );
     return results;
   }
 }

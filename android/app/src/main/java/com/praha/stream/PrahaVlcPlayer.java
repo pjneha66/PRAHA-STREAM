@@ -151,7 +151,6 @@ public class PrahaVlcPlayer {
             options.add("--no-drop-late-frames");
             options.add("--no-skip-frames");
             options.add("--audio-time-stretch");
-            options.add("-vvv");
             libVlc = new LibVLC(activity, options);
             mediaPlayer = new MediaPlayer(libVlc);
             if (videoLayout != null) {
@@ -236,7 +235,7 @@ public class PrahaVlcPlayer {
             }
 
             currentMedia.setHWDecoderEnabled(true, false);
-            currentMedia.parse(Media.Parse.ParseNetwork | Media.Parse.FetchLocal);
+            currentMedia.parseAsync(Media.Parse.ParseNetwork | Media.Parse.FetchLocal);
             currentMedia.setEventListener(event -> {
                 if (event.type == Media.Event.ParsedChanged) {
                     mainHandler.post(this::notifyTracksChanged);

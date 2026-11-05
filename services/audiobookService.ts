@@ -401,25 +401,31 @@ export async function getAudiobookChapters(book: AudiobookItem): Promise<Audiobo
         blobs.push(m[1]);
       }
 
-      const chapters: AudiobookChapter[] = [];
-      for (let i = 0; i < blobs.length; i++) {
-        try {
-          const decryptRes = await fetchHtml(
-            `https://audiobooks4soul.com/wp-content/plugins/custom-story-audio/inc/security/decrypt.php?encrypted=${encodeURIComponent(blobs[i])}`,
-          );
-          if (decryptRes.startsWith('http') && !decryptRes.includes('Soulful_Exploration')) {
-            chapters.push({
-              id: `soul-ch-${i + 1}`,
-              title: `Chapter ${i + 1}`,
-              url: decryptRes.trim(),
-              headers: { Referer: 'https://audiobooks4soul.com/', 'User-Agent': USER_AGENT },
-            });
+      const settled = await Promise.all(
+        blobs.map(async (blob, i): Promise<(AudiobookChapter & { index: number }) | null> => {
+          try {
+            const decryptRes = await fetchHtml(
+              `https://audiobooks4soul.com/wp-content/plugins/custom-story-audio/inc/security/decrypt.php?encrypted=${encodeURIComponent(blob)}`,
+            );
+            if (decryptRes.startsWith('http') && !decryptRes.includes('Soulful_Exploration')) {
+              return {
+                id: `soul-ch-${i + 1}`,
+                title: `Chapter ${i + 1}`,
+                url: decryptRes.trim(),
+                headers: { Referer: 'https://audiobooks4soul.com/', 'User-Agent': USER_AGENT },
+                index: i,
+              };
+            }
+          } catch {
+            // Continue
           }
-        } catch {
-          // Continue to next chapter
-        }
-      }
-      return chapters;
+          return null;
+        }),
+      );
+      return settled
+        .filter((ch): ch is (AudiobookChapter & { index: number }) => ch !== null)
+        .sort((a, b) => a.index - b.index)
+        .map(({ index: _, ...rest }) => rest);
     }
 
     if (book.source === 'audionest') {

@@ -587,7 +587,9 @@ const App: React.FC = () => {
       const scrobbleKey = `${patch.media.id}:${nextEntry.season || 0}:${nextEntry.episode || 0}`;
       if (progress >= 80 && !scrobbledKeysRef.current.has(scrobbleKey)) {
         scrobbledKeysRef.current.add(scrobbleKey);
-        scrobbleWatchProgress(nextEntry, settings.sync).catch(() => undefined);
+        queueMicrotask(() => {
+          scrobbleWatchProgress(nextEntry, settings.sync).catch(() => undefined);
+        });
       }
 
       return [nextEntry, ...current.filter((entry) => entry.media.id !== patch.media.id)].slice(0, 50);

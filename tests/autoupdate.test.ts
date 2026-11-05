@@ -28,3 +28,4 @@ describe('AutoUpdateService', () => {
     expect(isNewerVersion('3.0.0', '2.9.9')).toBe(false);
   });
 });
+

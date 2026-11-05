@@ -34,7 +34,8 @@ export interface PrahaNativeInterface {
   openPrivateDnsSettings?(): boolean;
   getProxyPort(): number;
   proxyStreamUrl(url: string, headersJson: string): string;
-  httpRequest(url: string, method: string, headersJson: string, body: string): string;
+  httpRequest?(url: string, method: string, headersJson: string, body: string): string;
+  httpRequestAsync?(requestId: string, url: string, method: string, headersJson: string, body: string, timeoutMs: number): void;
   setImmersiveMode(immersive: boolean, lockLandscape: boolean): void;
   enterPip(): boolean;
   openExternalPlayer(url: string, title: string, packageName: string, headersJson: string): boolean;
@@ -69,8 +70,51 @@ export interface PrahaNativeInterface {
 declare global {
   interface Window {
     PrahaNative?: PrahaNativeInterface;
+    __prahaNativeHttpCallback?: (requestId: string, rawResult: string | object) => void;
   }
 }
+
+interface PendingHttpRequest {
+  resolve: (value: NativeHttpResult) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingHttpRequests = new Map<string, PendingHttpRequest>();
+let httpReqCounter = 0;
+
+export function registerNativeHttpCallback(): void {
+  if (typeof window !== 'undefined') {
+    window.__prahaNativeHttpCallback = (requestId: string, rawResult: string | object) => {
+      const pending = pendingHttpRequests.get(requestId);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pendingHttpRequests.delete(requestId);
+      try {
+        const parsed = (typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult) as {
+          ok?: boolean;
+          status?: number;
+          body?: string;
+          error?: string;
+        };
+        if (parsed.error && !parsed.status) {
+          pending.reject(new Error(parsed.error));
+        } else {
+          const status = Number(parsed.status || 0);
+          pending.resolve({
+            ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
+            status,
+            data: parsed.body ?? '',
+          });
+        }
+      } catch (err) {
+        pending.reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+  }
+}
+
+registerNativeHttpCallback();
 
 export type ExternalPlayerTarget = 'chooser' | 'vlc' | 'mpv' | 'mx' | 'justplayer';
 
@@ -130,13 +174,29 @@ export function isAndroidTv(): boolean {
   return /\b(AFT[A-Z0-9]*|BRAVIA|Android TV|GoogleTV|MIBOX|SHIELD Android TV|Leanback)\b/i.test(ua);
 }
 
-export function hasNativeHeaderProxy(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return Boolean(window.PrahaNative && window.PrahaNative.getProxyPort() > 0);
-  } catch {
-    return false;
+let cachedProxyPort = -1;
+let lastProxyPortCheck = 0;
+
+export function getCachedProxyPort(): number {
+  if (typeof window === 'undefined') return -1;
+  const now = Date.now();
+  if (cachedProxyPort >= 0 && now - lastProxyPortCheck < 60000) {
+    return cachedProxyPort;
   }
+  try {
+    if (window.PrahaNative?.getProxyPort) {
+      cachedProxyPort = window.PrahaNative.getProxyPort();
+      lastProxyPortCheck = now;
+      return cachedProxyPort;
+    }
+  } catch {
+    cachedProxyPort = -1;
+  }
+  return cachedProxyPort;
+}
+
+export function hasNativeHeaderProxy(): boolean {
+  return getCachedProxyPort() > 0;
 }
 
 export function extractStreamHeaders(stream: Pick<StreamResult, 'headers' | 'referer' | 'behaviorHints'>): Record<string, string> {
@@ -219,18 +279,17 @@ export function buildImageCandidates(url?: string): string[] {
     if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
   };
 
-  if (typeof window !== 'undefined' && window.PrahaNative?.proxyStreamUrl && hasNativeHeaderProxy()) {
+  const proxyPort = getCachedProxyPort();
+  if (proxyPort > 0) {
     try {
-      const proxied = window.PrahaNative.proxyStreamUrl(
-        trimmed,
-        JSON.stringify({
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
-          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-        }),
-      );
-      if (proxied && proxied !== trimmed) push(proxied);
+      const headersJson = JSON.stringify({
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      });
+      const proxied = `http://127.0.0.1:${proxyPort}/stream?url=${encodeURIComponent(trimmed)}&headers=${encodeURIComponent(headersJson)}`;
+      push(proxied);
     } catch {
-      // Ignore native bridge error and continue with web candidates.
+      // Ignore proxy error and continue with web candidates.
     }
   }
 
@@ -325,17 +384,47 @@ export async function nativeFetchText(
     }
   }
 
-  // 2. Native Android Java bridge (supports all custom headers & redirects).
-  if (typeof window !== 'undefined' && window.PrahaNative?.httpRequest) {
-    const raw = window.PrahaNative.httpRequest(url, method, JSON.stringify(headers), options.body || '');
-    const parsed = JSON.parse(raw) as { ok?: boolean; status?: number; body?: string; error?: string };
-    if (parsed.error && !parsed.status) throw new Error(parsed.error);
-    const status = Number(parsed.status || 0);
-    return {
-      ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
-      status,
-      data: parsed.body ?? '',
-    };
+  // 2. Native Android Java bridge (supports all custom headers & redirects asynchronously).
+  if (typeof window !== 'undefined' && window.PrahaNative) {
+    if (window.PrahaNative.httpRequestAsync) {
+      if (!window.__prahaNativeHttpCallback) registerNativeHttpCallback();
+      return new Promise<NativeHttpResult>((resolve, reject) => {
+        const requestId = `req_${++httpReqCounter}_${Date.now()}`;
+        const timer = setTimeout(() => {
+          pendingHttpRequests.delete(requestId);
+          reject(new Error(`Native HTTP request timed out after ${timeoutMs}ms`));
+        }, timeoutMs + 3000);
+
+        pendingHttpRequests.set(requestId, { resolve, reject, timer });
+
+        try {
+          window.PrahaNative!.httpRequestAsync!(
+            requestId,
+            url,
+            method,
+            JSON.stringify(headers),
+            options.body || '',
+            timeoutMs,
+          );
+        } catch (callError) {
+          clearTimeout(timer);
+          pendingHttpRequests.delete(requestId);
+          reject(callError instanceof Error ? callError : new Error(String(callError)));
+        }
+      });
+    }
+
+    if (window.PrahaNative.httpRequest) {
+      const raw = window.PrahaNative.httpRequest(url, method, JSON.stringify(headers), options.body || '');
+      const parsed = JSON.parse(raw) as { ok?: boolean; status?: number; body?: string; error?: string };
+      if (parsed.error && !parsed.status) throw new Error(parsed.error);
+      const status = Number(parsed.status || 0);
+      return {
+        ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
+        status,
+        data: parsed.body ?? '',
+      };
+    }
   }
 
   // 3. CapacitorHttp fallback when running on native Capacitor without custom bridge.
