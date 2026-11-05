@@ -7,6 +7,7 @@ import {
   searchAllAudiobooks, getAudiobookChapters, CURATED_FEATURED_AUDIOBOOKS,
   type AudiobookItem, type AudiobookChapter,
 } from '../services/audiobookService';
+import { resolvePlayableStreamUrl } from '../services/androidBridge';
 
 const TRENDING_SUGGESTIONS = [
   'Dune', 'Harry Potter', 'The Hobbit', 'Atomic Habits',
@@ -113,6 +114,22 @@ const AudiobooksView: React.FC = () => {
   };
 
   const activeChapter = chapters[currentChapterIndex];
+
+  const streamAudioUrl = React.useMemo(() => {
+    if (!activeChapter?.url) return '';
+    if (activeChapter.headers && Object.keys(activeChapter.headers).length > 0) {
+      return resolvePlayableStreamUrl({
+        id: activeChapter.id,
+        title: activeChapter.title,
+        url: activeChapter.url,
+        headers: activeChapter.headers,
+        sourceName: selectedBook?.sourceName || 'Audiobook',
+        sourceType: 'playtorrio',
+        quality: 'Auto',
+      });
+    }
+    return activeChapter.url;
+  }, [activeChapter, selectedBook]);
 
   // Update MediaSession API for Android background playback
   useEffect(() => {
@@ -384,8 +401,11 @@ const AudiobooksView: React.FC = () => {
         }}>
           <audio
             ref={audioRef}
-            src={activeChapter.url}
+            src={streamAudioUrl}
             autoPlay={isPlaying}
+            onError={() => {
+              setError('Unable to stream this chapter directly. Check internet or try another chapter.');
+            }}
             onTimeUpdate={() => {
               if (audioRef.current) {
                 setCurrentTime(audioRef.current.currentTime);

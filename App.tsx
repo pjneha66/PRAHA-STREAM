@@ -32,7 +32,7 @@ import { animeService } from './services/animeService';
 import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
 import type { HomeRowSettings } from './services/homeCache';
-import { exitAndroidApp, exportBackupFile, getNativeAppVersion } from './services/androidBridge';
+import { exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import {
@@ -228,6 +228,16 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  const closePlayer = useCallback(() => {
+    try {
+      nativeVlcStop();
+      document.documentElement.classList.remove('player-vlc-active');
+      document.body.classList.remove('player-vlc-active');
+      document.getElementById('root')?.classList.remove('player-vlc-active');
+    } catch {}
+    setPlayer(null);
+  }, []);
+
   // Android Hardware Back Button handler
   useEffect(() => {
     const onHardwareBack = (event: Event) => {
@@ -241,7 +251,7 @@ const App: React.FC = () => {
         return;
       }
       if (player) {
-        setPlayer(null);
+        closePlayer();
         return;
       }
       if (embedState) {
@@ -1019,26 +1029,33 @@ const App: React.FC = () => {
 
   return (
     <>
+      {/* Main app navigation and pages — completely hidden when player is active to prevent transparency bleed and ghost clicks */}
       {profilePickerCompleted && (
-        <Navigation
-          view={view}
-          onNavigate={navigate}
-          query={query}
-          onQueryChange={setQuery}
-          onSearch={() => navigate('discover')}
-          sourceCount={activeSourceCount}
-          profiles={profiles}
-          activeProfile={activeProfile}
-          onSelectProfile={(id) => {
-            setActiveProfileId(id);
-            try { window.sessionStorage.setItem(SESSION_PROFILE_KEY, id); } catch { /* ignore */ }
-            const target = profiles.find((p) => p.id === id);
-            if (target) notify(`Switched to ${target.name}.`, 'success');
-          }}
-          onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
+        <div
+          className={`app-navigation-container ${player ? 'player-active-hidden' : ''}`}
+          style={player ? { display: 'none' } : undefined}
+          aria-hidden={Boolean(player)}
         >
-          {page}
-        </Navigation>
+          <Navigation
+            view={view}
+            onNavigate={navigate}
+            query={query}
+            onQueryChange={setQuery}
+            onSearch={() => navigate('discover')}
+            sourceCount={activeSourceCount}
+            profiles={profiles}
+            activeProfile={activeProfile}
+            onSelectProfile={(id) => {
+              setActiveProfileId(id);
+              try { window.sessionStorage.setItem(SESSION_PROFILE_KEY, id); } catch { /* ignore */ }
+              const target = profiles.find((p) => p.id === id);
+              if (target) notify(`Switched to ${target.name}.`, 'success');
+            }}
+            onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
+          >
+            {page}
+          </Navigation>
+        </div>
       )}
 
       {showProfileGate && (
@@ -1054,7 +1071,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {selected && (
+      {selected && !player && (
         <DetailsModal
           item={selected}
           tmdbEpisodesEnabled={settings.tmdbEnrichment.enabled && settings.tmdbEnrichment.episodes}
@@ -1070,9 +1087,9 @@ const App: React.FC = () => {
         />
       )}
 
-      {embedState && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} />}
+      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} />}
 
-      {sourceState && (
+      {sourceState && !player && (
         <SourceModal
           media={sourceState.media}
           initialSeason={sourceState.season}
@@ -1114,14 +1131,14 @@ const App: React.FC = () => {
             } : undefined}
             onFindSources={() => {
               const { media, season, episode, episodeTitle } = player;
-              setPlayer(null);
+              closePlayer();
               openSources(media, season, episode, episodeTitle);
             }}
             onProgress={handlePlayerProgress}
             onNextEpisode={player.media.type === 'series' && player.season && player.episode ? handleNextEpisode : undefined}
             nextEpisodeLoading={nextEpisodeLoading}
             onOpenSettings={() => navigate('settings')}
-            onClose={() => setPlayer(null)}
+            onClose={closePlayer}
           />
         </React.Suspense>
       )}

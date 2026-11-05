@@ -221,9 +221,19 @@ export function useMpvEngine({
         }
       };
 
+      const onVlcError = (e: any) => {
+        if (disposed) return;
+        const detail = e.detail || {};
+        const msg = detail.message || 'Native player playback error';
+        console.error('[useMpvEngine] VLC error:', msg);
+        setWaiting(false);
+        onFatalError(msg);
+      };
+
       window.addEventListener('praha:vlc-time', onVlcTime);
       window.addEventListener('praha:vlc-state', onVlcState);
       window.addEventListener('praha:vlc-tracks', onVlcTracks);
+      window.addEventListener('praha:vlc-error', onVlcError);
 
       setTimeout(onVlcTracks, 800);
       setTimeout(onVlcTracks, 2000);
@@ -233,6 +243,7 @@ export function useMpvEngine({
         window.removeEventListener('praha:vlc-time', onVlcTime);
         window.removeEventListener('praha:vlc-state', onVlcState);
         window.removeEventListener('praha:vlc-tracks', onVlcTracks);
+        window.removeEventListener('praha:vlc-error', onVlcError);
         nativeVlcStop();
         video.style.opacity = '1';
       };

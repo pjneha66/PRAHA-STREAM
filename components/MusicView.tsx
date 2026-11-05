@@ -96,22 +96,30 @@ const MusicView: React.FC = () => {
   const playTrack = async (track: MusicTrack, newQueue?: MusicTrack[]) => {
     setCurrentTrack(track);
     if (newQueue) setQueue(newQueue);
+    setCurrentTime(0);
+    setError('');
+
+    if (track.previewUrl) {
+      setResolvedStreamUrl(track.previewUrl);
+      setIsPlaying(true);
+      setStreamLoading(false);
+      return;
+    }
+
     setStreamLoading(true);
     setResolvedStreamUrl(null);
-    setCurrentTime(0);
 
     try {
       const directUrl = await OctaveMusicService.getAudioStreamUrl(track.id, 'high');
       const playable = directUrl || track.previewUrl || null;
-      setResolvedStreamUrl(playable);
-      setIsPlaying(true);
-    } catch {
-      if (track.previewUrl) {
-        setResolvedStreamUrl(track.previewUrl);
+      if (playable) {
+        setResolvedStreamUrl(playable);
         setIsPlaying(true);
       } else {
         setError(`Audio stream unavailable for "${track.title}".`);
       }
+    } catch {
+      setError(`Audio stream unavailable for "${track.title}".`);
     } finally {
       setStreamLoading(false);
     }

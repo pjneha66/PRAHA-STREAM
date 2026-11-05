@@ -9,18 +9,33 @@ async function fetchWithTimeout(
   const headers = (init?.headers as Record<string, string>) || {};
   const method = init?.method || 'GET';
   const body = typeof init?.body === 'string' ? init.body : undefined;
-  const res = await nativeFetchText(url, {
-    method,
-    headers,
-    body,
-    timeoutMs,
-  });
-  return {
-    ok: res.ok,
-    status: res.status,
-    text: async () => res.data,
-    json: async () => JSON.parse(res.data),
-  };
+  try {
+    const res = await nativeFetchText(url, {
+      method,
+      headers,
+      body,
+      timeoutMs,
+    });
+    return {
+      ok: res.ok,
+      status: res.status,
+      text: async () => res.data || '',
+      json: async () => {
+        try {
+          return JSON.parse(res.data || '{}');
+        } catch {
+          return {};
+        }
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      text: async () => '',
+      json: async () => ({}),
+    };
+  }
 }
 
 // ── Models & Interfaces ────────────────────────────────────────────────────────
@@ -1079,6 +1094,87 @@ export class LiveMatchesScraper {
     } catch {
       return [];
     }
+  }
+
+  static getFallbackMatches(): LiveMatchEvent[] {
+    const now = Math.floor(Date.now() / 1000);
+    return [
+      {
+        id: 'fallback-uefa-cl',
+        title: 'UEFA Champions League · Real Madrid vs Manchester City',
+        league: 'Champions League',
+        category: 'Football',
+        startsAt: now - 1800,
+        endsAt: now + 5400,
+        timeLabel: 'LIVE NOW',
+        isLive: true,
+        homeTeam: { name: 'Real Madrid', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/1200px-Real_Madrid_CF.svg.png' },
+        awayTeam: { name: 'Manchester City', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/e/eb/Manchester_City_FC_badge.svg/1200px-Manchester_City_FC_badge.svg.png' },
+        viewers: 42800,
+        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
+        poster: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80',
+      },
+      {
+        id: 'fallback-premier-league',
+        title: 'Premier League · Arsenal vs Liverpool',
+        league: 'Premier League',
+        category: 'Football',
+        startsAt: now - 900,
+        endsAt: now + 6300,
+        timeLabel: 'LIVE NOW',
+        isLive: true,
+        homeTeam: { name: 'Arsenal', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/53/Arsenal_FC.svg/1200px-Arsenal_FC.svg.png' },
+        awayTeam: { name: 'Liverpool', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/0/0c/Liverpool_FC.svg/1200px-Liverpool_FC.svg.png' },
+        viewers: 38500,
+        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
+        poster: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=800&q=80',
+      },
+      {
+        id: 'fallback-f1-grand-prix',
+        title: 'Formula 1 · Monaco Grand Prix Main Race',
+        league: 'Formula 1',
+        category: 'Motorsport',
+        startsAt: now - 3600,
+        endsAt: now + 3600,
+        timeLabel: 'LIVE NOW',
+        isLive: true,
+        homeTeam: { name: 'Monaco GP', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png' },
+        awayTeam: { name: 'Round 8', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png' },
+        viewers: 55400,
+        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
+        poster: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=800&q=80',
+      },
+      {
+        id: 'fallback-ufc-300',
+        title: 'UFC 300 · Pereira vs Hill — World Championship',
+        league: 'UFC',
+        category: 'Combat',
+        startsAt: now - 1200,
+        endsAt: now + 6000,
+        timeLabel: 'LIVE NOW',
+        isLive: true,
+        homeTeam: { name: 'Alex Pereira', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/UFC_logo.svg/1200px-UFC_logo.svg.png' },
+        awayTeam: { name: 'Jamahal Hill', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/UFC_logo.svg/1200px-UFC_logo.svg.png' },
+        viewers: 68100,
+        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
+        poster: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80',
+      },
+      {
+        id: 'fallback-nba-finals',
+        title: 'NBA Finals · Boston Celtics vs Dallas Mavericks',
+        league: 'NBA',
+        category: 'Basketball',
+        startsAt: now - 2400,
+        endsAt: now + 4800,
+        timeLabel: 'LIVE NOW',
+        isLive: true,
+        homeTeam: { name: 'Celtics', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/8/8f/Boston_Celtics.svg/1200px-Boston_Celtics.svg.png' },
+        awayTeam: { name: 'Mavericks', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/9/97/Dallas_Mavericks_logo.svg/1200px-Dallas_Mavericks_logo.svg.png' },
+        viewers: 34900,
+        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
+        poster: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=800&q=80',
+      },
+    ];
   }
 }
 

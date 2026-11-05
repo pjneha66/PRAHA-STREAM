@@ -618,7 +618,7 @@ public class MainActivity extends BridgeActivity {
             try {
                 return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             } catch (Exception e) {
-                return "2.5.3";
+                return "2.5.4";
             }
         }
 

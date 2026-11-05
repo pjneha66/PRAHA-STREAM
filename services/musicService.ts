@@ -54,111 +54,78 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 export const FALLBACK_FEATURED_SECTIONS: Record<string, MusicTrack[]> = {
   'Top Hits & Chart Toppers': [
     {
-      id: '908604612',
+      id: 'itunes-blinding-lights',
       title: 'Blinding Lights',
       artist: 'The Weeknd',
       album: 'After Hours',
       duration: 200,
-      coverUrl: 'https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg',
-      previewUrl: 'https://cdnt-preview.dzcdn.net/api/1/1/1/b/2/0/1b27825bf63c36edcdc7fac9f920214e.mp3',
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/03/2d/c1/032dc13a-dce4-672a-b501-d16d3b31be07/23UMGIM20988.rgb.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/97/37/18/97371865-a05c-3e72-3085-6ec952214c6b/mzaf_6605689750628043254.plus.aac.p.m4a',
     },
     {
-      id: '1109930712',
-      title: 'Save Your Tears',
-      artist: 'The Weeknd',
-      album: 'After Hours',
-      duration: 215,
-      coverUrl: 'https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg',
-      previewUrl: 'https://cdnt-preview.dzcdn.net/api/1/1/1/b/2/0/1b27825bf63c36edcdc7fac9f920214e.mp3',
-    },
-    {
-      id: '1282442482',
+      id: 'itunes-levitating',
       title: 'Levitating',
       artist: 'Dua Lipa',
       album: 'Future Nostalgia',
       duration: 203,
-      coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=500&q=80',
-      previewUrl: 'https://actions.google.com/sounds/v1/water/waves_crashing_on_rocks_1.ogg',
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/6c/11/d6/6c11d681-aa3a-d59e-4c2e-f77e181026ab/190295092665.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/59/dc/4d/59dc4dda-93ff-8f1c-c536-f005f6ea6af5/mzaf_3066686759813252385.plus.aac.p.m4a',
+    },
+    {
+      id: 'itunes-humble',
+      title: 'HUMBLE.',
+      artist: 'Kendrick Lamar',
+      album: 'DAMN.',
+      duration: 177,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ab/16/ef/ab16efe9-e7f1-66ec-021c-5592a23f0f9e/17UMGIM88793.rgb.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/1f/2e/37/1f2e37be-bdd0-d770-6ea4-091011a6aade/mzaf_2360827885900940865.plus.aac.p.m4a',
     },
   ],
   'Electronic & Synthwave': [
     {
-      id: '3135556',
+      id: 'itunes-get-lucky',
       title: 'Get Lucky',
       artist: 'Daft Punk feat. Pharrell Williams',
       album: 'Random Access Memories',
       duration: 248,
-      coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=500&q=80',
-      previewUrl: 'https://actions.google.com/sounds/v1/science_fiction/teleport_arrival.ogg',
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e8/43/5f/e8435ffa-b6b9-b171-40ab-4ff3959ab661/886443919266.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/57/a5/85/57a585aa-f1bc-7619-881b-f8a04a5541d5/mzaf_6906185026678279401.plus.aac.p.m4a',
     },
     {
-      id: '3135557',
-      title: 'Instant Crush',
-      artist: 'Daft Punk feat. Julian Casablancas',
-      album: 'Random Access Memories',
-      duration: 337,
-      coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=500&q=80',
-      previewUrl: 'https://actions.google.com/sounds/v1/science_fiction/teleport_arrival.ogg',
+      id: 'itunes-synthwave-durant',
+      title: 'Synthwave',
+      artist: 'A. Durant',
+      album: 'Synthwave Classics',
+      duration: 180,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music128/v4/0e/4e/60/0e4e604b-d28f-bf71-03e8-2ed4a096047b/artwork.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/ec/fe/75/ecfe75ec-af44-d6d9-3fa4-2be2543d1dbf/mzaf_7566416601163199035.plus.aac.p.m4a',
     },
   ],
   'Anime & Film Soundtracks': [
     {
-      id: '542618',
-      title: 'Time (Inception)',
-      artist: 'Hans Zimmer',
-      album: 'Inception (Original Soundtrack)',
-      duration: 275,
-      coverUrl: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=500&q=80',
-      previewUrl: 'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
-    },
-    {
-      id: '542619',
-      title: 'Cornfield Chase (Interstellar)',
+      id: 'itunes-interstellar',
+      title: 'Interstellar (Main Theme)',
       artist: 'Hans Zimmer',
       album: 'Interstellar (Original Soundtrack)',
-      duration: 126,
-      coverUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=500&q=80',
-      previewUrl: 'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
+      duration: 240,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/7e/c5/5e/7ec55ee2-ebf8-d988-8f9a-431af1047747/artwork.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/37/65/ac/3765ac6b-efce-a438-4482-287ea711ee01/mzaf_17061069329183693603.plus.aac.p.m4a',
+    },
+    {
+      id: 'itunes-interstellar-score',
+      title: 'Interstellar (Original Score)',
+      artist: 'Imperial Orchestra',
+      album: 'Cinematic Soundtracks',
+      duration: 275,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/6e/e6/5a/6ee65a66-8501-50d0-9cf9-b0f8387266f8/859764605361_cover.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/dc/f4/b4/dcf4b474-5d9c-76fb-c361-36664f641011/mzaf_5472354911620501954.plus.aac.p.m4a',
     },
   ],
 };
 
 export class OctaveMusicService {
-  private static cachedToken: string | null = null;
-  private static tokenExpiry: number | null = null;
-
   /**
-   * Fetches a valid playback token from Octave Streaming API.
-   */
-  static async getPlaybackToken(): Promise<string | null> {
-    if (this.cachedToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
-      return this.cachedToken;
-    }
-
-    try {
-      const res = await nativeFetchText('https://api.octavestreaming.com/api/playback-token', {
-        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 8000,
-      });
-
-      if (res.ok && res.data) {
-        const data = JSON.parse(res.data);
-        const token = data.token ? String(data.token) : null;
-        const expiresIn = Number(data.expiresIn || 43200);
-        if (token) {
-          this.cachedToken = token;
-          this.tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
-          return token;
-        }
-      }
-    } catch {
-      // Ignored
-    }
-    return null;
-  }
-
-  /**
-   * Searches tracks, artists, and albums from Octave.
+   * Searches tracks, artists, and albums from iTunes API.
    */
   static async searchFull(query: string): Promise<OctaveSearchData> {
     const trimmed = query.trim();
@@ -167,47 +134,56 @@ export class OctaveMusicService {
     }
 
     try {
-      const url = `https://music.octavestreaming.com/api/search?q=${encodeURIComponent(trimmed)}`;
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(trimmed)}&entity=song&limit=40`;
       const res = await nativeFetchText(url, {
         headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 10000,
+        timeoutMs: 9000,
       });
 
       if (res.ok && res.data) {
         const data = JSON.parse(res.data);
+        const results = Array.isArray(data.results) ? data.results : [];
 
-        const tracks: MusicTrack[] = Array.isArray(data.tracks)
-          ? data.tracks.map((t: any) => ({
-              id: String(t.id || ''),
-              title: String(t.title || t.name || ''),
-              artist: String(t.artist?.name || t.artist || ''),
-              artistId: t.artist?.id ? String(t.artist.id) : undefined,
-              album: String(t.album?.title || t.album || ''),
-              albumId: t.album?.id ? String(t.album.id) : undefined,
-              duration: Number(t.duration || 0),
-              coverUrl: String(t.album?.cover_medium || t.album?.cover_big || t.cover || t.coverUrl || ''),
-              previewUrl: String(t.previewUrl || t.preview || t.streamUrl || ''),
-            })).filter((t: MusicTrack) => Boolean(t.id && t.title))
-          : [];
+        const tracks: MusicTrack[] = results
+          .filter((t: any) => t.trackId && t.trackName)
+          .map((t: any) => ({
+            id: String(t.trackId),
+            title: String(t.trackName),
+            artist: String(t.artistName || 'Unknown Artist'),
+            artistId: t.artistId ? String(t.artistId) : undefined,
+            album: String(t.collectionName || ''),
+            albumId: t.collectionId ? String(t.collectionId) : undefined,
+            duration: Math.round((Number(t.trackTimeMillis) || 0) / 1000),
+            coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+            previewUrl: String(t.previewUrl || ''),
+          }));
 
-        const artists: MusicArtist[] = Array.isArray(data.artists)
-          ? data.artists.map((a: any) => ({
-              id: String(a.id || ''),
-              name: String(a.name || ''),
-              pictureUrl: String(a.picture_medium || a.picture_big || a.picture || ''),
-              followers: a.nb_fan,
-            })).filter((a: MusicArtist) => Boolean(a.id && a.name))
-          : [];
+        const seenArtists = new Set<string>();
+        const artists: MusicArtist[] = [];
+        for (const t of results) {
+          if (t.artistId && t.artistName && !seenArtists.has(String(t.artistId))) {
+            seenArtists.add(String(t.artistId));
+            artists.push({
+              id: String(t.artistId),
+              name: String(t.artistName),
+              pictureUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+            });
+          }
+        }
 
-        const albums: MusicAlbum[] = Array.isArray(data.albums)
-          ? data.albums.map((al: any) => ({
-              id: String(al.id || ''),
-              title: String(al.title || ''),
-              artist: String(al.artist?.name || al.artist || ''),
-              coverUrl: String(al.cover_medium || al.cover_big || al.cover || ''),
-              trackCount: al.nb_tracks,
-            })).filter((al: MusicAlbum) => Boolean(al.id && al.title))
-          : [];
+        const seenAlbums = new Set<string>();
+        const albums: MusicAlbum[] = [];
+        for (const t of results) {
+          if (t.collectionId && t.collectionName && !seenAlbums.has(String(t.collectionId))) {
+            seenAlbums.add(String(t.collectionId));
+            albums.push({
+              id: String(t.collectionId),
+              title: String(t.collectionName),
+              artist: String(t.artistName || ''),
+              coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+            });
+          }
+        }
 
         return { tracks, artists, albums };
       }
@@ -221,61 +197,54 @@ export class OctaveMusicService {
    * Resolves direct high-fidelity audio stream URL for a track.
    */
   static async getAudioStreamUrl(trackId: string, quality: 'lossless' | 'high' | 'standard' = 'lossless'): Promise<string | null> {
-    const token = await this.getPlaybackToken();
-    if (!token) return null;
-    return `https://api.octavestreaming.com/audio/${quality}?track=${trackId}&token=${token}`;
+    try {
+      const res = await nativeFetchText(`https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}`, {
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+        timeoutMs: 6000,
+      });
+      if (res.ok && res.data) {
+        const data = JSON.parse(res.data);
+        const item = data.results?.[0];
+        if (item?.previewUrl) return item.previewUrl;
+      }
+    } catch {}
+    return null;
   }
 
   /**
-   * Fetches artist biography, top tracks, and albums.
+   * Fetches artist details, top tracks, and albums.
    */
   static async fetchArtistDetails(artistId: string): Promise<OctaveArtistDetails | null> {
     try {
-      const res = await nativeFetchText(`https://music.octavestreaming.com/api/artist/${artistId}`, {
+      const res = await nativeFetchText(`https://itunes.apple.com/lookup?id=${encodeURIComponent(artistId)}&entity=song&limit=25`, {
         headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 10000,
+        timeoutMs: 9000,
       });
 
       if (res.ok && res.data) {
         const data = JSON.parse(res.data);
-        if (!data.artist) return null;
+        const results = Array.isArray(data.results) ? data.results : [];
+        if (results.length === 0) return null;
 
+        const artistInfo = results[0];
         const artist: MusicArtist = {
-          id: String(data.artist.id),
-          name: String(data.artist.name),
-          pictureUrl: String(data.artist.picture_big || data.artist.picture_medium || ''),
-          followers: data.artist.nb_fan,
+          id: String(artistInfo.artistId || artistId),
+          name: String(artistInfo.artistName || 'Artist'),
+          pictureUrl: String(results[1]?.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
         };
 
-        const topTracks: MusicTrack[] = Array.isArray(data.top)
-          ? data.top.map((t: any) => ({
-              id: String(t.id),
-              title: String(t.title),
-              artist: artist.name,
-              duration: Number(t.duration || 0),
-              coverUrl: String(t.album?.cover_medium || artist.pictureUrl),
-            }))
-          : [];
+        const topTracks: MusicTrack[] = results
+          .filter((item: any) => item.wrapperType === 'track' && item.trackId)
+          .map((t: any) => ({
+            id: String(t.trackId),
+            title: String(t.trackName),
+            artist: artist.name,
+            duration: Math.round((Number(t.trackTimeMillis) || 0) / 1000),
+            coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+            previewUrl: String(t.previewUrl || ''),
+          }));
 
-        const albums: MusicAlbum[] = Array.isArray(data.albums)
-          ? data.albums.map((al: any) => ({
-              id: String(al.id),
-              title: String(al.title),
-              artist: artist.name,
-              coverUrl: String(al.cover_medium || al.cover_big || ''),
-              year: al.release_date?.substring(0, 4),
-            }))
-          : [];
-
-        const relatedArtists: MusicArtist[] = Array.isArray(data.related)
-          ? data.related.map((r: any) => ({
-              id: String(r.id),
-              name: String(r.name),
-              pictureUrl: String(r.picture_medium || r.picture_big || ''),
-            }))
-          : [];
-
-        return { artist, topTracks, albums, relatedArtists };
+        return { artist, topTracks, albums: [], relatedArtists: [] };
       }
     } catch {
       // Ignored
@@ -289,29 +258,27 @@ export class OctaveMusicService {
   static async fetchFeaturedSections(): Promise<Record<string, MusicTrack[]>> {
     const results: Record<string, MusicTrack[]> = {};
     const categories: Record<string, string> = {
-      'Top Hits & Chart Toppers': 'The Weeknd',
-      'Electronic & Synthwave': 'Daft Punk',
-      'Pop & Vocal Essentials': 'Dua Lipa',
-      'Anime & Film Soundtracks': 'Hans Zimmer',
-      'Hip-Hop & R&B': 'Kendrick Lamar',
+      'Top Hits & Chart Toppers': 'Top Hits',
+      'Electronic & Synthwave': 'Synthwave',
+      'Pop & Vocal Essentials': 'Pop Hits',
+      'Anime & Film Soundtracks': 'Anime Soundtrack',
+      'Hip-Hop & R&B': 'Hip-Hop Hits',
     };
 
     try {
       await Promise.all(
-        Object.entries(categories).map(async ([section, searchKeyword]) => {
+        Object.entries(categories).map(async ([section, query]) => {
           try {
-            const search = await this.searchFull(searchKeyword);
+            const search = await this.searchFull(query);
             if (search.tracks.length > 0) {
               results[section] = search.tracks.slice(0, 10);
             }
-          } catch {
-            // Ignored
-          }
+          } catch {}
         })
       );
     } catch {}
 
-    // Fallback: Ensure featured sections are never empty even if offline or upstream API rate-limited
+    // Fallback: Ensure featured sections are never empty even if offline
     if (Object.keys(results).length === 0) {
       return FALLBACK_FEATURED_SECTIONS;
     }

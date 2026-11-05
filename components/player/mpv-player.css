@@ -1102,6 +1102,16 @@
 }
 
 /* PlayTorrio v3 Parity Layout & Liquid Glass Controls */
+.player-active-hidden,
+body.player-vlc-active .app-navigation-container,
+body.player-vlc-active .app-shell,
+html.player-vlc-active .app-shell,
+#root.player-vlc-active .app-shell {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 html.player-vlc-active,
 body.player-vlc-active,
 #root.player-vlc-active,
@@ -1286,6 +1296,202 @@ body.player-vlc-active,
     display: none;
   }
 }
+
+/* PlayTorrio Top Overlay HUD Bar */
+.playtorrio-top-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.playtorrio-top-tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e5a93b;
+}
+
+.playtorrio-top-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 480px;
+}
+
+.playtorrio-top-source {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-right: 6px;
+}
+
+.playtorrio-top-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.16s, transform 0.14s;
+}
+
+.playtorrio-top-close:hover,
+.playtorrio-top-close:active {
+  background: rgba(255, 255, 255, 0.22);
+  transform: scale(1.05);
+}
+
+/* PlayTorrio Bottom Footer Row */
+.playtorrio-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.playtorrio-footer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.playtorrio-footer-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playtorrio-footer-details {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playtorrio-ext-player-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.playtorrio-ext-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+
+.playtorrio-ext-btn:hover,
+.playtorrio-ext-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+  transform: scale(1.04);
+}
+
+.playtorrio-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.playtorrio-footer-engine {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.playtorrio-footer-text-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.playtorrio-footer-text-btn:hover {
+  color: #fff;
+}
+
+.playtorrio-footer-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.playtorrio-footer-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+@media (max-width: 768px) {
+  .playtorrio-top-title {
+    font-size: 15px;
+    max-width: 200px;
+  }
+  .playtorrio-top-source {
+    display: none;
+  }
+  .playtorrio-footer-right {
+    display: none;
+  }
+  .playtorrio-footer-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .playtorrio-ext-player-group {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+}
+
 
 
 

@@ -2769,3 +2769,13 @@ html.dpad-mode select:focus {
 .jellyfin-home-card > span:not(.jellyfin-home-icon), .jellyfin-home-card small { color: var(--muted); font-size: 12px; }
 .jellyfin-home-card small { display: flex; align-items: center; gap: 5px; margin-top: auto; }
 .jellyfin-home-icon { color: var(--accent); }
+
+.player-active-hidden,
+body.player-vlc-active .app-navigation-container,
+body.player-vlc-active .app-shell,
+html.player-vlc-active .app-shell,
+#root.player-vlc-active .app-shell {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

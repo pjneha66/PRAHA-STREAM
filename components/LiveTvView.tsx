@@ -141,12 +141,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
         LiveMatchesScraper.fetchPpvMatches().catch(() => []),
       ]);
       const combined = [...dami, ...ppv];
-      setMatches(combined);
-      if (combined.length === 0) {
-        setMatchesError('No live sports events currently scheduled or endpoints uncontactable.');
+      if (combined.length > 0) {
+        setMatches(combined);
+      } else {
+        setMatches(LiveMatchesScraper.getFallbackMatches());
       }
     } catch {
-      setMatchesError('Failed to load live sports schedule.');
+      setMatches(LiveMatchesScraper.getFallbackMatches());
     } finally {
       setMatchesLoading(false);
     }

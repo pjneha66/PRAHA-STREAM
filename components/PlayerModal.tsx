@@ -12,7 +12,7 @@ import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
 import { TorrentStreamingEngine, type TorrentStreamStats } from '../services/torrentStreamingService';
 import {
-  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, isNativeVlcAvailable, openExternalPlayer,
+  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, isNativeVlcAvailable, nativeVlcStop, openExternalPlayer,
   resolvePlayableStreamUrl, setImmersiveFullscreen,
 } from '../services/androidBridge';
 import MpvPlayer from './player/MpvPlayer';
@@ -167,6 +167,10 @@ const PlayerModal: React.FC<{
     setTorrentBusy(true);
     setTorrentError('');
     try {
+      const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
+      if (!isAvail) {
+        throw new Error('Torrent Engine (TorrServer) is offline on port 8090. Configure Debrid in Settings or open in an external torrent app.');
+      }
       const { streamUrl, infoHash } = await TorrentStreamingEngine.streamTorrent(activeStream.url, {
         title: activeStream.title || media.title,
         fileIdx: activeStream.fileIdx,
@@ -189,6 +193,16 @@ const PlayerModal: React.FC<{
     ? `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`
     : media.title;
 
+  const handleClose = () => {
+    try {
+      nativeVlcStop();
+      document.documentElement.classList.remove('player-vlc-active');
+      document.body.classList.remove('player-vlc-active');
+      document.getElementById('root')?.classList.remove('player-vlc-active');
+    } catch {}
+    onClose();
+  };
+
   useEffect(() => {
     if (isNativeVlcAvailable() && isNative) {
       document.documentElement.classList.add('player-vlc-active');
@@ -198,6 +212,11 @@ const PlayerModal: React.FC<{
         document.documentElement.classList.remove('player-vlc-active');
         document.body.classList.remove('player-vlc-active');
         document.getElementById('root')?.classList.remove('player-vlc-active');
+        nativeVlcStop();
+      };
+    } else {
+      return () => {
+        nativeVlcStop();
       };
     }
   }, [isNative]);
@@ -225,7 +244,7 @@ const PlayerModal: React.FC<{
           autoplay={autoplay}
           settings={playerSettings}
           onSettingsChange={onPlayerSettingsChange}
-          onRequestClose={onClose}
+          onRequestClose={handleClose}
           onTryAnother={onTryAnother}
           onFindSources={onFindSources}
         />
@@ -237,7 +256,7 @@ const PlayerModal: React.FC<{
     return (
       <div className="player-fullscreen-root player-embed-root">
         <div className="player-embed-header">
-          <button className="mpv-back-btn" onClick={onClose} aria-label="Exit player">
+          <button className="mpv-back-btn" onClick={handleClose} aria-label="Exit player">
             <X size={22} />
           </button>
           <div className="mpv-title-meta">
@@ -274,7 +293,7 @@ const PlayerModal: React.FC<{
             <div className="player-source-label">
               {activeStream.sourceType === 'nuvio' ? 'NUVIO' : 'STREMIO'} · {activeStream.sourceName}
             </div>
-            <button className="modal-close" onClick={onClose} aria-label="Close player"><X size={21} /></button>
+            <button className="modal-close" onClick={handleClose} aria-label="Close player"><X size={21} /></button>
           </div>
         </header>
         <div className="player-stage">

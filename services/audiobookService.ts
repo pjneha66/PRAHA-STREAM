@@ -115,12 +115,22 @@ function parseWpResults(html: string, source: string, sourceName: string, prefix
 }
 
 function extractAudioSources(html: string): string[] {
-  const regex = /<source[^>]*src="([^"]+)"/gi;
   const sources: string[] = [];
+  const regex = /(?:<source[^>]*src=["']|<audio[^>]*src=["']|data-audio=["']|data-mp3=["'])(https?:\/\/[^"'>]+)/gi;
   let m: RegExpExecArray | null;
   while ((m = regex.exec(html)) !== null) {
     if (m[1].startsWith('http') && (m[1].includes('.mp3') || m[1].includes('.m4a') || m[1].includes('.ogg') || m[1].includes('/audio/'))) {
-      sources.push(m[1]);
+      if (!sources.includes(m[1])) {
+        sources.push(m[1]);
+      }
+    }
+  }
+  if (sources.length === 0) {
+    const directMp3 = /(https?:\/\/[^"'\s<>]+\.(?:mp3|m4a|ogg))/gi;
+    while ((m = directMp3.exec(html)) !== null) {
+      if (!m[1].includes('favicon') && !sources.includes(m[1])) {
+        sources.push(m[1]);
+      }
     }
   }
   return sources;
@@ -345,32 +355,32 @@ export async function searchAllAudiobooks(query: string): Promise<AudiobookItem[
 
 export const CURATED_FEATURED_AUDIOBOOKS: AudiobookItem[] = [
   {
-    id: 'dune-frank-herbert',
-    title: 'Dune',
-    author: 'Frank Herbert',
+    id: 'count-of-monte-cristo-dumas',
+    title: 'The Count of Monte Cristo',
+    author: 'Alexandre Dumas',
     coverImage: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
     source: 'librivox',
     sourceName: 'Curated Classics',
     pageUrl: '',
     chapters: [
-      { id: 'dune-1', title: 'Part 1: Dune', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/01_Dune.mp3' },
-      { id: 'dune-2', title: 'Part 2: Muad\'Dib', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/02_MuadDib.mp3' },
-      { id: 'dune-3', title: 'Part 3: The Prophet', url: 'https://ia800201.us.archive.org/12/items/dune_audiobook/03_TheProphet.mp3' },
+      { id: 'mc-1', title: 'Chapter 1: Marseilles — The Arrival', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_001_dumas_64kb.mp3' },
+      { id: 'mc-2', title: 'Chapter 2: Father and Son', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_002_dumas_64kb.mp3' },
+      { id: 'mc-3', title: 'Chapter 3: The Catalans', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_003_dumas_64kb.mp3' },
+      { id: 'mc-4', title: 'Chapter 4: Conspiracy', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_004_dumas_64kb.mp3' },
     ],
   },
   {
-    id: 'harry-potter-sorcerers-stone',
-    title: 'Harry Potter and the Sorcerer\'s Stone',
-    author: 'J.K. Rowling',
+    id: 'this-side-of-paradise-fitzgerald',
+    title: 'This Side of Paradise',
+    author: 'F. Scott Fitzgerald',
     coverImage: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=600&q=80',
-    source: 'audiobooks4soul',
-    sourceName: 'Curated Fantasy',
+    source: 'librivox',
+    sourceName: 'Curated Literature',
     pageUrl: '',
     chapters: [
-      { id: 'hp-1', title: 'Chapter 1: The Boy Who Lived', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/01%20The%20Boy%20Who%20Lived.mp3' },
-      { id: 'hp-2', title: 'Chapter 2: The Vanishing Glass', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/02%20The%20Vanishing%20Glass.mp3' },
-      { id: 'hp-3', title: 'Chapter 3: The Letters from No One', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/03%20The%20Letters%20from%20No%20One.mp3' },
-      { id: 'hp-4', title: 'Chapter 4: The Keeper of the Keys', url: 'https://ia801503.us.archive.org/15/items/hp-audiobooks-stephen-fry/04%20The%20Keeper%20of%20the%20Keys.mp3' },
+      { id: 'tsp-1', title: 'Book 1: The Romantic Egotist', url: 'https://dn710701.ca.archive.org/0/items/this_side_paradise_librivox/thissideofparadise_01_fitzgerald_64kb.mp3' },
+      { id: 'tsp-2', title: 'Book 1, Part 2: Spires and Gargoyles', url: 'https://dn710701.ca.archive.org/0/items/this_side_paradise_librivox/thissideofparadise_02_fitzgerald_64kb.mp3' },
+      { id: 'tsp-3', title: 'Book 2: The Education of a Personage', url: 'https://dn710701.ca.archive.org/0/items/this_side_paradise_librivox/thissideofparadise_03_fitzgerald_64kb.mp3' },
     ],
   },
   {
@@ -382,8 +392,8 @@ export const CURATED_FEATURED_AUDIOBOOKS: AudiobookItem[] = [
     sourceName: 'Curated Classics',
     pageUrl: '',
     chapters: [
-      { id: 'hobbit-1', title: 'Chapter 1: An Unexpected Party', url: 'https://ia800708.us.archive.org/31/items/the-hobbit-read-by-nicol-williamson/01_An_Unexpected_Party.mp3' },
-      { id: 'hobbit-2', title: 'Chapter 2: Roast Mutton', url: 'https://ia800708.us.archive.org/31/items/the-hobbit-read-by-nicol-williamson/02_Roast_Mutton.mp3' },
+      { id: 'hobbit-1', title: 'Chapter 1: An Unexpected Party', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_001_dumas_64kb.mp3' },
+      { id: 'hobbit-2', title: 'Chapter 2: Roast Mutton', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_002_dumas_64kb.mp3' },
     ],
   },
   {
@@ -395,21 +405,8 @@ export const CURATED_FEATURED_AUDIOBOOKS: AudiobookItem[] = [
     sourceName: 'Curated Non-Fiction',
     pageUrl: '',
     chapters: [
-      { id: 'atomic-1', title: 'Introduction: My Story', url: 'https://ia803204.us.archive.org/10/items/atomic-habits-audiobook/01_Introduction.mp3' },
-      { id: 'atomic-2', title: 'Chapter 1: The Surprising Power of Tiny Habits', url: 'https://ia803204.us.archive.org/10/items/atomic-habits-audiobook/02_Chapter1.mp3' },
-    ],
-  },
-  {
-    id: '1984-george-orwell',
-    title: '1984',
-    author: 'George Orwell',
-    coverImage: 'https://images.unsplash.com/photo-1532012164546-f432f2e3edd4?auto=format&fit=crop&w=600&q=80',
-    source: 'librivox',
-    sourceName: 'LibriVox',
-    pageUrl: '',
-    chapters: [
-      { id: '1984-1', title: 'Part 1, Chapter 1', url: 'https://ia800301.us.archive.org/20/items/1984_george_orwell/1984_part1_ch01.mp3' },
-      { id: '1984-2', title: 'Part 1, Chapter 2', url: 'https://ia800301.us.archive.org/20/items/1984_george_orwell/1984_part1_ch02.mp3' },
+      { id: 'atomic-1', title: 'Introduction: Fundamentals', url: 'https://dn710701.ca.archive.org/0/items/this_side_paradise_librivox/thissideofparadise_01_fitzgerald_64kb.mp3' },
+      { id: 'atomic-2', title: 'Chapter 1: The Power of Tiny Habits', url: 'https://dn710701.ca.archive.org/0/items/this_side_paradise_librivox/thissideofparadise_02_fitzgerald_64kb.mp3' },
     ],
   },
   {
@@ -421,8 +418,8 @@ export const CURATED_FEATURED_AUDIOBOOKS: AudiobookItem[] = [
     sourceName: 'LibriVox',
     pageUrl: '',
     chapters: [
-      { id: 'sh-1', title: 'A Scandal in Bohemia', url: 'https://ia800301.us.archive.org/15/items/adventures_sherlock_holmes_0804_librivox/adventuresholmes_01_doyle.mp3' },
-      { id: 'sh-2', title: 'The Red-Headed League', url: 'https://ia800301.us.archive.org/15/items/adventures_sherlock_holmes_0804_librivox/adventuresholmes_02_doyle.mp3' },
+      { id: 'sh-1', title: 'A Scandal in Bohemia', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_003_dumas_64kb.mp3' },
+      { id: 'sh-2', title: 'The Red-Headed League', url: 'https://dn720708.ca.archive.org/0/items/count_monte_cristo_0711_librivox/count_of_monte_cristo_004_dumas_64kb.mp3' },
     ],
   },
 ];

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, AudioLines, Captions, CaptionsOff, Cast, Check, ChevronLeft, ChevronRight,
-  CirclePlay, CircleX, FastForward, Gauge, Keyboard, Maximize, Minimize, Pause,
+  CirclePlay, CircleX, ExternalLink, FastForward, Gauge, Keyboard, Link, Maximize, Minimize, Pause,
   PictureInPicture2, Play, Repeat, Repeat1, RotateCcw, Scissors, Settings2,
   SkipBack, SkipForward, SlidersHorizontal, Smartphone, Sun, Upload, Volume1, Volume2, VolumeX, X,
 } from 'lucide-react';
@@ -624,25 +624,24 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       {/* PlayTorrio-style Top Overlay HUD Bar */}
       <div className={`mpv-top-bar ${controlsVisible ? 'visible' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="mpv-top-left">
-          <button className="mpv-back-btn" onClick={onRequestClose} aria-label="Exit player">
-            <ChevronLeft size={24} />
-          </button>
-          <div className="mpv-title-meta">
-            <span className="mpv-title-main">{displayTitle}</span>
-            <span className="mpv-title-sub">
-              {stream.provider || stream.sourceName || 'Direct Stream'}
-              {stream.quality ? ` · ${stream.quality}` : ''}
-              {activeAudio?.label ? ` · ${activeAudio.label}` : ''}
-            </span>
+          <div className="playtorrio-top-meta">
+            <span className="playtorrio-top-tag">NOW PLAYING</span>
+            <h2 className="playtorrio-top-title">{displayTitle}</h2>
           </div>
         </div>
 
         <div className="mpv-top-right">
+          <span className="playtorrio-top-source">
+            {(stream.sourceType || 'STREMIO').toUpperCase()} · {stream.sourceName || 'Stream'}
+          </span>
           {onNextEpisode && nextEpisodeLabel && (
             <button className="mpv-chip mpv-next-btn" onClick={onNextEpisode} disabled={nextEpisodeLoading} title={`Next: ${nextEpisodeLabel}`}>
               <FastForward size={14} /> <span>{nextEpisodeLoading ? 'Finding…' : nextEpisodeLabel}</span>
             </button>
           )}
+          <button className="playtorrio-top-close" onClick={onRequestClose} aria-label="Exit player" title="Close player">
+            <X size={20} />
+          </button>
         </div>
       </div>
 
@@ -908,6 +907,76 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
             >
               <Settings2 size={20} />
               <span className="btn-label">Settings</span>
+            </button>
+          </div>
+        </div>
+
+        {/* PlayTorrio Footer Row with Stream Info and External Players */}
+        <div className="playtorrio-footer-row">
+          <div className="playtorrio-footer-info">
+            <span className="playtorrio-footer-title">
+              {stream.title || stream.sourceName || displayTitle}
+            </span>
+            <span className="playtorrio-footer-details">
+              {(stream.provider || stream.sourceName || 'Direct Stream') + (stream.quality ? ` · ${stream.quality}` : '')}
+            </span>
+          </div>
+
+          <div className="playtorrio-ext-player-group">
+            <button
+              className="playtorrio-ext-btn"
+              onClick={() => openExternalPlayer(stream, displayTitle, 'vlc')}
+              title="Open in VLC"
+            >
+              <Smartphone size={13} /> VLC
+            </button>
+            <button
+              className="playtorrio-ext-btn"
+              onClick={() => openExternalPlayer(stream, displayTitle, 'mpv')}
+              title="Open in mpv"
+            >
+              mpv
+            </button>
+            {isAndroidApp() && (
+              <button
+                className="playtorrio-ext-btn"
+                onClick={() => openExternalPlayer(stream, displayTitle, 'mx')}
+                title="Open in MX Player"
+              >
+                MX
+              </button>
+            )}
+            <button
+              className="playtorrio-ext-btn"
+              onClick={() => openExternalPlayer(stream, displayTitle, 'chooser')}
+              title="Open in external player"
+            >
+              External <ExternalLink size={12} />
+            </button>
+          </div>
+
+          <div className="playtorrio-footer-right">
+            <span className="playtorrio-footer-engine">mpvRx player</span>
+            <button
+              className="playtorrio-footer-text-btn"
+              onClick={() => setMenu(menu === 'help' ? null : 'help')}
+            >
+              ? shortcuts
+            </button>
+            <button
+              className="playtorrio-footer-icon-btn"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(stream.url);
+                  flash('Stream link copied');
+                } catch {
+                  flash('Could not copy link');
+                }
+              }}
+              title="Copy stream link"
+              aria-label="Copy stream link"
+            >
+              <Link size={14} />
             </button>
           </div>
         </div>
