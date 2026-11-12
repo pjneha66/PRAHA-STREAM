@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PRAHA STREAM v2.5.5 — Fix Evidence</title>
+<style>
+  :root{
+    --bg:#0B0C0E; --panel:#141619; --panel2:#1A1D21; --line:#2A2E34;
+    --text:#F2F4F7; --muted:#9AA1AB; --accent:#FFD45C;
+    --crit:#FF6B6B; --high:#FFA94D; --med:#4DABF7; --low:#8CE99A;
+    --add:#1B2E22; --addb:#3E7C55; --del:#2E1B1B; --delb:#7C3E3E;
+    font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);padding:40px 48px 56px;width:1600px}
+  header{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:28px}
+  h1{margin:0;font-size:30px;font-weight:850;letter-spacing:-.03em}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:13px;margin-top:6px}
+  .gate{display:flex;gap:10px}
+  .pill{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 14px;font-size:11px;font-weight:750;color:var(--muted)}
+  .pill b{color:var(--low)}
+  h2{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:34px 0 14px;font-weight:800}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;break-inside:avoid}
+  .card.wide{grid-column:1 / -1}
+  .head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .id{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:800;color:var(--bg);background:var(--accent);padding:2px 7px;border-radius:5px}
+  .sev{font-size:9px;font-weight:850;letter-spacing:.1em;padding:3px 8px;border-radius:999px;border:1px solid}
+  .c{color:var(--crit);border-color:var(--crit)} .h{color:var(--high);border-color:var(--high)}
+  .m{color:var(--med);border-color:var(--med)} .l{color:var(--low);border-color:var(--low)}
+  .t{font-size:14px;font-weight:800}
+  .file{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--muted);margin:2px 0 10px}
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .lbl{font-size:9px;font-weight:850;letter-spacing:.12em;color:var(--muted);margin-bottom:4px}
+  pre{margin:0;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.55;padding:10px 12px;border-radius:9px;overflow:hidden;white-space:pre-wrap;word-break:break-word}
+  .before{background:var(--del);border:1px solid var(--delb)}
+  .after{background:var(--add);border:1px solid var(--addb)}
+  .note{font-size:11px;color:var(--muted);margin-top:9px;line-height:1.55}
+  footer{margin-top:34px;border-top:1px solid var(--line);padding-top:16px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>PRAHA STREAM <span>v2.5.5</span> — Fix Evidence</h1>
+    <div class="sub">Baseline <code>git HEAD 4f37582</code> (v2.5.4) → working tree · 16 files changed · 2 new Android resources</div>
+  </div>
+  <div class="gate">
+    <div class="pill">typecheck <b>0</b></div>
+    <div class="pill">tests <b>143/143</b></div>
+    <div class="pill">build <b>OK</b></div>
+    <div class="pill">gradle <b>OK</b></div>
+  </div>
+</header>
+
+<h2>Critical</h2>
+<div class="grid">
+  <div class="card wide">
+    <div class="head"><span class="id">C-02</span><span class="sev c">CRITICAL</span><span class="t">Arbitrary APK install from a JS-supplied URL</span></div>
+    <div class="file">android/.../MainActivity.java · services/androidBridge.ts</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">if (apkUrl == null || apkUrl.isEmpty()) return false;
+runOnUiThread(() -> {
+  // downloads ANY url and installs it</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">if (!isAllowedRemoteUrl(apkUrl, false)) return false;
+if (!looksLikeApk(apkUrl)) return false;
+String apkHost = hostOf(apkUrl);
+if (!"github.com".equals(apkHost)
+    && !apkHost.endsWith(".githubusercontent.com")) return false;</pre></div>
+    </div>
+    <div class="note">Enforced on <b>both</b> sides: the web wrapper pins <code>https</code> + GitHub hosts + <code>.apk</code> via <code>safeRemoteUrl(apkUrl, {allowHttp:false, allowedHosts:[…]})</code> before the native call.</div>
+  </div>
+
+  <div class="card wide">
+    <div class="head"><span class="id">C-03</span><span class="sev c">CRITICAL</span><span class="t">Hardcoded public signing credentials</span></div>
+    <div class="file">android/app/build.gradle</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">def ksPass    = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: 'prahastream'
+def ksAlias   = System.getenv("ANDROID_KEY_ALIAS")         ?: 'prahastream'
+def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD")      ?: 'prahastream'
+// auto-generated keystore with the same public password</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">def ksPass    = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def ksAlias   = System.getenv("ANDROID_KEY_ALIAS")
+def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD")
+def hasReleaseSigning = ksPass &amp;&amp; ksAlias &amp;&amp; ksKeyPass
+        &amp;&amp; file(ksPath).exists()
+// ensureReleaseKeystore now FAILS LOUDLY instead of
+// generating a keystore with a known password</pre></div>
+    </div>
+    <div class="note">The release build in this pass signs with the pre-existing project keystore, so installed v2.5.4 users can upgrade in place.</div>
+  </div>
+</div>
+
+<h2>High</h2>
+<div class="grid">
+  <div class="card wide">
+    <div class="head"><span class="id">H-01</span><span class="sev h">HIGH</span><span class="t">Unvalidated URLs handed to <code>window.PrahaNative.*</code></span></div>
+    <div class="file">services/androidBridge.ts</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">window.PrahaNative.proxyStreamUrl(stream.url, …)
+window.PrahaNative.httpRequestAsync(id, url, …)
+window.PrahaNative.httpRequest(url, …)
+window.PrahaNative.openExternalPlayer(url, …)
+window.PrahaNative.downloadAndInstallUpdate(apkUrl, …)
+window.PrahaNative.vlcPlay(url, …)
+window.PrahaNative.addSlave(0, uri, …)</pre></div>
+      <div><div class="lbl">AFTER — one helper, every sink</div><pre class="after">export function safeRemoteUrl(raw, {allowHttp, allowedHosts} = {}) {
+  const target = new URL(raw.trim());
+  if (!allowedProtocols.includes(target.protocol)) return null;
+  if (target.username || target.password) return null;
+  // host allowlist with *.suffix support
+}
+const safeUrl = safeRemoteUrl(stream.url);
+if (!safeUrl) return stream.url;
+window.PrahaNative.proxyStreamUrl(safeUrl, …)</pre></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">H-06</span><span class="sev h">HIGH</span><span class="t">Backup import trusted arbitrary JSON</span></div>
+    <div class="file">services/backupSyncService.ts</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">if (candidate.app !== 'praha-stream'
+    || !Array.isArray(candidate.addons)) throw …
+return { addons: candidate.addons,
+         repositories: candidate.repositories, … }</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">const candidate = sanitizeJson(parsed);  // strips __proto__
+for (const entry of candidate.addons) {
+  const manifestUrl = safeHttpUrl(entry.manifestUrl);
+  if (!manifestUrl) throw new Error(…);
+  if (!isPlainObject(entry.manifest)) throw …
+}
+// caps: 500 addons · 50 profiles · 200 repos
+// oversized scraper `code` rejected</pre></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">H-03</span><span class="sev h">HIGH</span><span class="t">Open proxy: SSRF, header injection, <code>ACAO: *</code></span></div>
+    <div class="file">android/.../PrahaStreamProxy.java</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">conn = (HttpURLConnection) new URL(currentUrl).openConnection();
+conn.setRequestProperty(key, value);   // CRLF allowed
+sb.append("Access-Control-Allow-Origin: *\r\n");</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">if (!isAllowedTarget(currentUrl))
+  throw new IOException("Blocked non-HTTP …");
+if (!value.isEmpty() &amp;&amp; isSafeHeader(key, value))
+  conn.setRequestProperty(key, value);
+sb.append("Access-Control-Allow-Origin: https://localhost\r\n");</pre></div>
+    </div>
+    <div class="note">Rejects <code>169.254.169.254</code> and the proxy's own port; blocks CR/LF and <code>Host</code>/<code>Connection</code>/<code>Content-Length</code> overrides.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">H-08</span><span class="sev h">HIGH</span><span class="t">Backup leaked plaintext API keys &amp; tokens</span></div>
+    <div class="file">AndroidManifest.xml + res/xml/data_extraction_rules.xml</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">&lt;application
+    android:allowBackup="true"
+    … &gt;
+&lt;!-- no dataExtractionRules, no networkSecurityConfig --&gt;</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">&lt;application
+    android:allowBackup="false"
+    android:dataExtractionRules="@xml/data_extraction_rules"
+    android:networkSecurityConfig="@xml/network_security_config" &gt;</pre></div>
+    </div>
+    <div class="note">Excludes sharedpref/database/file/external from cloud backup and device transfer.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">H-07</span><span class="sev h">HIGH</span><span class="t">Cleartext + mixed content everywhere</span></div>
+    <div class="file">res/xml/network_security_config.xml (new)</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">android:usesCleartextTraffic="true"
+// no network security config at all
+// cleartext allowed to every host</pre></div>
+      <div><div class="lbl">AFTER — staged, non-breaking</div><pre class="after">&lt;base-config cleartextTrafficPermitted="true"&gt;
+&lt;domain-config cleartextTrafficPermitted="false"&gt;
+  api.themoviedb.org · api.trakt.tv
+  api.simkl.com · github.com
+  githubusercontent.com
+&lt;/domain-config&gt;</pre></div>
+    </div>
+    <div class="note">Cleartext is <b>process-wide</b> on Android, so a blanket ban would break the hardcoded Xtream portals, LAN TorrServer and LibVLC. The base stays permissive; credential-bearing hosts are locked to TLS.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">H-04</span><span class="sev h">HIGH</span><span class="t">SSRF through native HTTP</span></div>
+    <div class="file">services/androidBridge.ts</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">if (Capacitor.isNativePlatform()) {
+  const response = await CapacitorHttp.request({ url, … });
+}
+if (window.PrahaNative) { … httpRequestAsync(id, url, …) }</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">const nativeUrl = safeRemoteUrl(url);
+if (Capacitor.isNativePlatform() &amp;&amp; nativeUrl) {
+  const response = await CapacitorHttp.request({ url: nativeUrl, … });
+}
+if (window.PrahaNative &amp;&amp; nativeUrl) { … }</pre></div>
+    </div>
+    <div class="note">Invalid URLs fall through to browser <code>fetch</code> (CORS-bound) instead of the native bypass.</div>
+  </div>
+</div>
+
+<h2>Medium &amp; Low</h2>
+<div class="grid">
+  <div class="card">
+    <div class="head"><span class="id">M-18</span><span class="sev m">MEDIUM</span><span class="t">Unbounded thread pool</span></div>
+    <div class="file">MainActivity.java</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">private final ExecutorService httpExecutor =
+    Executors.newCachedThreadPool();</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">new ThreadPoolExecutor(2, 6, 30L, TimeUnit.SECONDS,
+    new LinkedBlockingQueue&lt;&gt;(64),
+    new ThreadPoolExecutor.CallerRunsPolicy());</pre></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">M-20</span><span class="sev m">MEDIUM</span><span class="t">FileProvider exposed all storage</span></div>
+    <div class="file">res/xml/file_paths.xml</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">&lt;external-path path="." /&gt;
+&lt;external-files-path path="." /&gt;
+&lt;cache-path path="." /&gt;</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">&lt;external-files-path name="praha_update"
+    path="Download/" /&gt;</pre></div>
+    </div>
+    <div class="note">Only the self-update APK is ever shared.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">M-01</span><span class="sev m">MEDIUM</span><span class="t">External-player intent redirection</span></div>
+    <div class="file">services/androidBridge.ts</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">const url = stream.url;
+if (!url) return;
+window.PrahaNative.openExternalPlayer(url, …)</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">const safeUrl = url.startsWith('magnet:')
+  ? url : safeRemoteUrl(url);
+if (!safeUrl) return;
+window.PrahaNative.openExternalPlayer(safeUrl, …)</pre></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">M-14</span><span class="sev m">MEDIUM</span><span class="t">D-pad focus escaped TV overlays</span></div>
+    <div class="file">components/Navigation.tsx</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">&lt;div className="profile-popover" role="menu"&gt;
+&lt;div className="mobile-more-sheet"&gt;</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">&lt;div className="profile-popover" role="dialog"
+  aria-modal="true" aria-label="Switch profile"
+  ref={profilePopoverRef}&gt;
+// focus first button · Escape closes · focus restored</pre></div>
+    </div>
+    <div class="note"><code>useSpatialNavigation</code> scopes arrow keys to the topmost <code>[role="dialog"]</code>, which never matched these overlays.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">C-01</span><span class="sev c">CRITICAL (partial)</span><span class="t">Iframe sandbox contained the escape combo</span></div>
+    <div class="file">components/PlayerModal.tsx</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">sandbox="allow-scripts allow-same-origin
+  allow-forms allow-presentation
+  allow-popups allow-downloads"</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">sandbox="allow-scripts allow-forms
+  allow-presentation"</pre></div>
+    </div>
+    <div class="note"><b>Still CRITICAL:</b> the native bridge is injected into every frame. Removing <code>allow-same-origin</code>/<code>allow-popups</code> is defence-in-depth — origin gating is the real fix.</div>
+  </div>
+
+  <div class="card">
+    <div class="head"><span class="id">L-04</span><span class="sev l">LOW</span><span class="t">Mobile CSS overrides silently discarded</span></div>
+    <div class="file">index.css</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">@media (max-width:680px) {
+  .details-episode-card {
+    grid-template-columns: 112px minmax(0,1fr);
+  }              /* base gap:14px still wins */
+}</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">@media (max-width:680px) {
+  .details-episode-card {
+    grid-template-columns: 112px minmax(0,1fr);
+    gap: 10px;   /* re-asserted after base rule */
+  }
+}</pre></div>
+    </div>
+  </div>
+
+  <div class="card wide">
+    <div class="head"><span class="id">M3</span><span class="sev l">DESIGN</span><span class="t">Material 3 Expressive token layer + 48dp targets</span></div>
+    <div class="file">index.css · components/Navigation.tsx</div>
+    <div class="ba">
+      <div><div class="lbl">BEFORE</div><pre class="before">.nav-item  { min-height: 45px; border-radius: 11px; }
+.button    { min-height: 41px; border-radius: 10px; }
+.button-small { min-height: 33px; }
+.filter-pills button { min-height: 32px; }
+.app-shell { grid-template-columns: 218px minmax(0,1fr); }
+/* no M3 roles, no light theme, no focus-visible ring */</pre></div>
+      <div><div class="lbl">AFTER</div><pre class="after">--md-sys-color-primary / surface-container-* / on-surface-*
+--md-sys-shape-corner-extra-large: 28px · corner-full: 999px
+--md-sys-motion-spring · --md-space-1..8 (8dp grid)
+
+.nav-item, .button, .button-small, .filter-pills button,
+.quality-filters button, .icon-btn { min-height: 48px; }
+
+:focus-visible { outline: 3px solid var(--focus-ring); }
+:root[data-theme='light'] { … }  /* opt-in only */
+@media (prefers-reduced-motion: reduce) { … }</pre></div>
+    </div>
+    <div class="note">The M3 roles are derived from the existing theme tokens, so all five accent palettes keep working without duplicating values.</div>
+  </div>
+</div>
+
+<footer>
+  <span>Audit report: <code>outputs/ERROR_AUDIT_REPORT.md</code> · Design spec: <code>outputs/MATERIAL3_EXPRESSIVE_SPEC.md</code></span>
+  <span>40 findings · 3 CRITICAL · 11 HIGH · 20 MEDIUM · 6 LOW</span>
+</footer>
+</body>
+</html>

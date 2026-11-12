@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Staged cleartext migration (audit H-07 / M-12).
+
+  `cleartextTrafficPermitted` is PROCESS-WIDE on Android: it governs every
+  HttpURLConnection, DownloadManager request, LibVLC fetch and CapacitorHttp
+  call, not just the WebView. A blanket `false` would break the hardcoded
+  Xtream portals in services/iptvService.ts, LAN TorrServer, and any plain-HTTP
+  provider stream.
+
+  So the base stays permissive and cleartext is forbidden only for the hosts
+  that carry credentials or code: the metadata APIs and the update feed. Flip
+  the base to false once the portal migration to HTTPS lands.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.themoviedb.org</domain>
+        <domain includeSubdomains="true">api.trakt.tv</domain>
+        <domain includeSubdomains="true">api.simkl.com</domain>
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+    </domain-config>
+</network-security-config>

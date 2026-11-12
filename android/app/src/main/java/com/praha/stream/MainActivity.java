@@ -43,20 +43,80 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends BridgeActivity {
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
-    private final ExecutorService httpExecutor = Executors.newCachedThreadPool();
+    // Bounded pool: the bridge is reachable from JS and the proxy from any local
+    // client, so an unbounded cached pool is a trivial thread/OOM DoS.
+    private final ExecutorService httpExecutor = new ThreadPoolExecutor(
+            2, 6, 30L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(64),
+            new ThreadPoolExecutor.CallerRunsPolicy());
     private PrahaVlcPlayer vlcPlayer;
     private VLCVideoLayout vlcVideoLayout;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
+
+    /**
+     * Stream, addon and scraper URLs are attacker-controlled. Only absolute
+     * http(s) URLs without embedded credentials may reach a native sink.
+     * `allowHttp` stays true for playback (many CDNs and LAN IPTV portals are
+     * still plain HTTP) and is false for APK downloads.
+     */
+    private boolean isAllowedRemoteUrl(String raw, boolean allowHttp) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        try {
+            URI uri = new URI(raw.trim());
+            String scheme = uri.getScheme();
+            if (scheme == null) return false;
+            String lower = scheme.toLowerCase();
+            boolean schemeOk = allowHttp
+                    ? (lower.equals("http") || lower.equals("https"))
+                    : lower.equals("https");
+            if (!schemeOk) return false;
+            if (uri.getUserInfo() != null) return false;
+            String host = uri.getHost();
+            if (host == null || host.isEmpty()) return false;
+            // Block the cloud metadata endpoint and our own proxy port, which
+            // would otherwise let a caller amplify requests through the app.
+            if ("169.254.169.254".equals(host)) return false;
+            int proxyPort = streamProxy.getPort();
+            if (proxyPort > 0 && uri.getPort() == proxyPort
+                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))) {
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String hostOf(String raw) {
+        try {
+            String host = new URI(raw.trim()).getHost();
+            return host == null ? "" : host.toLowerCase();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static boolean looksLikeApk(String raw) {
+        try {
+            String path = new URI(raw.trim()).getPath();
+            return path != null && path.toLowerCase().endsWith(".apk");
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -97,8 +157,22 @@ public class MainActivity extends BridgeActivity {
             webView.setBackgroundColor(Color.parseColor("#090A0C"));
             WebSettings settings = webView.getSettings();
             settings.setMediaPlaybackRequiresUserGesture(false);
+            // NOTE: mixed content stays ALWAYS_ALLOW because many provider
+            // iframes and Xtream portals are still plain HTTP; tightening it
+            // breaks playback. The staged migration is tracked in
+            // res/xml/network_security_config.xml.
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
             settings.setDomStorageEnabled(true);
+            // The app never loads local files or file:// origins, so deny them.
+            settings.setAllowFileAccess(false);
+            settings.setAllowContentAccess(false);
+            settings.setAllowFileAccessFromFileURLs(false);
+            settings.setAllowUniversalAccessFromFileURLs(false);
+            // RESIDUAL RISK: addJavascriptInterface injects this object into
+            // EVERY frame with no way to verify the calling origin. Origin-gated
+            // WebViewCompat.addWebMessageListener is the correct long-term fix
+            // (audit C-01); until then the web layer must keep untrusted iframes
+            // sandboxed and scheme-allowlisted.
             webView.addJavascriptInterface(new PrahaJsBridge(), "PrahaNative");
 
             FrameLayout root = findViewById(android.R.id.content);
@@ -211,6 +285,7 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public String proxyStreamUrl(String url, String headersJson) {
+            if (!isAllowedRemoteUrl(url, true)) return "";
             return streamProxy.buildProxyUrl(url, headersJson);
         }
 
@@ -228,6 +303,17 @@ public class MainActivity extends BridgeActivity {
             int redirects = 0;
             String currentUrl = urlString;
             int timeout = (timeoutMs > 0) ? timeoutMs : 15000;
+
+            // Gate the whole redirect chain entry point once; each hop is
+            // re-checked below before it is opened.
+            if (!isAllowedRemoteUrl(urlString, true)) {
+                try {
+                    result.put("ok", false);
+                    result.put("status", 0);
+                    result.put("error", "Blocked non-HTTP URL");
+                } catch (Exception ignored) {}
+                return result;
+            }
 
             while (redirects < 5) {
                 try {
@@ -635,6 +721,14 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public boolean downloadAndInstallUpdate(final String apkUrl, final String versionName) {
             if (apkUrl == null || apkUrl.isEmpty()) return false;
+            // Pin self-updates to the GitHub release feed over HTTPS and require
+            // an .apk path. This closes the arbitrary-APK-install path that
+            // otherwise turns any JS-reachable caller into a code-execution
+            // primitive (audit C-02).
+            if (!isAllowedRemoteUrl(apkUrl, false)) return false;
+            if (!looksLikeApk(apkUrl)) return false;
+            String apkHost = hostOf(apkUrl);
+            if (!"github.com".equals(apkHost) && !apkHost.endsWith(".githubusercontent.com")) return false;
             runOnUiThread(() -> {
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

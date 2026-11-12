@@ -1,9 +1,12 @@
 apply plugin: 'com.android.application'
 
 def ksPath = System.getenv("ANDROID_KEYSTORE_PATH") ?: 'release.keystore'
-def ksPass = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: 'prahastream'
-def ksAlias = System.getenv("ANDROID_KEY_ALIAS") ?: 'prahastream'
-def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD") ?: 'prahastream'
+// No fallback credentials. A password that lives in source is public, which
+// lets anyone forge a signed update for this applicationId (audit C-03).
+def ksPass = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def ksAlias = System.getenv("ANDROID_KEY_ALIAS")
+def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD")
+def hasReleaseSigning = ksPass && ksAlias && ksKeyPass && file(ksPath).exists()
 
 android {
     namespace = "com.praha.stream"
@@ -12,24 +15,26 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "2.5.4"
+        versionCode 11
+        versionName "2.5.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
     signingConfigs {
-        release {
-            storeFile file(ksPath)
-            storePassword ksPass
-            keyAlias ksAlias
-            keyPassword ksKeyPass
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(ksPath)
+                storePassword ksPass
+                keyAlias ksAlias
+                keyPassword ksKeyPass
+            }
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (hasReleaseSigning) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -38,27 +43,19 @@ android {
 
 tasks.register('ensureReleaseKeystore') {
     doLast {
+        // Auto-generating a keystore with a password committed to source is
+        // worse than having no keystore at all: it produces a build that looks
+        // signed but whose key is publicly known. Fail loudly instead.
+        if (!ksPass || !ksAlias || !ksKeyPass) {
+            throw new GradleException(
+                "Release signing requires ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and " +
+                "ANDROID_KEY_PASSWORD. Refusing to fall back to a publicly-known password.")
+        }
         def ksFile = file(ksPath)
         if (!ksFile.exists()) {
-            ksFile.parentFile.mkdirs()
-            def javaHome = System.getProperty("java.home")
-            def keytoolBin = file("${javaHome}/bin/keytool").exists() ? "${javaHome}/bin/keytool" : "keytool"
-            def pb = new ProcessBuilder(
-                keytoolBin, '-genkeypair', '-v',
-                '-keystore', ksFile.absolutePath,
-                '-alias', ksAlias,
-                '-keyalg', 'RSA',
-                '-keysize', '2048',
-                '-validity', '10000',
-                '-storepass', ksPass,
-                '-keypass', ksKeyPass,
-                '-dname', 'CN=PRAHA STREAM, OU=Android, O=PRAHA, L=Mumbai, S=MH, C=IN'
-            )
-            pb.inheritIO()
-            def proc = pb.start()
-            if (proc.waitFor() != 0) {
-                throw new GradleException("Failed to generate release keystore")
-            }
+            throw new GradleException(
+                "Release keystore not found at ${ksFile.absolutePath}. Provide a real keystore " +
+                "via ANDROID_KEYSTORE_PATH (and keep it out of version control).")
         }
     }
 }

@@ -58,6 +58,42 @@ const Navigation: React.FC<NavigationProps> = ({
   const searchRef = useRef<HTMLInputElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const profilePopoverRef = useRef<HTMLDivElement>(null);
+  const moreSheetRef = useRef<HTMLDivElement>(null);
+  const profileRestoreRef = useRef<HTMLElement | null>(null);
+  const moreRestoreRef = useRef<HTMLElement | null>(null);
+
+  // `useSpatialNavigation` scopes D-pad arrow keys to the topmost [role="dialog"].
+  // These overlays previously had no dialog semantics, so focus escaped behind
+  // them on Android TV (audit M-14). Move focus in, close on Escape, and put
+  // focus back on the trigger when the overlay closes.
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    profileRestoreRef.current = document.activeElement as HTMLElement | null;
+    profilePopoverRef.current?.querySelector<HTMLElement>('button')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      profileRestoreRef.current?.focus();
+    };
+  }, [profileMenuOpen]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    moreRestoreRef.current = document.activeElement as HTMLElement | null;
+    moreSheetRef.current?.querySelector<HTMLElement>('button')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMoreOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      moreRestoreRef.current?.focus();
+    };
+  }, [moreOpen]);
 
   const isMoreActive = moreNavItems.some((item) => item.id === view);
 
@@ -131,7 +167,13 @@ const Navigation: React.FC<NavigationProps> = ({
             </button>
 
             {profileMenuOpen && (
-              <div className="profile-popover" role="menu">
+              <div
+                className="profile-popover"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Switch profile"
+                ref={profilePopoverRef}
+              >
                 <p>Switch profile</p>
                 {profiles.map((prof, idx) => (
                   <button
@@ -254,7 +296,14 @@ const Navigation: React.FC<NavigationProps> = ({
       {/* Sleek Mobile Bottom Sheet for More Features */}
       {moreOpen && (
         <div className="mobile-more-backdrop" onClick={() => setMoreOpen(false)}>
-          <div className="mobile-more-sheet" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="mobile-more-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More features"
+            ref={moreSheetRef}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mobile-more-handle" />
             <div className="mobile-more-header">
               <h3>More Features</h3>

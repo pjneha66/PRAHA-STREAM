@@ -5,7 +5,8 @@
   "backgroundColor": "#090a0c",
   "server": {
     "androidScheme": "https",
-    "cleartext": true
+    "cleartext": true,
+    "allowNavigation": ["localhost"]
   },
   "android": {
     "allowMixedContent": true,

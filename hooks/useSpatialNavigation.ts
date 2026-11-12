@@ -41,6 +41,11 @@ export function useSpatialNavigation(enabled: boolean, paused = false) {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') return;
       }
 
+      // D-pad mode owns the arrow keys. Without this the WebView scrolls the
+      // page underneath the focused item whenever no next candidate exists
+      // (list edges, empty regions), which looks like a lost remote press.
+      event.preventDefault();
+
       // Scope focus inside the topmost modal dialog if one is open
       const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).filter(isVisible);
       const scopeRoot: ParentNode = dialogs.length ? dialogs[dialogs.length - 1] : document;
@@ -49,7 +54,6 @@ export function useSpatialNavigation(enabled: boolean, paused = false) {
       if (!candidates.length) return;
 
       if (!activeEl || !candidates.includes(activeEl)) {
-        event.preventDefault();
         candidates[0].focus();
         return;
       }
@@ -81,7 +85,6 @@ export function useSpatialNavigation(enabled: boolean, paused = false) {
       }
 
       if (best) {
-        event.preventDefault();
         best.focus();
         best.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
       }

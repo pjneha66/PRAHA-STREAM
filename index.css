@@ -19,6 +19,55 @@
   --danger: #ff7c82;
   --violet: #b7a1fa;
   --blue: #85bffa;
+
+  /* ---- Material 3 Expressive role layer --------------------------------
+     Derived from the legacy theme tokens above so all five [data-theme]
+     palettes keep working without duplicating every value. New components
+     should reference --md-sys-*; the existing 2.7k lines keep using the
+     aliases and inherit the system for free. */
+  --md-sys-color-primary: var(--accent);
+  --md-sys-color-on-primary: var(--accent-ink);
+  --md-sys-color-primary-container: rgba(var(--accent-rgb), 0.16);
+  --md-sys-color-on-primary-container: var(--accent);
+  --md-sys-color-secondary: var(--blue);
+  --md-sys-color-tertiary: var(--violet);
+  --md-sys-color-error: var(--danger);
+  --md-sys-color-surface: var(--bg);
+  --md-sys-color-surface-container-lowest: var(--bg);
+  --md-sys-color-surface-container-low: var(--bg-soft);
+  --md-sys-color-surface-container: var(--surface);
+  --md-sys-color-surface-container-high: var(--surface-2);
+  --md-sys-color-surface-container-highest: var(--surface-3);
+  --md-sys-color-on-surface: var(--text);
+  --md-sys-color-on-surface-variant: var(--muted);
+  --md-sys-color-outline: var(--line-strong);
+  --md-sys-color-outline-variant: var(--line);
+
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-full: 999px;
+
+  --md-sys-motion-easing-emphasized: cubic-bezier(.2, 0, 0, 1);
+  --md-sys-motion-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --md-sys-motion-duration-short: 180ms;
+  --md-sys-motion-duration-long: 520ms;
+
+  --md-space-1: 4px;
+  --md-space-2: 8px;
+  --md-space-3: 12px;
+  --md-space-4: 16px;
+  --md-space-5: 24px;
+  --md-space-6: 32px;
+  --md-space-7: 48px;
+  --md-space-8: 64px;
+
+  --md-sys-elevation-level1: 0 2px 8px rgba(0, 0, 0, .28);
+  --md-sys-elevation-level3: 0 12px 32px rgba(0, 0, 0, .42);
+  --md-touch-target: 48px;
+
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -2104,7 +2153,10 @@ html.dpad-mode select:focus {
 }
 @media (max-width: 680px) {
   .details-section { padding: 16px 18px 22px; }
-  .details-episode-card { grid-template-columns: 112px minmax(0, 1fr); }
+  /* `gap` must be re-asserted here: the base `.details-episode-card` rule sits
+     above this block, so its 14px gap otherwise overrides the intended mobile
+     10px at equal specificity (audit L-04). */
+  .details-episode-card { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; }
   .details-episode-card > .button { grid-column: 1 / -1; justify-content: center; }
 }
 
@@ -2778,4 +2830,86 @@ html.player-vlc-active .app-shell,
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
+}
+
+/* ================= Material 3 Expressive — global layer ==================
+   Kept at the end of the sheet so it wins the cascade against the legacy
+   component rules above without editing each of them. */
+
+/* 48dp minimum touch target (M3 + Android TV). The legacy sheet shipped
+   .nav-item 45px, .button 41px, .button-small 33px and filter pills 32px. */
+.nav-item,
+.button,
+.button-small,
+.filter-pills button,
+.quality-filters button,
+.icon-btn,
+.details-episode-card > .button {
+  min-height: var(--md-touch-target);
+}
+
+/* Expressive motion on the primary interactive surfaces. */
+.button,
+.nav-item,
+.filter-pills button,
+.quality-filters button,
+.mobile-more-item {
+  transition:
+    transform var(--md-sys-motion-duration-short) var(--md-sys-motion-spring),
+    background var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    color var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized),
+    box-shadow var(--md-sys-motion-duration-short) var(--md-sys-motion-easing-emphasized);
+}
+
+/* Shell + hero take the expressive corner scale. */
+.app-shell {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.hero {
+  border-radius: 0 0 var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large);
+}
+
+/* One consistent TV / D-pad focus affordance across every control. */
+:focus-visible {
+  outline: 3px solid var(--focus-ring, var(--md-sys-color-primary));
+  outline-offset: 2px;
+}
+
+/* Light theme is opt-in only. An explicit dark default is never overridden by
+   the OS preference, so `prefers-color-scheme` is deliberately not used here. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #FEF8EC;
+  --bg-soft: #F8F1E1;
+  --surface: #F2E9D6;
+  --surface-2: #E9DECA;
+  --surface-3: #DFD3BC;
+  --line: rgba(28, 27, 22, .10);
+  --line-strong: rgba(28, 27, 22, .20);
+  --text: #1C1B16;
+  --muted: #4A463A;
+  --muted-2: #6B6656;
+  --accent: #7A5C00;
+  --accent-rgb: 122, 92, 0;
+  --accent-ink: #FFFFFF;
+  --focus-ring: #7A5C00;
+  --md-sys-elevation-level1: 0 2px 8px rgba(60, 45, 10, .12);
+  --md-sys-elevation-level3: 0 12px 32px rgba(60, 45, 10, .18);
+}
+
+:root[data-theme='light'][data-accent='jade'] { --accent: #0B6B2A; --accent-rgb: 11, 107, 42; --accent-ink: #FFFFFF; --focus-ring: #0B6B2A; }
+:root[data-theme='light'][data-accent='rosegold'] { --accent: #8C3A16; --accent-rgb: 140, 58, 22; --accent-ink: #FFFFFF; --focus-ring: #8C3A16; }
+:root[data-theme='light'][data-accent='arcticblue'] { --accent: #005C78; --accent-rgb: 0, 92, 120; --accent-ink: #FFFFFF; --focus-ring: #005C78; }
+:root[data-theme='light'][data-accent='graphite'] { --accent: #333A42; --accent-rgb: 51, 58, 66; --accent-ink: #FFFFFF; --focus-ring: #333A42; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

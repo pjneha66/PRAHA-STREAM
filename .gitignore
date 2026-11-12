@@ -33,6 +33,9 @@ dist-ssr
 **/.DS_Store
 **/._*
 
+# Local agent workspace data (memory, caches) — not project source
+.workbuddy-ai/
+
 # Android
 dist-apk/
 android/local.properties

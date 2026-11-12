@@ -28,6 +28,46 @@ export function createBackupBundle(params: {
   };
 }
 
+const MAX_BACKUP_ADDONS = 500;
+const MAX_BACKUP_PROFILES = 50;
+const MAX_BACKUP_REPOSITORIES = 200;
+const MAX_SCRAPER_CODE_LENGTH = 200_000;
+/** Keys that can rewrite an object's prototype when spread or merged. */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Structured clone of untrusted JSON that drops prototype-pollution keys and
+ * caps recursion. A backup file is attacker-supplied when a user imports one
+ * they were handed, so nothing below may trust its shape.
+ */
+function sanitizeJson(value: unknown, depth = 0): unknown {
+  if (depth > 8) return null;
+  if (Array.isArray(value)) return value.slice(0, 2000).map((item) => sanitizeJson(item, depth + 1));
+  if (!isPlainObject(value)) return value;
+  const clean: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (DANGEROUS_KEYS.has(key)) continue;
+    clean[key] = sanitizeJson(item, depth + 1);
+  }
+  return clean;
+}
+
+function safeHttpUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    if (url.username || url.password) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function validateAndParseBackup(rawJson: string): PrahaBackupBundle {
   let parsed: unknown;
   try {
@@ -38,26 +78,80 @@ export function validateAndParseBackup(rawJson: string): PrahaBackupBundle {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Backup file is empty or malformed.');
   }
-  const candidate = parsed as Partial<PrahaBackupBundle>;
-  if (candidate.app !== 'praha-stream' || !Array.isArray(candidate.addons)) {
+  const candidate = sanitizeJson(parsed) as Partial<PrahaBackupBundle>;
+  if (!isPlainObject(candidate) || candidate.app !== 'praha-stream' || !Array.isArray(candidate.addons)) {
     throw new Error('This file is not a valid PRAHA STREAM backup.');
   }
+  if (candidate.addons.length > MAX_BACKUP_ADDONS) {
+    throw new Error(`Backup contains more than ${MAX_BACKUP_ADDONS} addons.`);
+  }
 
-  const profiles = Array.isArray(candidate.profiles) && candidate.profiles.length
-    ? candidate.profiles
-    : [{ id: 'default', name: 'Main Profile', avatarColor: '#d6f77a', createdAt: Date.now() }];
+  // Addons carry a manifest URL that is fetched and rendered, so every entry
+  // must be a structurally valid addon with an http(s), credential-free URL.
+  const addons: InstalledAddon[] = [];
+  for (const entry of candidate.addons) {
+    if (!isPlainObject(entry)) throw new Error('Backup contains a malformed addon entry.');
+    const manifestUrl = safeHttpUrl(entry.manifestUrl);
+    if (!manifestUrl) throw new Error('Backup contains an addon with an invalid manifest URL.');
+    if (!isPlainObject(entry.manifest)) throw new Error('Backup contains an addon without a manifest.');
+    addons.push({
+      manifestUrl,
+      manifest: entry.manifest as unknown as InstalledAddon['manifest'],
+      enabled: entry.enabled !== false,
+      installedAt: Number(entry.installedAt) || Date.now(),
+      updatedAt: Number(entry.updatedAt) || Date.now(),
+    });
+  }
+
+  const rawProfiles = Array.isArray(candidate.profiles) ? candidate.profiles.slice(0, MAX_BACKUP_PROFILES) : [];
+  const profiles: UserProfile[] = [];
+  for (const entry of rawProfiles) {
+    if (!isPlainObject(entry)) continue;
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!id || !name) continue;
+    profiles.push({
+      ...(entry as unknown as UserProfile),
+      id,
+      name,
+      avatarColor: typeof entry.avatarColor === 'string' ? entry.avatarColor : '#d6f77a',
+      createdAt: Number(entry.createdAt) || Date.now(),
+    });
+  }
+  if (!profiles.length) {
+    profiles.push({ id: 'default', name: 'Main Profile', avatarColor: '#d6f77a', createdAt: Date.now() });
+  }
+
+  const repositories = (Array.isArray(candidate.repositories) ? candidate.repositories : [])
+    .slice(0, MAX_BACKUP_REPOSITORIES)
+    .filter((entry): entry is NuvioRepository => {
+      if (!isPlainObject(entry)) return false;
+      if (!safeHttpUrl(entry.manifestUrl)) return false;
+      return Array.isArray(entry.scrapers);
+    });
+
+  const nuvioSettings = isPlainObject(candidate.nuvioSettings) ? candidate.nuvioSettings : {};
+  for (const value of Object.values(nuvioSettings)) {
+    if (!isPlainObject(value)) continue;
+    const code = value.code;
+    if (typeof code === 'string' && code.length > MAX_SCRAPER_CODE_LENGTH) {
+      throw new Error('Backup contains an oversized scraper script.');
+    }
+  }
 
   return {
     app: 'praha-stream',
     version: Number(candidate.version || 2),
     exportedAt: Number(candidate.exportedAt || Date.now()),
     settings: normalizeSettings(candidate.settings),
-    addons: candidate.addons,
-    repositories: Array.isArray(candidate.repositories) ? candidate.repositories : [],
-    nuvioSettings: candidate.nuvioSettings && typeof candidate.nuvioSettings === 'object' ? candidate.nuvioSettings : {},
+    addons,
+    repositories,
+    nuvioSettings: nuvioSettings as PrahaBackupBundle['nuvioSettings'],
     profiles,
     activeProfileId: candidate.activeProfileId || profiles[0].id,
-    profileData: candidate.profileData && typeof candidate.profileData === 'object' ? candidate.profileData : {},
+    profileData: isPlainObject(candidate.profileData)
+      ? (candidate.profileData as PrahaBackupBundle['profileData'])
+      : {},
   };
 }
 

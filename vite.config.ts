@@ -146,5 +146,16 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/._*', '**/.git/**'],
+    // Vitest 5 defaults maxWorkers to hw.ncpu (10 here) and isolates every
+    // file in its own fork. Each jsdom fork cold-starts in ~22s, so ten
+    // concurrent forks exceed the pool's 60s startup timeout: files silently
+    // never run and `npm test` exits 1 with unhandled worker errors. Cap
+    // concurrency. `isolate` must stay true: several suites vi.mock() whole
+    // modules and shared workers leak those mocks across files (verified).
+    maxWorkers: 2,
+    // Several suites boot jsdom + the full component graph; the 5s default
+    // flakes under a cold transform cache (observed 4976ms on flow.test.tsx).
+    testTimeout: 15000,
+    hookTimeout: 20000,
   },
 });

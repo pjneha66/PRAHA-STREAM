@@ -175,6 +175,39 @@ export function openSafeExternalUrl(url: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * Validates a URL before it crosses the JS → native bridge. Stream, addon and
+ * scraper URLs are attacker-controlled, so only absolute http(s) URLs without
+ * embedded credentials may be handed to native code. Returning `null` means
+ * "do not call the native method".
+ */
+export function safeRemoteUrl(
+  raw: string,
+  options: { allowHttp?: boolean; allowedHosts?: string[] } = {},
+): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  let target: URL;
+  try {
+    target = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  const allowedProtocols = options.allowHttp === false ? ['https:'] : ['https:', 'http:'];
+  if (!allowedProtocols.includes(target.protocol)) return null;
+  if (target.username || target.password) return null;
+  if (!target.hostname) return null;
+  const allow = options.allowedHosts;
+  if (allow && allow.length) {
+    const host = target.hostname.toLowerCase();
+    const matches = allow.some((entry) => {
+      const rule = entry.toLowerCase();
+      return rule.startsWith('*.') ? host.endsWith(rule.slice(1)) : host === rule;
+    });
+    if (!matches) return null;
+  }
+  return target.toString();
+}
+
 export function isAndroidTv(): boolean {
   if (typeof window === 'undefined') return false;
   try {
@@ -240,9 +273,12 @@ export function resolvePlayableStreamUrl(stream: StreamResult, preferNativeProxy
   if (stream.url.startsWith('magnet:') || stream.ytId) return stream.url;
   const headers = extractStreamHeaders(stream);
   if (!Object.keys(headers).length) return stream.url;
+  // Never hand an unvalidated addon URL to the native proxy.
+  const safeUrl = safeRemoteUrl(stream.url);
+  if (!safeUrl) return stream.url;
   try {
     if (window.PrahaNative?.proxyStreamUrl) {
-      const proxied = window.PrahaNative.proxyStreamUrl(stream.url, JSON.stringify(headers));
+      const proxied = window.PrahaNative.proxyStreamUrl(safeUrl, JSON.stringify(headers));
       if (proxied) return proxied;
     }
   } catch (error) {
@@ -366,12 +402,15 @@ export async function nativeFetchText(
   const method = (options.method || 'GET').toUpperCase();
   const headers = options.headers || {};
   const timeoutMs = options.timeoutMs ?? 20000;
+  // Native HTTP is a CORS bypass, so it is also an SSRF surface: only absolute
+  // http(s) URLs may reach it. Invalid URLs fall through to browser `fetch`.
+  const nativeUrl = safeRemoteUrl(url);
 
   // 1. On native Android Capacitor platform, use CapacitorHttp directly (bypasses CORS, handles gzip/redirects/forbidden headers off the main thread).
-  if (Capacitor.isNativePlatform()) {
+  if (Capacitor.isNativePlatform() && nativeUrl) {
     try {
       const response = await CapacitorHttp.request({
-        url,
+        url: nativeUrl,
         method,
         headers,
         data: options.body,
@@ -391,7 +430,7 @@ export async function nativeFetchText(
   }
 
   // 2. Native Android Java bridge (supports all custom headers & redirects asynchronously).
-  if (typeof window !== 'undefined' && window.PrahaNative) {
+  if (typeof window !== 'undefined' && window.PrahaNative && nativeUrl) {
     if (window.PrahaNative.httpRequestAsync) {
       if (!window.__prahaNativeHttpCallback) registerNativeHttpCallback();
       return new Promise<NativeHttpResult>((resolve, reject) => {
@@ -406,7 +445,7 @@ export async function nativeFetchText(
         try {
           window.PrahaNative!.httpRequestAsync!(
             requestId,
-            url,
+            nativeUrl,
             method,
             JSON.stringify(headers),
             options.body || '',
@@ -421,7 +460,7 @@ export async function nativeFetchText(
     }
 
     if (window.PrahaNative.httpRequest) {
-      const raw = window.PrahaNative.httpRequest(url, method, JSON.stringify(headers), options.body || '');
+      const raw = window.PrahaNative.httpRequest(nativeUrl, method, JSON.stringify(headers), options.body || '');
       const parsed = JSON.parse(raw) as { ok?: boolean; status?: number; body?: string; error?: string };
       if (parsed.error && !parsed.status) throw new Error(parsed.error);
       const status = Number(parsed.status || 0);
@@ -504,21 +543,25 @@ export function openExternalPlayer(
 ): void {
   const url = stream.url;
   if (!url) return;
+  // `magnet:` is a legitimate hand-off; everything else must be http(s) with no
+  // embedded credentials before it reaches a native intent / ACTION_VIEW.
+  const safeUrl = url.startsWith('magnet:') ? url : safeRemoteUrl(url);
+  if (!safeUrl) return;
   const headers = extractStreamHeaders(stream);
   const pkg = target === 'chooser' ? '' : PLAYER_PACKAGES[target];
 
   try {
     if (window.PrahaNative?.openExternalPlayer) {
-      const handled = window.PrahaNative.openExternalPlayer(url, title, pkg, JSON.stringify(headers));
+      const handled = window.PrahaNative.openExternalPlayer(safeUrl, title, pkg, JSON.stringify(headers));
       if (handled) return;
     }
   } catch {
     // Fall back to intent:// or direct href.
   }
 
-  const href = isAndroidApp() && !url.startsWith('magnet:')
-    ? buildAndroidIntentUrl(url, title, target)
-    : url;
+  const href = isAndroidApp() && !safeUrl.startsWith('magnet:')
+    ? buildAndroidIntentUrl(safeUrl, title, target)
+    : safeUrl;
   window.open(href, '_blank', 'noopener,noreferrer');
 }
 
@@ -556,15 +599,22 @@ export async function exportBackupFile(filename: string, jsonText: string): Prom
 }
 
 export function downloadAndInstallUpdate(apkUrl: string, versionName: string): boolean {
+  // Installing an APK is the highest-impact native sink in the app. Pin it to
+  // the release feed: HTTPS only, GitHub-hosted, and an .apk path.
+  const safeUrl = safeRemoteUrl(apkUrl, {
+    allowHttp: false,
+    allowedHosts: ['github.com', '*.githubusercontent.com'],
+  });
+  if (!safeUrl || !/\.apk($|\?)/i.test(new URL(safeUrl).pathname + new URL(safeUrl).search)) return false;
   try {
     if (window.PrahaNative?.downloadAndInstallUpdate) {
-      return window.PrahaNative.downloadAndInstallUpdate(apkUrl, versionName);
+      return window.PrahaNative.downloadAndInstallUpdate(safeUrl, versionName);
     }
   } catch {
     // Fall back to opening URL in browser
   }
-  window.open(apkUrl, '_blank');
-  return true;
+  // Reject javascript:/data:/file: URLs and never hand the new tab an opener.
+  return openSafeExternalUrl(safeUrl);
 }
 
 export function exitAndroidApp(): void {
@@ -644,8 +694,14 @@ export function setNativeSpuTrack(id: number): boolean {
 }
 
 export function addNativeSubtitleSlave(uri: string, select = true): boolean {
+  // Subtitles picked through the system file picker arrive as content:// URIs
+  // (permission-granted by the OS); remote subtitle tracks must be http(s).
+  const safeUri = uri.startsWith('content://') && !/[\r\n\0]/.test(uri)
+    ? uri
+    : safeRemoteUrl(uri);
+  if (!safeUri) return false;
   try {
-    return Boolean(window.PrahaNative?.addSlave?.(0, uri, select));
+    return Boolean(window.PrahaNative?.addSlave?.(0, safeUri, select));
   } catch {
     return false;
   }
@@ -680,8 +736,10 @@ export function setNativeAudioDelay(delaySeconds: number): boolean {
 }
 
 export function nativeVlcPlay(url: string, headers: Record<string, string> = {}, resumeMs = 0): boolean {
+  const safeUrl = safeRemoteUrl(url);
+  if (!safeUrl) return false;
   try {
-    return Boolean(window.PrahaNative?.vlcPlay?.(url, JSON.stringify(headers), resumeMs));
+    return Boolean(window.PrahaNative?.vlcPlay?.(safeUrl, JSON.stringify(headers), resumeMs));
   } catch {
     return false;
   }

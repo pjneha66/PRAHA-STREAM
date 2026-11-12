@@ -112,6 +112,9 @@ const App: React.FC = () => {
   const playbackPositionRef = useRef(0);
   const lastBackExitPromptRef = useRef(0);
   const scrobbledKeysRef = useRef<Set<string>>(new Set());
+  // Bumped whenever a new Discover search starts. "Load more" captures the
+  // token so a page fetched for an older query cannot be appended afterwards.
+  const discoverRequestRef = useRef(0);
 
   const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
   const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
@@ -392,6 +395,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!profilePickerCompleted || view !== 'discover') return;
     let active = true;
+    // Any new search invalidates pages requested by an earlier "Load more".
+    // Clear the pagination flag here too: the invalidated request's `finally`
+    // deliberately skips its own reset (isCurrent() is false), so without this
+    // `discoverLoadingMore` would stay true and block every future page load.
+    discoverRequestRef.current += 1;
+    setDiscoverLoadingMore(false);
     const timer = window.setTimeout(async () => {
       setDiscoverLoading(true);
       setDiscoverError('');
@@ -448,6 +457,8 @@ const App: React.FC = () => {
 
   const loadMoreDiscover = useCallback(async () => {
     if (discoverLoadingMore || !discoverHasMore) return;
+    const requestId = discoverRequestRef.current;
+    const isCurrent = () => requestId === discoverRequestRef.current;
     const nextPage = discoverPage + 1;
     setDiscoverLoadingMore(true);
     try {
@@ -457,19 +468,21 @@ const App: React.FC = () => {
           tmdbReady ? tmdbService.search(term, nextPage).catch(() => []) : Promise.resolve([]),
           animeService.search(term, nextPage, 20).then((result) => result.items).catch(() => []),
         ]);
+        if (!isCurrent()) return;
         setDiscoverItems((prev) => uniqueMedia([...prev, ...tmdb, ...anime]));
         setDiscoverPage(nextPage);
         setDiscoverHasMore(tmdb.length >= 16 || anime.length >= 20);
       } else {
         const more = await tmdbService.discover(discoverFilters, nextPage);
+        if (!isCurrent()) return;
         setDiscoverItems((prev) => uniqueMedia([...prev, ...more.items]));
         setDiscoverPage(nextPage);
         setDiscoverHasMore(more.hasMore);
       }
     } catch {
-      setDiscoverHasMore(false);
+      if (isCurrent()) setDiscoverHasMore(false);
     } finally {
-      setDiscoverLoadingMore(false);
+      if (isCurrent()) setDiscoverLoadingMore(false);
     }
   }, [tmdbReady, discoverLoadingMore, discoverHasMore, discoverPage, query, discoverFilters]);
 

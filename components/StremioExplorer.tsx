@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blocks, Check, ChevronLeft, CircleAlert, Compass, Search,
 } from 'lucide-react';
@@ -40,6 +40,8 @@ const StremioExplorer: React.FC<StremioExplorerProps> = ({
   const [loading, setLoading] = useState(false);
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
+  // Monotonic token: a slow catalog response must never overwrite a newer one.
+  const catalogRequestRef = useRef(0);
 
   const activeAddon = useMemo(
     () => addons.find((addon) => addon.manifestUrl === stremioUrl) || null,
@@ -52,17 +54,21 @@ const StremioExplorer: React.FC<StremioExplorerProps> = ({
   }, [addons, stremioUrl]);
 
   const loadCatalog = useCallback(async (target: StremioCatalog, addon: InstalledAddon, search = '') => {
+    const requestId = ++catalogRequestRef.current;
+    const isCurrent = () => requestId === catalogRequestRef.current;
     setCatalogLoading(true);
     setCatalogError('');
     try {
       const items = await fetchStremioCatalog(addon, target, search ? { search } : {});
+      if (!isCurrent()) return;
       setCatalogItems(items);
       if (!items.length) setCatalogError('No titles were returned for this catalog.');
     } catch (error) {
+      if (!isCurrent()) return;
       setCatalogItems([]);
       setCatalogError(error instanceof Error ? error.message : 'The catalog could not be loaded.');
     } finally {
-      setCatalogLoading(false);
+      if (isCurrent()) setCatalogLoading(false);
     }
   }, []);
 
@@ -86,6 +92,9 @@ const StremioExplorer: React.FC<StremioExplorerProps> = ({
   }, [activeAddon, searchType]);
 
   useEffect(() => {
+    // Switching addon invalidates any catalog request still in flight.
+    catalogRequestRef.current += 1;
+    setCatalogLoading(false);
     setBaseCatalog(null);
     setCatalogItems([]);
     setCatalogError('');

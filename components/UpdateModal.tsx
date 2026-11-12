@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine, Check, ExternalLink, HardDrive, LoaderCircle,
   Sparkles, X,
 } from 'lucide-react';
 import type { UpdateInfo } from '../services/autoUpdateService';
-import { downloadAndInstallUpdate, isAndroidApp } from '../services/androidBridge';
+import { downloadAndInstallUpdate, isAndroidApp, openSafeExternalUrl } from '../services/androidBridge';
 
 interface UpdateModalProps {
   update: UpdateInfo;
@@ -20,6 +20,13 @@ function formatBytes(bytes: number): string {
 const UpdateModal: React.FC<UpdateModalProps> = ({ update, onClose }) => {
   const [downloading, setDownloading] = useState(false);
   const [started, setStarted] = useState(false);
+  const indicatorTimerRef = useRef<number | null>(null);
+
+  // The modal can unmount while the 3.5s indicator is pending; clear it so we
+  // never setState on an unmounted component.
+  useEffect(() => () => {
+    if (indicatorTimerRef.current !== null) window.clearTimeout(indicatorTimerRef.current);
+  }, []);
 
   const handleUpdate = () => {
     setDownloading(true);
@@ -28,11 +35,13 @@ const UpdateModal: React.FC<UpdateModalProps> = ({ update, onClose }) => {
     try {
       downloadAndInstallUpdate(update.apkUrl, update.latestVersion);
       // Let the indicator show for 3 seconds, then inform user it's downloading
-      window.setTimeout(() => {
+      if (indicatorTimerRef.current !== null) window.clearTimeout(indicatorTimerRef.current);
+      indicatorTimerRef.current = window.setTimeout(() => {
+        indicatorTimerRef.current = null;
         setDownloading(false);
       }, 3500);
     } catch {
-      window.open(update.apkUrl, '_blank');
+      openSafeExternalUrl(update.apkUrl);
       setDownloading(false);
     }
   };

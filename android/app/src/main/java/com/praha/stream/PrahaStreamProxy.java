@@ -209,9 +209,56 @@ public class PrahaStreamProxy {
         }
     }
 
+    /**
+     * Stream URLs come from untrusted addons, and this proxy is reachable by any
+     * local client. Only http(s) targets without embedded credentials may be
+     * relayed, and never back into this proxy or the cloud metadata endpoint
+     * (SSRF / request amplification).
+     */
+    private boolean isAllowedTarget(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        try {
+            URI uri = new URI(raw.trim());
+            String scheme = uri.getScheme();
+            if (scheme == null) return false;
+            String lower = scheme.toLowerCase();
+            if (!lower.equals("http") && !lower.equals("https")) return false;
+            if (uri.getUserInfo() != null) return false;
+            String host = uri.getHost();
+            if (host == null || host.isEmpty()) return false;
+            if ("169.254.169.254".equals(host)) return false;
+            if (port > 0 && uri.getPort() == port
+                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))) return false;
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Reject header injection and hop-by-hop overrides from untrusted JSON. */
+    private static boolean isSafeHeader(String key, String value) {
+        if (key == null || key.isEmpty() || value == null) return false;
+        if (key.length() > 128 || value.length() > 4096) return false;
+        String lower = key.toLowerCase();
+        if (lower.equals("host") || lower.equals("connection")
+                || lower.equals("content-length") || lower.equals("transfer-encoding")) return false;
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            if (c == '\r' || c == '\n' || c == 0) return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '\r' || c == '\n' || c == 0) return false;
+        }
+        return true;
+    }
+
     private HttpURLConnection openFollowRedirects(String targetUrl, String method, String headersJson, String rangeHeader) throws Exception {
         String currentUrl = targetUrl;
         for (int hop = 0; hop < 6; hop++) {
+            if (!isAllowedTarget(currentUrl)) {
+                throw new IOException("Blocked non-HTTP or self-referential proxy target");
+            }
             HttpURLConnection conn = (HttpURLConnection) new URL(currentUrl).openConnection();
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(15000);
@@ -230,7 +277,7 @@ public class PrahaStreamProxy {
                     while (keys.hasNext()) {
                         String key = keys.next();
                         String value = obj.optString(key, "");
-                        if (!value.isEmpty()) {
+                        if (!value.isEmpty() && isSafeHeader(key, value)) {
                             conn.setRequestProperty(key, value);
                             if ("user-agent".equalsIgnoreCase(key)) hasUserAgent = true;
                         }
@@ -346,7 +393,9 @@ public class PrahaStreamProxy {
     ) throws IOException {
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(status).append(" ").append(statusText).append("\r\n");
-        sb.append("Access-Control-Allow-Origin: *\r\n");
+        // The app origin is https://localhost. A wildcard here let any web page
+        // on the device read arbitrary relayed content (audit H-03).
+        sb.append("Access-Control-Allow-Origin: https://localhost\r\n");
         sb.append("Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n");
         sb.append("Access-Control-Allow-Headers: *\r\n");
         sb.append("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n");

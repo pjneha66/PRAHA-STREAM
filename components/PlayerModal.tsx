@@ -17,6 +17,16 @@ import {
 } from '../services/androidBridge';
 import MpvPlayer from './player/MpvPlayer';
 
+/** Stream URLs come from untrusted addons/Nuvio plugins. Only http(s) may be framed. */
+function safeFrameUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw, window.location.href);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 const PlayerModal: React.FC<{
   media: MediaItem;
   stream: StreamResult;
@@ -253,6 +263,9 @@ const PlayerModal: React.FC<{
   }
 
   if (isYoutube || isEmbed) {
+    const embedSrc = isYoutube
+      ? `https://www.youtube.com/embed/${encodeURIComponent(activeStream.ytId || '')}?autoplay=${autoplay ? 1 : 0}`
+      : safeFrameUrl(activeStream.url || '');
     return (
       <div className="player-fullscreen-root player-embed-root">
         <div className="player-embed-header">
@@ -270,12 +283,25 @@ const PlayerModal: React.FC<{
           </div>
         </div>
         <div className="player-embed-body">
-          <iframe
-            src={isYoutube ? `https://www.youtube.com/embed/${activeStream.ytId}?autoplay=${autoplay ? 1 : 0}` : activeStream.url}
-            title={media.title}
-            allow="autoplay; encrypted-media; picture-in-picture"
-            allowFullScreen
-          />
+          {embedSrc ? (
+            <iframe
+              src={embedSrc}
+              title={media.title}
+              referrerPolicy="strict-origin-when-cross-origin"
+              sandbox="allow-scripts allow-forms allow-presentation"
+              allow="autoplay; encrypted-media; picture-in-picture"
+              allowFullScreen
+            />
+          ) : (
+            <div className="player-message" role="alert">
+              <span><CircleAlert size={30} /></span>
+              <h2>Unsafe embed URL</h2>
+              <p>This source returned a non-HTTP URL and was blocked. Open it in an external player instead.</p>
+              <button className="button button-secondary" onClick={() => openExternalPlayer(activeStream, fullTitle, 'chooser')}>
+                External <ExternalLink size={14} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
