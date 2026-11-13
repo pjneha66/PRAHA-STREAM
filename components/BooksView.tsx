@@ -7,6 +7,7 @@ import {
 } from '../services/archiveService';
 import { openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
+import SkeletonGrid from './SkeletonGrid';
 
 type SourceMode = 'openlibrary' | 'archive';
 
@@ -274,9 +275,7 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
       )}
 
       {loading ? (
-        <p style={{ color: '#8b949e', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <LoaderCircle size={16} className="spin" /> Loading books…
-        </p>
+        <SkeletonGrid count={12} label="Loading books…" />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${compact ? '140px' : '170px'}, 1fr))`, gap: '12px' }}>
           {items.map((item) => (

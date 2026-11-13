@@ -4,6 +4,7 @@ import {
   FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
 } from 'lucide-react';
 import { buildImageCandidates, openSafeExternalUrl } from '../services/androidBridge';
+import SkeletonGrid from './SkeletonGrid';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
 import ArchiveReader from './ArchiveReader';
 import {
@@ -594,10 +595,7 @@ const SankaExplorer: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className="sanka-state" role="status">
-          <LoaderCircle size={23} className="spin" />
-          <p>Loading manga and comics…</p>
-        </div>
+        <SkeletonGrid count={12} label="Loading manga and comics…" />
       ) : error ? (
         <div className="empty-state sanka-state sanka-error" role="alert">
           <span><CircleAlert size={25} /></span>

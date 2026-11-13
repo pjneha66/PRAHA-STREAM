@@ -426,6 +426,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .media-skeleton > span { display: block; aspect-ratio: 2 / 2.93; border-radius: 12px; background: linear-gradient(100deg, #14171a 20%, #1e2226 40%, #14171a 60%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
 .media-skeleton i { display: block; width: 80%; height: 8px; margin-top: 11px; border-radius: 5px; background: #171a1e; }
 .media-skeleton i:last-child { width: 45%; height: 6px; margin-top: 7px; }
+.media-skeleton.skeleton-row { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid #21262d; border-radius: 12px; background: #161b22; min-height: 84px; }
+.media-skeleton .skeleton-row-thumb { display: block; width: 46px; height: 46px; flex-shrink: 0; border-radius: 8px; background: linear-gradient(100deg, #14171a 20%, #1e2226 40%, #14171a 60%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+.media-skeleton .skeleton-row-lines { flex: 1; min-width: 0; }
+.media-skeleton .skeleton-row-lines i { display: block; width: 75%; height: 9px; margin: 0 0 8px; border-radius: 5px; background: #171a1e; }
+.media-skeleton .skeleton-row-lines i:last-child { width: 45%; height: 7px; margin: 0; }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 330px; padding: 40px 24px; border: 1px dashed var(--line-strong); border-radius: 17px; background: rgba(255,255,255,.012); text-align: center; }
 .empty-state > span:first-child { display: flex; align-items: center; justify-content: center; width: 55px; height: 55px; margin-bottom: 15px; border-radius: 16px; background: rgba(var(--accent-rgb), .07); color: var(--accent); }
 .empty-state h2 { margin: 0 0 8px; font-size: 17px; }

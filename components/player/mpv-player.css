@@ -501,6 +501,10 @@
 
 .mpv-recovery-status { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); z-index: 5; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; text-align: center; pointer-events: none; }
 
+/* Engine chip — visible only while connecting/buffering/recovering (MpvPlayer). */
+.mpv-engine-chip { position: absolute; top: 14px; right: 14px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.62); color: rgba(255,255,255,.85); font-size: 11px; font-weight: 600; letter-spacing: .02em; pointer-events: none; }
+.mpv-engine-chip em { font-style: normal; color: rgba(255,255,255,.55); font-weight: 500; }
+
 .mpv-stage.controls-off .mpv-osc { pointer-events: none; }
 .mpv-stage.controls-on .mpv-osc { pointer-events: auto; }
 .mpv-track-notice { margin: 8px; color: var(--osc-muted); font-size: 12px; line-height: 1.5; }

@@ -727,6 +727,17 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       {osd && <div className="mpv-osd" role="status">{osd}</div>}
       {engine.recoveryStatus && !fatal && <div className="mpv-recovery-status" role="status">{engine.recoveryStatus}</div>}
 
+      {/* Engine chip: answers "what is playing this?" at the exact moment users
+          ask it — while connecting, buffering, or recovering. Hidden once
+          playback is smooth so it never becomes chrome clutter. */}
+      {!fatal && (!playing || waiting || engine.recoveryStatus) && (
+        <div className="mpv-engine-chip" role="status">
+          <Activity size={11} />
+          <span>{engine.engineLabel}</span>
+          {waiting && <em>buffering</em>}
+        </div>
+      )}
+
       {statsOpen && stats && (
         <div className="mpv-stats">
           <h4><Activity size={13} /> Statistics</h4>

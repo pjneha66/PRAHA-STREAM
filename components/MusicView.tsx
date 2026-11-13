@@ -4,6 +4,7 @@ import {
   Mic2, Music, Music2, Pause, Play, Repeat, RotateCcw, RotateCw,
   Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, VolumeX, X,
 } from 'lucide-react';
+import SkeletonGrid from './SkeletonGrid';
 import {
   OctaveMusicService, FALLBACK_FEATURED_SECTIONS, type MusicAlbum, type MusicArtist,
   type MusicTrack, type OctaveSearchData,
@@ -297,18 +298,23 @@ const MusicView: React.FC = () => {
 
       {/* Error State */}
       {error && (
-        <div style={{ background: 'rgba(229,9,20,0.1)', border: '1px solid rgba(229,9,20,0.3)', padding: '1rem', borderRadius: '10px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ background: 'rgba(229,9,20,0.1)', border: '1px solid rgba(229,9,20,0.3)', padding: '1rem', borderRadius: '10px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <CircleAlert size={20} color="#e50914" />
-          <span>{error}</span>
+          <span style={{ flex: 1, minWidth: '200px' }}>{error}</span>
+          {query.trim() && (
+            <button
+              onClick={() => performSearch(query.trim())}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', border: '1px solid rgba(229,9,20,0.4)', background: 'rgba(229,9,20,0.15)', color: '#fff', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
 
       {/* Search Results Display */}
       {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '5rem 0', gap: '1rem' }}>
-          <LoaderCircle size={36} className="spin" color="var(--accent, #f5c518)" />
-          <p style={{ color: '#aaa' }}>Searching music database…</p>
-        </div>
+        <SkeletonGrid count={12} label="Searching music database…" />
       ) : searchResults ? (
         <div>
           {/* Tracks Section */}

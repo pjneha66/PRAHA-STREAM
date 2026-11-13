@@ -13,6 +13,7 @@ import {
   LiveMatchesScraper, type LiveMatchEvent,
 } from '../services/iptvService';
 import { nativeFetchText, openSafeExternalUrl } from '../services/androidBridge';
+import SkeletonGrid from './SkeletonGrid';
 
 interface LiveTvViewProps {
   onPlayStream: (media: MediaItem, stream: StreamResult) => void;
@@ -847,10 +848,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
           </div>
 
           {playlistLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0' }}>
-              <LoaderCircle size={36} color="#ef4444" className="animate-spin" />
-              <p style={{ marginTop: '16px', color: '#8b949e', fontSize: '14px' }}>Loading {activePreset} playlist channels...</p>
-            </div>
+            <SkeletonGrid count={12} variant="row" minColumnWidth={260} label={`Loading ${activePreset} playlist channels…`} />
           ) : filteredPlaylistChannels.length === 0 ? (
             <div style={{ padding: '60px 20px', textAlign: 'center', background: '#161b22', borderRadius: '12px', border: '1px solid #30363d' }}>
               <CircleAlert size={36} color="#8b949e" style={{ margin: '0 auto 12px' }} />

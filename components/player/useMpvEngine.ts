@@ -126,6 +126,9 @@ export function useMpvEngine({
   const initialSeekDoneRef = useRef(false);
   const lastProgressSentRef = useRef(0);
   const engineNameRef = useRef('HTML5');
+  // Mirrored as state so the player chrome can show the active engine chip
+  // (refs do not re-render).
+  const [engineLabel, setEngineLabel] = useState('HTML5');
 
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
@@ -176,10 +179,12 @@ export function useMpvEngine({
     frameTimesRef.current = [];
     initialSeekDoneRef.current = false;
     engineNameRef.current = 'HTML5';
+    setEngineLabel('HTML5');
     const shouldAutoplay = autoplay || resumeRef.current !== null;
 
     if (!forceWebEngine && !escalateToWeb && isNativeVlcAvailable()) {
       engineNameRef.current = 'LibVLC (Hardware)';
+      setEngineLabel('LibVLC');
       video.style.opacity = '0';
       const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
       nativeVlcPlay(url, streamHeaders || {}, resumeMs);
@@ -202,6 +207,7 @@ export function useMpvEngine({
           if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
             proxyFallbackTried = true;
             rearmGuard();
+            setRecoveryStatus('Reconnecting via direct stream…');
             nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
             return;
           }
@@ -209,6 +215,7 @@ export function useMpvEngine({
             proxyFallbackTried = true;
             // Retry the same URL once — a dead first connection is common for IPTV.
             rearmGuard();
+            setRecoveryStatus('Reconnecting stream…');
             nativeVlcPlay(url, streamHeaders || {}, 0);
             return;
           }
@@ -219,6 +226,7 @@ export function useMpvEngine({
           vlcEscalationRef.current = { url, count: 1 };
           rearmGuard();
           resumeRef.current = lastVlcTimeSec;
+          setRecoveryStatus('Switching to the web engine…');
           setEscalateToWeb(true);
           setReloadKey((key) => key + 1);
           return;
@@ -228,9 +236,11 @@ export function useMpvEngine({
         onFatalError('This stream did not start. Try another source or an external player.');
       }, 2000);
 
+      let recoveryCleared = false;
       const onVlcTime = (e: any) => {
         if (disposed) return;
         sawVlcOutput = true;
+        if (!recoveryCleared) { recoveryCleared = true; setRecoveryStatus(''); }
         const detail = e.detail || {};
         const cur = (detail.time || 0) / 1000;
         const dur = (detail.duration || 0) / 1000;
@@ -322,6 +332,7 @@ export function useMpvEngine({
           vlcEscalationRef.current = { url, count: 1 };
           rearmGuard();
           resumeRef.current = lastVlcTimeSec;
+          setRecoveryStatus('Switching to the web engine…');
           setEscalateToWeb(true);
           setReloadKey((key) => key + 1);
           return;
@@ -353,6 +364,7 @@ export function useMpvEngine({
       };
     } else if (isHlsUrl(url) && Hls.isSupported()) {
       engineNameRef.current = 'hls.js';
+      setEngineLabel('hls.js');
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 60 });
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -408,6 +420,7 @@ export function useMpvEngine({
       hls.attachMedia(video);
     } else if (isDashUrl(url)) {
       engineNameRef.current = 'dash.js';
+      setEngineLabel('dash.js');
       import('dashjs').then((dashModule) => {
         if (disposed) return;
         const dash = dashModule.MediaPlayer().create();
@@ -454,6 +467,7 @@ export function useMpvEngine({
       });
     } else if (isMpegTsUrl(url)) {
       engineNameRef.current = 'mpegts.js';
+      setEngineLabel('mpegts.js');
       import('mpegts.js').then((mpegtsModule) => {
         if (disposed) return;
         const mpegts = mpegtsModule.default;
@@ -1208,6 +1222,7 @@ export function useMpvEngine({
     volume: currentVolume, muted, rate, levels, currentLevel,
     audioTracks, currentAudio, textTracks, currentText, stats, loop, canCast,
     play, pause, toggle, seekTo, seekBy, seekToPercent, stepFrame,
+    engineLabel,
     setVolume, toggleMute, setSpeed, setLevel,
     selectAudio, cycleAudio, selectText, cycleText,
     toggleFullscreen, togglePip, promptCast, saveFrame, toggleLoop, retry, recoveryAttempts, recoveryStatus,
