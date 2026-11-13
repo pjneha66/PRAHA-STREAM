@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Check, CircleAlert, Globe, ListFilter, LoaderCircle,
+  Activity, Check, CircleAlert, Copy, ExternalLink, Globe, ListFilter, LoaderCircle,
   Play, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles,
   Tv, Tv2, Users, Volume2, X,
 } from 'lucide-react';
@@ -8,16 +8,17 @@ import type { MediaItem, StreamResult } from '../types';
 import {
   HardcodedChannels, type HardcodedChannel,
   IptvClient, type IptvCategory, type IptvPortal, type IptvStream, type VerifiedPortal,
-  IptvScraper, IptvStore, M3uParser, type M3uChannel, type M3uPlaylist,
+  IptvScraper, IptvSourceStore, IptvSources, type IptvSourceEntry, IptvStore,
+  M3uParser, type M3uChannel, type M3uPlaylist,
   LiveMatchesScraper, type LiveMatchEvent,
 } from '../services/iptvService';
-import { nativeFetchText } from '../services/androidBridge';
+import { nativeFetchText, openSafeExternalUrl } from '../services/androidBridge';
 
 interface LiveTvViewProps {
   onPlayStream: (media: MediaItem, stream: StreamResult) => void;
 }
 
-type LiveTvTab = 'channels' | 'matches' | 'playlists' | 'portals';
+type LiveTvTab = 'channels' | 'sources' | 'matches' | 'playlists' | 'portals';
 
 const CATEGORY_FILTERS = [
   'All',
@@ -97,6 +98,74 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [selectedPortalCategory, setSelectedPortalCategory] = useState<string>('');
   const [portalStreams, setPortalStreams] = useState<IptvStream[]>([]);
   const [portalStreamsLoading, setPortalStreamsLoading] = useState(false);
+
+  // ── Public Sources State ──
+  const [sourceBusy, setSourceBusy] = useState<string | null>(null);
+  const [sourceStatus, setSourceStatus] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const [activeSourceName, setActiveSourceName] = useState('');
+  const [iptvOrgCountries, setIptvOrgCountries] = useState<Array<{ code: string; name: string }>>(IptvSources.IPTV_ORG_COUNTRIES_FALLBACK);
+  const [iptvOrgCountry, setIptvOrgCountry] = useState<string>(() => IptvSourceStore.loadIptvOrgCountry());
+  const [stepDaddyUrl, setStepDaddyUrl] = useState<string>(() => IptvSourceStore.loadStepDaddyUrl());
+  const countriesFetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (countriesFetchedRef.current) return;
+    countriesFetchedRef.current = true;
+    IptvSources.listIptvOrgCountries().then((list) => setIptvOrgCountries(list)).catch(() => undefined);
+  }, []);
+
+  const applySourceChannels = (sourceName: string, channels: M3uChannel[]) => {
+    setPlaylistChannels(channels);
+    setActiveSourceName(sourceName);
+    setActiveTab('channels');
+  };
+
+  const loadSourceUrl = async (source: IptvSourceEntry, url: string) => {
+    if (sourceBusy || !url) return;
+    setSourceBusy(source.id);
+    setSourceError('');
+    setSourceStatus(`Loading ${source.name}…`);
+    try {
+      const channels = await IptvSources.loadPlaylist(url);
+      setSourceStatus(`${channels.length.toLocaleString()} channels loaded from ${source.name}.`);
+      applySourceChannels(source.name, channels);
+    } catch (err) {
+      setSourceStatus('');
+      setSourceError(err instanceof Error ? err.message : `Could not load ${source.name}.`);
+    } finally {
+      setSourceBusy(null);
+    }
+  };
+
+  const loadIptvOrg = async (kind: 'country' | 'category' | 'all', value?: string) => {
+    if (sourceBusy) return;
+    const url = kind === 'country'
+      ? IptvSources.iptvOrgCountryUrl(value || iptvOrgCountry)
+      : kind === 'category'
+        ? IptvSources.iptvOrgCategoryUrl(value || 'sports')
+        : IptvSources.iptvOrgIndexUrl();
+    if (kind === 'country' && value) {
+      setIptvOrgCountry(value);
+      IptvSourceStore.saveIptvOrgCountry(value);
+    }
+    const label = kind === 'country'
+      ? `iptv-org · ${iptvOrgCountries.find((c) => c.code === (value || iptvOrgCountry))?.name || value || iptvOrgCountry}`
+      : kind === 'category'
+        ? `iptv-org · ${value || 'sports'}`
+        : 'iptv-org · All channels';
+    await loadSourceUrl({ id: 'iptv-org', name: label, description: '', kind: 'playlist' }, url);
+  };
+
+  const connectStepDaddy = async () => {
+    const url = IptvSources.stepDaddyPlaylistUrl(stepDaddyUrl);
+    if (!url) {
+      setSourceError('Enter your StepDaddyLiveHD server URL (e.g. http://192.168.1.10:3000).');
+      return;
+    }
+    IptvSourceStore.saveStepDaddyUrl(stepDaddyUrl);
+    await loadSourceUrl({ id: 'stepdaddy', name: 'StepDaddyLiveHD', description: '', kind: 'playlist' }, url);
+  };
 
   // ── Load Initial Data ──
   useEffect(() => {
@@ -432,7 +501,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
         {/* ── Sub-tabs ── */}
         <div style={{ display: 'flex', background: '#161b22', borderRadius: '10px', padding: '4px', border: '1px solid #30363d' }}>
-          {(['channels', 'matches', 'playlists', 'portals'] as LiveTvTab[]).map((tab) => (
+          {(['channels', 'sources', 'matches', 'playlists', 'portals'] as LiveTvTab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -449,7 +518,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 textTransform: 'capitalize',
               }}
             >
-              {tab === 'channels' ? 'Channels Hub' : tab === 'matches' ? 'Live Matches' : tab === 'playlists' ? 'M3U Playlists' : 'Xtream Portals'}
+              {tab === 'channels' ? 'Channels Hub' : tab === 'sources' ? 'Sources' : tab === 'matches' ? 'Live Matches' : tab === 'playlists' ? 'M3U Playlists' : 'Xtream Portals'}
             </button>
           ))}
         </div>
@@ -940,6 +1009,185 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          TAB 2: PUBLIC SOURCES (iptv-org + StepDaddyLiveHD are the mains)
+          ════════════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'sources' && (
+        <div>
+          <p style={{ color: '#8b949e', fontSize: '13px', margin: '0 0 14px' }}>
+            Pick any source you need. The two main sources lead the list; community sources, XMLTV EPG guides and
+            Xtream portal scraping all stay available.
+          </p>
+
+          {sourceStatus && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(74, 222, 128, 0.1)', border: '1px solid rgba(74, 222, 128, 0.3)', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', color: '#4ade80', fontSize: '13px' }}>
+              <Check size={15} /> {sourceStatus}
+            </div>
+          )}
+          {sourceError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(248, 113, 113, 0.1)', border: '1px solid rgba(248, 113, 113, 0.3)', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', color: '#f87171', fontSize: '13px' }}>
+              <CircleAlert size={15} /> {sourceError}
+            </div>
+          )}
+
+          {/* ── MAIN: iptv-org ── */}
+          <div style={{ background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.03))', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Globe size={18} color="#ef4444" />
+                <strong style={{ color: '#f0f6fc', fontSize: '15px' }}>iptv-org</strong>
+                <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.5px', color: '#ef4444', background: 'rgba(239, 68, 68, 0.15)', borderRadius: '4px', padding: '2px 6px' }}>MAIN</span>
+              </div>
+              <button
+                onClick={() => openSafeExternalUrl('https://iptv-org.github.io/')}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'transparent', border: 'none', color: '#8b949e', fontSize: '12px', cursor: 'pointer' }}
+              >
+                <ExternalLink size={12} /> iptv-org.github.io
+              </button>
+            </div>
+            <p style={{ color: '#8b949e', fontSize: '12.5px', margin: '0 0 12px' }}>{IptvSources.CATALOG.find((s) => s.id === 'iptv-org')?.description}</p>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '10px' }}>
+              <select
+                value={iptvOrgCountry}
+                onChange={(e) => { setIptvOrgCountry(e.target.value); IptvSourceStore.saveIptvOrgCountry(e.target.value); }}
+                style={{ padding: '8px 10px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', color: '#c9d1d9', fontSize: '13px', flex: 1, minWidth: '180px' }}
+                aria-label="iptv-org country"
+              >
+                {iptvOrgCountries.map((c) => (
+                  <option key={c.code} value={c.code}>{c.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => void loadIptvOrg('country')}
+                disabled={Boolean(sourceBusy)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#ef4444', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {sourceBusy === 'iptv-org' ? <LoaderCircle size={15} className="spin" /> : <Play size={14} fill="currentColor" />}
+                Load country
+              </button>
+              <button
+                onClick={() => void loadIptvOrg('all')}
+                disabled={Boolean(sourceBusy)}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#f0f6fc', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                All channels
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {IptvSources.IPTV_ORG_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => void loadIptvOrg('category', cat)}
+                  disabled={Boolean(sourceBusy)}
+                  style={{
+                    padding: '5px 12px', borderRadius: '999px', border: '1px solid #30363d',
+                    background: '#161b22', color: '#c9d1d9', fontSize: '12px', cursor: 'pointer', textTransform: 'capitalize',
+                  }}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── MAIN: StepDaddyLiveHD (self-hosted) ── */}
+          <div style={{ background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.03))', border: '1px solid rgba(239, 68, 68, 0.35)', borderRadius: '12px', padding: '16px', marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Radio size={18} color="#ef4444" />
+                <strong style={{ color: '#f0f6fc', fontSize: '15px' }}>StepDaddyLiveHD</strong>
+                <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.5px', color: '#ef4444', background: 'rgba(239, 68, 68, 0.15)', borderRadius: '4px', padding: '2px 6px' }}>MAIN</span>
+              </div>
+              <button
+                onClick={() => openSafeExternalUrl('https://github.com/gookie-dev/StepDaddyLiveHD')}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'transparent', border: 'none', color: '#8b949e', fontSize: '12px', cursor: 'pointer' }}
+              >
+                <ExternalLink size={12} /> Setup guide
+              </button>
+            </div>
+            <p style={{ color: '#8b949e', fontSize: '12.5px', margin: '0 0 12px' }}>{IptvSources.CATALOG.find((s) => s.id === 'stepdaddy')?.description}</p>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                value={stepDaddyUrl}
+                onChange={(e) => setStepDaddyUrl(e.target.value)}
+                placeholder="http://192.168.1.10:3000"
+                style={{ flex: 1, minWidth: '220px', padding: '8px 10px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', color: '#c9d1d9', fontSize: '13px' }}
+                aria-label="StepDaddyLiveHD server URL"
+              />
+              <button
+                onClick={() => void connectStepDaddy()}
+                disabled={Boolean(sourceBusy)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#ef4444', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {sourceBusy === 'stepdaddy' ? <LoaderCircle size={15} className="spin" /> : <Play size={14} fill="currentColor" />}
+                Connect
+              </button>
+            </div>
+          </div>
+
+          {/* ── Community sources ── */}
+          <h3 style={{ color: '#f0f6fc', fontSize: '14px', margin: '4px 0 10px' }}>Community sources</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+            {IptvSources.CATALOG.filter((s) => !s.main).map((source) => (
+              <div key={source.id} style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <strong style={{ color: '#f0f6fc', fontSize: '13.5px' }}>{source.name}</strong>
+                  {source.homepage && (
+                    <button
+                      onClick={() => openSafeExternalUrl(source.homepage!)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'transparent', border: 'none', color: '#8b949e', fontSize: '11.5px', cursor: 'pointer' }}
+                    >
+                      <ExternalLink size={11} /> link
+                    </button>
+                  )}
+                </div>
+                <p style={{ color: '#8b949e', fontSize: '12px', margin: 0, flex: 1 }}>{source.description}</p>
+                {source.kind === 'playlist' && source.url && (
+                  <button
+                    onClick={() => void loadSourceUrl(source, source.url!)}
+                    disabled={Boolean(sourceBusy)}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px 0', borderRadius: '8px', border: 'none', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {sourceBusy === source.id ? <LoaderCircle size={14} className="spin" /> : <Tv size={13} />}
+                    Load channels
+                  </button>
+                )}
+                {source.kind === 'web' && (
+                  <button
+                    onClick={() => openSafeExternalUrl(source.homepage || 'https://iptvcat.net/home_7')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px 0', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#f0f6fc', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    <ExternalLink size={13} /> Open website
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* ── EPG guides ── */}
+          <h3 style={{ color: '#f0f6fc', fontSize: '14px', margin: '0 0 10px' }}>EPG guides (XMLTV)</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
+            {IptvSources.EPG_GUIDES.map((guide) => (
+              <div key={guide.id} style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <strong style={{ color: '#f0f6fc', fontSize: '13px' }}>{guide.name}</strong>
+                <p style={{ color: '#8b949e', fontSize: '12px', margin: 0 }}>{guide.description}</p>
+                <button
+                  onClick={() => {
+                    if (guide.epgUrl) void navigator.clipboard.writeText(guide.epgUrl).then(() => setSourceStatus(`EPG URL copied: ${guide.epgUrl}`)).catch(() => undefined);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 0', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Copy size={12} /> Copy guide URL
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

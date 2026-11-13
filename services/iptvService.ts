@@ -1,5 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { nativeFetchText } from './androidBridge';
+import { evictOldest } from './cacheCaps';
 
 async function fetchWithTimeout(
   url: string,
@@ -1290,3 +1291,259 @@ export class IptvStore {
   }
 }
 
+
+// ── Public IPTV Sources (user-selectable catalog) ─────────────────────────────
+// The first two entries are the featured/main sources; every source below is
+// loadable through the Sources tab. Xtream portal scraping is untouched and
+// remains a separate mechanism.
+
+export interface IptvSourceEntry {
+  id: string;
+  name: string;
+  description: string;
+  kind: 'playlist' | 'epg' | 'selfhosted' | 'web';
+  main?: boolean;
+  /** Direct playlist URL for kind 'playlist'. */
+  url?: string;
+  /** XMLTV guide URL for kind 'epg' (reference; copyable in the UI). */
+  epgUrl?: string;
+  /** Suggested EPG guide that pairs with this playlist. */
+  suggestedEpg?: string;
+  homepage?: string;
+}
+
+export class IptvSources {
+  private static readonly PLAYLIST_CACHE = new Map<string, M3uChannel[]>();
+  private static readonly COUNTRIES_CACHE = new Map<string, Array<{ code: string; name: string }>>();
+
+  /** Categories exposed for iptv-org. The adult category is deliberately absent. */
+  static readonly IPTV_ORG_CATEGORIES = [
+    'animation', 'auto', 'business', 'classic', 'comedy', 'cooking', 'culture',
+    'documentary', 'education', 'entertainment', 'family', 'general', 'kids',
+    'legislative', 'lifestyle', 'movies', 'music', 'news', 'outdoor', 'relax',
+    'religious', 'science', 'series', 'shop', 'sports', 'travel', 'weather',
+  ];
+
+  static readonly CATALOG: IptvSourceEntry[] = [
+    {
+      id: 'iptv-org',
+      name: 'iptv-org',
+      description: 'The largest public IPTV collection — thousands of channels by country, language and category. Pick a country or category below.',
+      kind: 'playlist',
+      main: true,
+      homepage: 'https://iptv-org.github.io/',
+      suggestedEpg: 'iptv-epg:{cc}',
+    },
+    {
+      id: 'stepdaddy',
+      name: 'StepDaddyLiveHD',
+      description: 'Self-hosted IPTV proxy for DLHD — 1,000+ TV channels plus live sports events. Enter the URL of your own StepDaddyLiveHD server (Docker or local) and PRAHA loads its playlist.m3u8.',
+      kind: 'selfhosted',
+      main: true,
+      homepage: 'https://github.com/gookie-dev/StepDaddyLiveHD',
+    },
+    {
+      id: 'doms9-base',
+      name: 'doms9 IPTV — Base',
+      description: 'Health-checked TV channels & sporting events, auto-updated daily (~160 working streams).',
+      kind: 'playlist',
+      url: 'https://raw.githubusercontent.com/doms9/iptv/default/M3U8/base.m3u8',
+      homepage: 'https://github.com/doms9/iptv',
+    },
+    {
+      id: 'aria',
+      name: 'Aria (stable)',
+      description: 'Curated worldwide channels from official sources only; unstable streams excluded. Updated very often.',
+      kind: 'playlist',
+      url: 'https://raw.githubusercontent.com/aria-tv/aria/main/aria.m3u',
+      homepage: 'https://github.com/aria-tv/aria',
+    },
+    {
+      id: 'aria-plus',
+      name: 'Aria+ (extended)',
+      description: 'Everything in Aria plus less-stable Xtream/Stalker portal streams.',
+      kind: 'playlist',
+      url: 'https://raw.githubusercontent.com/aria-tv/aria/main/aria%2B.m3u',
+      homepage: 'https://github.com/aria-tv/aria',
+    },
+    {
+      id: 'ibert-fmml-index',
+      name: 'ibert — fanmingming index',
+      description: 'Auto-updated mirror of fanmingming/live (~94 channels, EPG-friendly tvg-ids).',
+      kind: 'playlist',
+      url: 'https://m3u.ibert.me/fmml_index.m3u',
+      suggestedEpg: 'https://m3u.ibert.me/epg/fmml.xml',
+      homepage: 'https://m3u.ibert.me/',
+    },
+    {
+      id: 'ibert-all',
+      name: 'ibert — epg.pw All',
+      description: 'epg.pw aggregate playlist (~747 channels) with matching EPG ids.',
+      kind: 'playlist',
+      url: 'https://m3u.ibert.me/all.m3u',
+      homepage: 'https://m3u.ibert.me/',
+    },
+    {
+      id: 'ibert-yg',
+      name: 'ibert — YanG-1989 Gather',
+      description: 'Community-maintained Asian & international mix (~123 channels).',
+      kind: 'playlist',
+      url: 'https://m3u.ibert.me/y_g.m3u',
+      homepage: 'https://m3u.ibert.me/',
+    },
+    {
+      id: 'ibert-ycl',
+      name: 'ibert — YueChan Live',
+      description: 'YueChan/Live mirror (~96 channels).',
+      kind: 'playlist',
+      url: 'https://m3u.ibert.me/ycl_iptv.m3u',
+      homepage: 'https://m3u.ibert.me/',
+    },
+    {
+      id: 'iptvcat',
+      name: 'IPTVCat',
+      description: 'Community playlist aggregator — browse iptvcat.net in your browser and paste any download URL into the M3U Playlists tab.',
+      kind: 'web',
+      homepage: 'https://iptvcat.net/home_7',
+    },
+  ];
+
+  /** XMLTV guides the user can copy into players or future EPG wiring. */
+  static readonly EPG_GUIDES: IptvSourceEntry[] = [
+    { id: 'epg-in', name: 'EPG — India', description: '276 channels · updated hourly', kind: 'epg', epgUrl: 'https://iptv-epg.org/files/epg-in.xml.gz' },
+    { id: 'epg-us', name: 'EPG — United States', description: '12,430 channels · updated hourly', kind: 'epg', epgUrl: 'https://iptv-epg.org/files/epg-us.xml.gz' },
+    { id: 'epg-gb', name: 'EPG — United Kingdom', description: '882 channels · updated hourly', kind: 'epg', epgUrl: 'https://iptv-epg.org/files/epg-gb.xml.gz' },
+    { id: 'epg-au', name: 'EPG — Australia (mjh.nz)', description: 'Free-to-air AU guide (XMLTV)', kind: 'epg', epgUrl: 'https://i.mjh.nz/au/epg.xml' },
+    { id: 'epg-nz', name: 'EPG — New Zealand (mjh.nz)', description: 'Free-to-air NZ guide (XMLTV)', kind: 'epg', epgUrl: 'https://i.mjh.nz/nz/epg.xml' },
+    { id: 'epg-pluto', name: 'EPG — Pluto TV (mjh.nz)', description: 'Pluto TV full guide (XMLTV, gzip)', kind: 'epg', epgUrl: 'https://i.mjh.nz/PlutoTV/all.xml.gz' },
+    { id: 'epg-samsung', name: 'EPG — Samsung TV Plus (mjh.nz)', description: 'Samsung TV Plus guide (XMLTV, gzip)', kind: 'epg', epgUrl: 'https://i.mjh.nz/SamsungTVPlus/all.xml.gz' },
+    { id: 'epg-fmml', name: 'EPG — fanmingming/live', description: 'Chinese + international guide (XMLTV)', kind: 'epg', epgUrl: 'https://m3u.ibert.me/epg/fmml.xml' },
+  ];
+
+  static readonly IPTV_ORG_COUNTRIES_FALLBACK: Array<{ code: string; name: string }> = [
+    { code: 'in', name: 'India' }, { code: 'us', name: 'United States' }, { code: 'gb', name: 'United Kingdom' },
+    { code: 'ca', name: 'Canada' }, { code: 'au', name: 'Australia' }, { code: 'de', name: 'Germany' },
+    { code: 'fr', name: 'France' }, { code: 'it', name: 'Italy' }, { code: 'es', name: 'Spain' },
+    { code: 'br', name: 'Brazil' }, { code: 'mx', name: 'Mexico' }, { code: 'jp', name: 'Japan' },
+    { code: 'kr', name: 'South Korea' }, { code: 'ae', name: 'United Arab Emirates' }, { code: 'pk', name: 'Pakistan' },
+    { code: 'id', name: 'Indonesia' }, { code: 'my', name: 'Malaysia' }, { code: 'sg', name: 'Singapore' },
+    { code: 'tr', name: 'Turkey' }, { code: 'ru', name: 'Russia' }, { code: 'za', name: 'South Africa' },
+    { code: 'ar', name: 'Argentina' }, { code: 'nl', name: 'Netherlands' }, { code: 'pt', name: 'Portugal' },
+    { code: 'th', name: 'Thailand' }, { code: 'ph', name: 'Philippines' },
+  ];
+
+  /**
+   * Country list for the iptv-org picker, from the official iptv-org API with
+   * a curated offline fallback so the picker always renders.
+   */
+  static async listIptvOrgCountries(): Promise<Array<{ code: string; name: string }>> {
+    const cached = this.COUNTRIES_CACHE.get('all');
+    if (cached) return cached;
+    try {
+      const res = await nativeFetchText('https://iptv-org.github.io/api/countries.json', { timeoutMs: 10000 });
+      if (res.ok && res.data.trim().startsWith('[')) {
+        const parsed = JSON.parse(res.data) as Array<{ code?: string; name?: string }>;
+        const list = parsed
+          .filter((c) => c.code && c.name)
+          .map((c) => ({ code: String(c.code).toLowerCase(), name: String(c.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        if (list.length) {
+          this.COUNTRIES_CACHE.set('all', list);
+          evictOldest(this.COUNTRIES_CACHE, 2);
+          return list;
+        }
+      }
+    } catch {
+      // Fall back to the offline list.
+    }
+    return this.IPTV_ORG_COUNTRIES_FALLBACK;
+  }
+
+  static iptvOrgCountryUrl(code: string): string {
+    return `https://iptv-org.github.io/iptv/countries/${encodeURIComponent(code.toLowerCase())}.m3u`;
+  }
+
+  static iptvOrgCategoryUrl(category: string): string {
+    return `https://iptv-org.github.io/iptv/categories/${encodeURIComponent(category.toLowerCase())}.m3u`;
+  }
+
+  static iptvOrgIndexUrl(): string {
+    return 'https://iptv-org.github.io/iptv/index.m3u';
+  }
+
+  /** Normalizes a self-hosted StepDaddyLiveHD server URL into its playlist URL. */
+  static stepDaddyPlaylistUrl(serverBase: string): string {
+    const base = serverBase.trim().replace(/\/+$/, '');
+    if (!base) return '';
+    if (/playlist\.m3u8?$/i.test(base)) return base;
+    return `${base}/playlist.m3u8`;
+  }
+
+  /** Community sources are family-facing: strip obvious adult channels. */
+  private static isAdultChannel(channel: M3uChannel): boolean {
+    const haystack = `${channel.group || ''} ${channel.name}`.toLowerCase();
+    return /(xxx|porn|adult|\b18\+\b|erotic|sex)/.test(haystack);
+  }
+
+  /**
+   * Loads and parses a public playlist through the native CORS-bypass client.
+   * Results are cached per URL (bounded) so re-selecting a source is instant.
+   */
+  static async loadPlaylist(url: string, timeoutMs = 20000): Promise<M3uChannel[]> {
+    const cached = this.PLAYLIST_CACHE.get(url);
+    if (cached) return cached;
+    const res = await nativeFetchText(url, { timeoutMs });
+    if (!res.ok && !res.data) throw new Error(`HTTP ${res.status || 'error'} while loading the playlist.`);
+    const text = res.data || '';
+    if (text.trimStart().startsWith('<')) {
+      throw new Error('That playlist URL returned an HTML page instead of an M3U playlist.');
+    }
+    const channels = M3uParser.parse(text).filter((ch) => !this.isAdultChannel(ch) && Boolean(ch.url));
+    if (!channels.length) throw new Error('The playlist loaded but contained no playable channels.');
+    this.PLAYLIST_CACHE.set(url, channels);
+    evictOldest(this.PLAYLIST_CACHE, 12);
+    return channels;
+  }
+}
+
+export class IptvSourceStore {
+  private static readonly SOURCE_KEY = 'praha.iptv.sources';
+
+  static loadStepDaddyUrl(): string {
+    try {
+      const raw = localStorage.getItem(this.SOURCE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as { stepDaddyUrl?: string; iptvOrgCountry?: string }) : {};
+      return parsed.stepDaddyUrl || '';
+    } catch {
+      return '';
+    }
+  }
+
+  static saveStepDaddyUrl(url: string): void {
+    this.patch({ stepDaddyUrl: url });
+  }
+
+  static loadIptvOrgCountry(): string {
+    try {
+      const raw = localStorage.getItem(this.SOURCE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as { iptvOrgCountry?: string }) : {};
+      return parsed.iptvOrgCountry || 'in';
+    } catch {
+      return 'in';
+    }
+  }
+
+  static saveIptvOrgCountry(code: string): void {
+    this.patch({ iptvOrgCountry: code });
+  }
+
+  private static patch(data: Record<string, unknown>): void {
+    try {
+      const raw = localStorage.getItem(this.SOURCE_KEY);
+      const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      localStorage.setItem(this.SOURCE_KEY, JSON.stringify({ ...current, ...data }));
+    } catch {
+      // quota or storage unavailable
+    }
+  }
+}
