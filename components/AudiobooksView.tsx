@@ -14,6 +14,12 @@ const TRENDING_SUGGESTIONS = [
   'Project Hail Mary', 'Sherlock Holmes', 'Game of Thrones', '1984',
 ];
 
+// One-tap browses of the archive.org audio_bookspoetry collection.
+const ARCHIVE_BROWSE_TERMS = [
+  'Poetry', 'Shakespeare', 'Edgar Allan Poe', 'Emily Dickinson', 'Rumi',
+  'Walt Whitman', 'Jane Austen', 'Mark Twain',
+];
+
 const AudiobooksView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -158,10 +164,11 @@ const AudiobooksView: React.FC = () => {
       <header style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
           <BookHeadphones size={28} color="#e50914" />
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: 0 }}>9 Audiobook Sources</h1>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: 0 }}>10 Audiobook Sources</h1>
         </div>
         <p style={{ color: 'var(--text-secondary, #999)', margin: '0 0 1.25rem 0' }}>
-          Listen to unabridged audiobooks across AudiobookBay, BookAudio, Golden, FullLength, Hot, Audiozaic, AudioAZ, Audiobooks4Soul, and Audionest.
+          Listen to unabridged audiobooks across AudiobookBay, BookAudio, Golden, FullLength, Hot, Audiozaic, AudioAZ,
+          Audiobooks4Soul, Audionest, and the Internet Archive poetry &amp; literature collection (75,000+ free readings).
         </p>
 
         {/* Search Bar */}
@@ -198,7 +205,7 @@ const AudiobooksView: React.FC = () => {
         </div>
 
         {/* Quick Suggestion Pills */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.6rem' }}>
           {TRENDING_SUGGESTIONS.map((tag) => (
             <button
               key={tag}
@@ -214,6 +221,28 @@ const AudiobooksView: React.FC = () => {
               }}
             >
               {tag}
+            </button>
+          ))}
+        </div>
+
+        {/* Internet Archive · audio_bookspoetry one-tap browse */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.78rem', color: '#a497c4', fontWeight: 700, letterSpacing: '0.4px' }}>ARCHIVE · POETRY &amp; LIT:</span>
+          {ARCHIVE_BROWSE_TERMS.map((term) => (
+            <button
+              key={term}
+              onClick={() => { setQuery(term); performSearch(term); }}
+              style={{
+                background: 'rgba(214, 247, 122, 0.1)',
+                border: '1px solid rgba(214, 247, 122, 0.35)',
+                color: '#d6f77a',
+                padding: '0.35rem 0.75rem',
+                borderRadius: '20px',
+                fontSize: '0.82rem',
+                cursor: 'pointer',
+              }}
+            >
+              {term}
             </button>
           ))}
         </div>

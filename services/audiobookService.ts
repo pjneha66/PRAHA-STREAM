@@ -318,6 +318,64 @@ async function searchAudionest(query: string): Promise<AudiobookItem[]> {
   }
 }
 
+/**
+ * Internet Archive — the `audio_bookspoetry` community collection (75k+ free
+ * public-domain audiobook readings: LibriVox poetry, literature, essays).
+ * Chapters resolve lazily from the item's metadata API.
+ */
+async function searchArchiveAudiobooks(query: string): Promise<AudiobookItem[]> {
+  const trimmed = query.trim();
+  try {
+    const titleFilter = trimmed ? ` AND title:(${trimmed})` : '';
+    const q = `(collection:audio_bookspoetry) AND mediatype:audio${titleFilter}`;
+    const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}` +
+      `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&rows=20&output=json`;
+    const res = await nativeFetchText(url, { timeoutMs: 15000 });
+    if (!res.ok || !res.data.trim().startsWith('{')) return [];
+    const data = JSON.parse(res.data) as { response?: { docs?: Array<Record<string, unknown>> } };
+    const docs = data.response?.docs || [];
+    return docs
+      .filter((doc) => typeof doc.identifier === 'string')
+      .map((doc) => {
+        const identifier = String(doc.identifier);
+        const creator = Array.isArray(doc.creator) ? String(doc.creator[0]) : doc.creator ? String(doc.creator) : undefined;
+        return {
+          id: `archive:${identifier}`,
+          title: String(doc.title || identifier).slice(0, 140),
+          author: creator,
+          coverImage: `https://archive.org/services/img/${identifier}`,
+          source: 'archive',
+          sourceName: 'Internet Archive · Poetry & Lit',
+          pageUrl: `https://archive.org/details/${identifier}`,
+        } satisfies AudiobookItem;
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** Resolves the mp3 chapter list for an archive.org audio item. */
+async function getArchiveAudiobookChapters(book: AudiobookItem): Promise<AudiobookChapter[]> {
+  const identifier = book.id.startsWith('archive:') ? book.id.slice('archive:'.length) : book.pageUrl.split('/details/')[1] || '';
+  if (!identifier) return [];
+  const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
+  if (!res.ok || !res.data.trim().startsWith('{')) return [];
+  const data = JSON.parse(res.data) as { files?: Array<{ name?: string; format?: string; length?: string; title?: string }> };
+  return (data.files || [])
+    .filter((file) => file.name && /\.(mp3|m4a|ogg|flac)$/i.test(file.name))
+    .slice(0, 200)
+    .map((file, idx) => {
+      const seconds = file.length ? Number(file.length) || undefined : undefined;
+      const name = String(file.name).split('/').pop() || String(file.name);
+      return {
+        id: `archive-ch-${idx}`,
+        title: file.title || name.replace(/\.(mp3|m4a|ogg|flac)$/i, '').replace(/[_-]+/g, ' ').trim() || `Track ${idx + 1}`,
+        url: `https://archive.org/download/${encodeURIComponent(identifier)}/${encodeURIComponent(String(file.name))}`,
+        duration: seconds,
+      };
+    });
+}
+
 // ── Aggregator & Chapter Fetchers ───────────────────────────────────────────
 
 export async function searchAllAudiobooks(query: string): Promise<AudiobookItem[]> {
@@ -334,6 +392,7 @@ export async function searchAllAudiobooks(query: string): Promise<AudiobookItem[
     searchAudioAZ(trimmed),
     searchAudiobooks4Soul(trimmed),
     searchAudionest(trimmed),
+    searchArchiveAudiobooks(trimmed),
   ];
 
   const results = await Promise.allSettled(scrapers);
@@ -428,6 +487,10 @@ export async function getAudiobookChapters(book: AudiobookItem): Promise<Audiobo
   try {
     if (book.chapters && book.chapters.length > 0) {
       return book.chapters;
+    }
+
+    if (book.source === 'archive') {
+      return await getArchiveAudiobookChapters(book);
     }
 
     if (book.source === 'audiobookbay') {

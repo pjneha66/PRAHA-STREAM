@@ -197,19 +197,34 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
         </button>
       </form>
 
-      {/* Anna's Archive reference card */}
-      <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '12px 14px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <BookOpen size={16} color="#8b949e" />
-        <span style={{ color: '#8b949e', fontSize: '12.5px', flex: 1, minWidth: 220 }}>
-          Looking for Anna's Archive? It is a shadow-library aggregator, so PRAHA does not integrate its search or downloads.
-          The Internet Archive sources above cover folkscanomy and millions of public texts.
-        </span>
-        <button
-          onClick={() => openSafeExternalUrl('https://annas-archive.org')}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-        >
-          <ExternalLink size={12} /> Open site
-        </button>
+      {/* External aggregator reference cards (not integrated — site links only) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <BookOpen size={16} color="#8b949e" />
+          <span style={{ color: '#8b949e', fontSize: '12.5px', flex: 1, minWidth: 180 }}>
+            <strong style={{ color: '#c9d1d9' }}>Anna's Archive</strong> is a shadow-library aggregator, so PRAHA does not
+            integrate its search or downloads. The Internet Archive sources above cover folkscanomy and millions of public texts.
+          </span>
+          <button
+            onClick={() => openSafeExternalUrl('https://annas-archive.org')}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+          >
+            <ExternalLink size={12} /> Open site
+          </button>
+        </div>
+        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <BookOpen size={16} color="#8b949e" />
+          <span style={{ color: '#8b949e', fontSize: '12.5px', flex: 1, minWidth: 180 }}>
+            <strong style={{ color: '#c9d1d9' }}>OceanofPDF</strong> distributes copyrighted ebooks without authorization,
+            so it is linked as an external site only — not scraped or downloaded through PRAHA.
+          </span>
+          <button
+            onClick={() => openSafeExternalUrl('https://theoceanofpdf.com/')}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+          >
+            <ExternalLink size={12} /> Open site
+          </button>
+        </div>
       </div>
 
       {error && (
