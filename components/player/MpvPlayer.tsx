@@ -824,6 +824,15 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           <span className="playtorrio-time-label right">
             {duration > 0 ? `-${formatTime(Math.max(0, duration - currentTime))}` : formatTime(0)}
           </span>
+          {duration > 0 && duration - currentTime > 30 && (
+            <button
+              className="mpv-live-pill"
+              onClick={() => { engine.seekTo(duration); setOsd('Jumped to live edge'); }}
+              title="Jump to live edge"
+            >
+              ● LIVE
+            </button>
+          )}
         </div>
 
         <div className="playtorrio-controls-row">

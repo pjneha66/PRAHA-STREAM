@@ -11,6 +11,7 @@ import {
   IptvScraper, IptvSourceStore, IptvSources, type IptvSourceEntry, IptvStore,
   M3uParser, type M3uChannel, type M3uPlaylist,
   LiveMatchesScraper, type LiveMatchEvent,
+  IptvZapStore, buildIptvPlayback,
 } from '../services/iptvService';
 import { nativeFetchText, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
@@ -419,26 +420,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
   // ── Player Bridge ──
   const playStreamNow = (title: string, streamUrl: string, groupOrSource: string, poster?: string) => {
-    const media: MediaItem = {
-      id: `livetv-${Date.now()}`,
-      title,
-      type: 'movie',
-      source: 'iptv',
-      poster: poster || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?auto=format&fit=crop&w=600&q=80',
-      overview: `Live TV Stream · Broadcast via ${groupOrSource}`,
-      genres: ['Live TV', groupOrSource],
-    };
-
-    const stream: StreamResult = {
-      id: `livetv-stream-${Date.now()}`,
-      title,
-      url: streamUrl,
-      sourceName: groupOrSource || 'Live TV',
-      sourceType: 'iptv',
-      quality: '1080p',
-      format: streamUrl.includes('.m3u8') ? 'hls' : 'direct',
-    };
-
+    // Persist the zap list so the in-player ▲▼ bar can switch channels.
+    IptvZapStore.set(
+      playlistChannels.map((ch) => ({ name: ch.name, url: ch.url, group: ch.group, logo: ch.logo })),
+      streamUrl,
+    );
+    const { media, stream } = buildIptvPlayback({ name: title, url: streamUrl, group: groupOrSource, logo: poster });
     onPlayStream(media, stream);
   };
 

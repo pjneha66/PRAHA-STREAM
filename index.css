@@ -2956,3 +2956,44 @@ html.player-vlc-active .app-shell,
     scroll-behavior: auto !important;
   }
 }
+
+/* Discover — cross-tab universal search results */
+.discover-crosstab { margin-top: 34px; display: grid; gap: 14px; }
+.discover-crosstab-title { margin: 0 0 2px; font-size: 15px; font-weight: 700; color: var(--text); }
+.discover-crosstab-card { border: 1px solid var(--line); border-radius: 14px; background: var(--surface, #161b22); padding: 14px 16px; }
+.discover-crosstab-card header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text); }
+.discover-crosstab-card header strong { font-size: 13.5px; }
+.discover-crosstab-count { color: var(--muted); font-size: 12px; flex: 1; }
+.discover-crosstab-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.discover-crosstab-card li { display: flex; align-items: center; gap: 10px; }
+.discover-crosstab-card li img, .discover-crosstab-thumb-fallback { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; background: #0d1117; flex-shrink: 0; }
+.discover-crosstab-thumb-fallback { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.discover-crosstab-card li strong { display: block; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discover-crosstab-card li small { display: block; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.discover-crosstab-card li > div { min-width: 0; flex: 1; }
+@media (min-width: 900px) { .discover-crosstab { grid-template-columns: 1fr 1fr; align-items: start; } }
+
+/* Continue shelf — shared by Books / Comics / Audiobooks */
+.continue-shelf { margin: 4px 0 22px; }
+.continue-shelf-title { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; font-size: 13.5px; font-weight: 700; color: var(--text, #f0f6fc); }
+.continue-shelf-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 280px); gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+.continue-card { position: relative; display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid var(--line, #30363d); border-radius: 12px; background: var(--surface, #161b22); cursor: pointer; }
+.continue-card:hover { border-color: rgba(var(--accent-rgb, 88, 166, 255), .4); }
+.continue-card img, .continue-card-fallback { width: 52px; height: 52px; border-radius: 9px; object-fit: cover; background: #0d1117; flex-shrink: 0; }
+.continue-card-fallback { display: inline-flex; align-items: center; justify-content: center; color: var(--muted, #8b949e); }
+.continue-card-body { min-width: 0; flex: 1; }
+.continue-card-domain { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #8b949e); }
+.continue-card-body strong { display: block; font-size: 13px; color: var(--text, #f0f6fc); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continue-card-detail { display: block; font-size: 11.5px; color: var(--muted, #8b949e); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continue-card-resume { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11px; font-weight: 600; color: #58a6ff; }
+.continue-card-dismiss { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; border-radius: 6px; background: transparent; color: var(--muted, #8b949e); cursor: pointer; }
+.continue-card-dismiss:hover { background: rgba(255,255,255,.08); color: #f0f6fc; }
+
+/* Comic reader page scrubber + in-progress badges */
+.sanka-page-anchor { display: block; }
+.sanka-page-scrubber { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(8,9,11,.8); }
+.sanka-page-scrubber button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(255,255,255,.07); color: #fff; cursor: pointer; }
+.sanka-page-scrubber button:disabled { opacity: .4; cursor: default; }
+.sanka-scrubber-label { font-size: 12px; font-weight: 600; color: #fff; min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
+.sanka-card-reading .sanka-poster::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #3fb950; }
+.sanka-reading-hint { display: inline-flex; margin-top: 5px; font-size: 10.5px; font-weight: 600; color: #3fb950; }

@@ -1,6 +1,7 @@
 import CryptoJS from 'crypto-js';
 import { nativeFetchText } from './androidBridge';
 import { evictOldest } from './cacheCaps';
+import type { MediaItem, StreamResult } from '../types';
 
 async function fetchWithTimeout(
   url: string,
@@ -1568,4 +1569,98 @@ export class IptvSourceStore {
       // quota or storage unavailable
     }
   }
+}
+
+/**
+ * IPTV zap state: the channel list of the last loaded source plus the
+ * currently playing channel URL, persisted so the in-player zap bar can
+ * switch channels without leaving playback.
+ */
+export interface IptvZapChannel {
+  name: string;
+  url: string;
+  group?: string;
+  logo?: string;
+}
+
+const ZAP_KEY = 'praha.iptv.zap.v1';
+const ZAP_MAX_CHANNELS = 400;
+
+export class IptvZapStore {
+  static set(channels: IptvZapChannel[], currentUrl: string): void {
+    try {
+      const seen = new Set<string>();
+      const list: IptvZapChannel[] = [];
+      const push = (ch: IptvZapChannel) => {
+        if (!ch?.url || seen.has(ch.url)) return;
+        seen.add(ch.url);
+        list.push(ch);
+      };
+      // The playing channel first, then the rest of the list.
+      const current = channels.find((ch) => ch.url === currentUrl);
+      if (current) push(current);
+      channels.forEach(push);
+      localStorage.setItem(ZAP_KEY, JSON.stringify({ channels: list.slice(0, ZAP_MAX_CHANNELS), currentUrl }));
+    } catch {
+      // Quota or storage unavailable — zapping is best-effort.
+    }
+  }
+
+  static setCurrent(url: string): void {
+    try {
+      const raw = localStorage.getItem(ZAP_KEY);
+      const parsed = raw ? (JSON.parse(raw) as { channels?: IptvZapChannel[]; currentUrl?: string }) : {};
+      localStorage.setItem(ZAP_KEY, JSON.stringify({ channels: parsed.channels || [], currentUrl: url }));
+    } catch {
+      // Ignore
+    }
+  }
+
+  static get(): { channels: IptvZapChannel[]; currentUrl: string } | null {
+    try {
+      const raw = localStorage.getItem(ZAP_KEY);
+      const parsed = raw ? (JSON.parse(raw) as { channels?: IptvZapChannel[]; currentUrl?: string }) : {};
+      if (!parsed.channels?.length) return null;
+      return { channels: parsed.channels, currentUrl: parsed.currentUrl || '' };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Next/previous channel relative to the current one (wraps around). */
+  static neighbor(direction: 1 | -1): IptvZapChannel | null {
+    const zap = this.get();
+    if (!zap) return null;
+    const idx = zap.channels.findIndex((ch) => ch.url === zap.currentUrl);
+    const nextIdx = idx < 0
+      ? 0
+      : (idx + direction + zap.channels.length) % zap.channels.length;
+    const channel = zap.channels[nextIdx];
+    if (!channel) return null;
+    this.setCurrent(channel.url);
+    return channel;
+  }
+}
+
+/** Shared media/stream builder for IPTV playback (hub tap + zap bar). */
+export function buildIptvPlayback(ch: IptvZapChannel): { media: MediaItem; stream: StreamResult } {
+  const media: MediaItem = {
+    id: `livetv-${Date.now()}`,
+    title: ch.name,
+    type: 'movie',
+    source: 'iptv',
+    poster: ch.logo || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?auto=format&fit=crop&w=600&q=80',
+    overview: `Live TV Stream · Broadcast via ${ch.group || 'Live TV'}`,
+    genres: ['Live TV', ch.group || 'Live TV'],
+  };
+  const stream: StreamResult = {
+    id: `livetv-stream-${Date.now()}`,
+    title: ch.name,
+    url: ch.url,
+    sourceName: ch.group || 'Live TV',
+    sourceType: 'iptv',
+    quality: '1080p',
+    format: ch.url.includes('.m3u8') ? 'hls' : 'direct',
+  };
+  return { media, stream };
 }

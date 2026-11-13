@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Check, CircleAlert, Copy, ExternalLink, FastForward, Link, LoaderCircle,
+  Check, ChevronDown, ChevronUp, CircleAlert, Copy, ExternalLink, FastForward, Link, LoaderCircle,
   Magnet, Play, ShieldCheck, Smartphone, Sparkles, X,
 } from 'lucide-react';
 import type {
   DebridSettings, InstalledAddon, IntroSegment, MediaItem, PlayerSettings,
   StreamResult, StreamSubtitle,
 } from '../types';
+import { IptvZapStore } from '../services/iptvService';
 import { findStremioSubtitles } from '../services/stremioService';
 import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
@@ -46,6 +47,7 @@ const PlayerModal: React.FC<{
   onNextEpisode?: () => void;
   nextEpisodeLoading?: boolean;
   onOpenSettings?: () => void;
+  onZapChannel?: (direction: 1 | -1) => void;
   onClose: () => void;
 }> = ({
   media,
@@ -66,6 +68,7 @@ const PlayerModal: React.FC<{
   onNextEpisode,
   nextEpisodeLoading = false,
   onOpenSettings,
+  onZapChannel,
   onClose,
 }) => {
   // The Android player is already a full-screen modal. Lock the activity as
@@ -85,6 +88,8 @@ const PlayerModal: React.FC<{
   const [torrentStats, setTorrentStats] = useState<TorrentStreamStats | null>(null);
   const [addonSubtitles, setAddonSubtitles] = useState<StreamSubtitle[]>([]);
   const [introSegments, setIntroSegments] = useState<IntroSegment[]>([]);
+  // Zap bar availability — re-checked whenever the playing stream changes.
+  const zapAvailable = useMemo(() => Boolean(IptvZapStore.get()), [stream]);
 
   useEffect(() => {
     setActiveStream(stream);
@@ -336,6 +341,16 @@ const PlayerModal: React.FC<{
           onTryAnother={onTryAnother}
           onFindSources={onFindSources}
         />
+        {onZapChannel && media.source === 'iptv' && zapAvailable && (
+          <div className="iptv-zap-bar" onClick={(e) => e.stopPropagation()}>
+            <span className="iptv-zap-channel">{activeStream.title}</span>
+            <div className="iptv-zap-buttons">
+              <button onClick={() => onZapChannel(-1)} aria-label="Previous channel"><ChevronUp size={18} /></button>
+              <span className="iptv-zap-live">LIVE</span>
+              <button onClick={() => onZapChannel(1)} aria-label="Next channel"><ChevronDown size={18} /></button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

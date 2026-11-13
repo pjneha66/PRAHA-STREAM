@@ -7,6 +7,8 @@ import {
   searchAllAudiobooks, getAudiobookChapters, CURATED_FEATURED_AUDIOBOOKS,
   type AudiobookItem, type AudiobookChapter,
 } from '../services/audiobookService';
+import ContinueShelf from './ContinueShelf';
+import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import { resolvePlayableStreamUrl } from '../services/androidBridge';
 
 const TRENDING_SUGGESTIONS = [
@@ -28,6 +30,7 @@ const AudiobooksView: React.FC = () => {
 
   // Selected book & chapters
   const [selectedBook, setSelectedBook] = useState<AudiobookItem | null>(null);
+  const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('audiobook'));
   const [chapters, setChapters] = useState<AudiobookChapter[]>([]);
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
@@ -70,6 +73,20 @@ const AudiobooksView: React.FC = () => {
 
   const openBook = async (book: AudiobookItem) => {
     setSelectedBook(book);
+    recordContinue({
+      domain: 'audiobook',
+      id: book.id,
+      title: book.title,
+      cover: book.coverImage,
+      detail: book.author,
+      payload: {
+        author: book.author,
+        source: book.source,
+        sourceName: book.sourceName,
+        pageUrl: book.pageUrl,
+      },
+    });
+    setContinueEntries(readContinue('audiobook'));
     setChaptersLoading(true);
     setChapters([]);
     setCurrentChapterIndex(0);
@@ -81,6 +98,19 @@ const AudiobooksView: React.FC = () => {
     } finally {
       setChaptersLoading(false);
     }
+  };
+
+  const resumeAudiobook = (entry: ContinueEntry) => {
+    const payload = (entry.payload || {}) as { author?: string; source?: string; sourceName?: string; pageUrl?: string };
+    void openBook({
+      id: entry.id,
+      title: entry.title,
+      author: payload.author,
+      coverImage: entry.cover,
+      source: payload.source || 'archive',
+      sourceName: payload.sourceName || 'archive.org',
+      pageUrl: payload.pageUrl || '',
+    });
   };
 
   const playChapter = (index: number) => {
@@ -170,6 +200,15 @@ const AudiobooksView: React.FC = () => {
           Listen to unabridged audiobooks across AudiobookBay, BookAudio, Golden, FullLength, Hot, Audiozaic, AudioAZ,
           Audiobooks4Soul, Audionest, and the Internet Archive poetry &amp; literature collection (75,000+ free readings).
         </p>
+
+        <ContinueShelf
+          entries={continueEntries}
+          onResume={resumeAudiobook}
+          onDismiss={(entry) => {
+            removeContinue('audiobook', entry.id);
+            setContinueEntries(readContinue('audiobook'));
+          }}
+        />
 
         {/* Search Bar */}
         <div style={{ display: 'flex', gap: '0.75rem', maxWidth: '650px', marginBottom: '1rem' }}>

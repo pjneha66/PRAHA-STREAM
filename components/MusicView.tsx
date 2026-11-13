@@ -22,7 +22,7 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-const MusicView: React.FC = () => {
+const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [featuredLoading, setFeaturedLoading] = useState(false);
@@ -93,6 +93,16 @@ const MusicView: React.FC = () => {
       }
     }
   };
+
+  // Universal-search deep link: a query issued in Discover lands here pre-filled.
+  const appliedPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    const term = (prefillQuery || '').trim();
+    if (!term || appliedPrefillRef.current === term) return;
+    appliedPrefillRef.current = term;
+    setQuery(term);
+    performSearch(term);
+  }, [prefillQuery]);
 
   // Play a track: full-length audio via the YouTube pipeline, 30s preview as fallback
   const playTrack = async (track: MusicTrack, newQueue?: MusicTrack[]) => {

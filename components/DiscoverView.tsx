@@ -1,12 +1,79 @@
 import React, { useMemo } from 'react';
 import {
-  ChevronDown, CircleAlert, Compass, LoaderCircle, RotateCcw, SearchX, SlidersHorizontal,
+  ChevronDown, CircleAlert, Compass, Library, LoaderCircle, Music2, RotateCcw, SearchX, SlidersHorizontal,
 } from 'lucide-react';
 import { DEFAULT_DISCOVER_FILTERS } from '../data/defaults';
 import { DISCOVER_GENRE_OPTIONS } from '../services/tmdbService';
+import type { MusicTrack } from '../services/musicService';
 import type { DiscoverFilters, MediaItem } from '../types';
+import type { BookItem } from '../services/archiveService';
 import { MediaCard } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
+
+/** Cross-tab universal-search section: matches living in other PRAHA tabs. */
+const CrossTabResults: React.FC<{
+  query: string;
+  music: MusicTrack[];
+  books: BookItem[];
+  onOpenInTab: (target: 'music' | 'books') => void;
+}> = ({ query, music, books, onOpenInTab }) => {
+  if (!music.length && !books.length) return null;
+  return (
+    <div className="discover-crosstab">
+      <h2 className="discover-crosstab-title">More matches in your other tabs</h2>
+      {music.length > 0 && (
+        <section className="discover-crosstab-card">
+          <header>
+            <Music2 size={15} />
+            <strong>Music</strong>
+            <span className="discover-crosstab-count">{music.length}+ tracks</span>
+            <button className="button button-secondary button-small" onClick={() => onOpenInTab('music')}>
+              Search “{query}” in Music
+            </button>
+          </header>
+          <ul>
+            {music.slice(0, 4).map((track) => (
+              <li key={track.id}>
+                {track.coverUrl
+                  ? <img src={track.coverUrl} alt="" loading="lazy" />
+                  : <span className="discover-crosstab-thumb-fallback"><Music2 size={12} /></span>}
+                <div>
+                  <strong>{track.title}</strong>
+                  <small>{track.artist}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {books.length > 0 && (
+        <section className="discover-crosstab-card">
+          <header>
+            <Library size={15} />
+            <strong>Books & Comics</strong>
+            <span className="discover-crosstab-count">{books.length} items</span>
+            <button className="button button-secondary button-small" onClick={() => onOpenInTab('books')}>
+              Search “{query}” in Books
+            </button>
+          </header>
+          <ul>
+            {books.slice(0, 4).map((book) => (
+              <li key={book.id}>
+                {book.coverUrl
+                  ? <img src={book.coverUrl} alt="" loading="lazy" />
+                  : <span className="discover-crosstab-thumb-fallback"><Library size={12} /></span>}
+                <div>
+                  <strong>{book.title}</strong>
+                  <small>{book.authors?.[0] || book.year || 'archive.org'}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+};
 
 const YEARS = Array.from({ length: 37 }, (_, idx) => String(2026 - idx));
 
@@ -28,9 +95,13 @@ const DiscoverView: React.FC<{
   onClearSearch: () => void;
   onOpenSettings: () => void;
   compact: boolean;
+  musicResults?: MusicTrack[];
+  bookResults?: BookItem[];
+  onOpenInTab?: (target: 'music' | 'books') => void;
 }> = ({
   items, loading, loadingMore, hasMore, error, query, filters, onFiltersChange, onLoadMore,
   watchlist, tmdbReady, imdxEnabled = false, onSelect, onToggleWatchlist, onClearSearch, onOpenSettings, compact,
+  musicResults, bookResults, onOpenInTab,
 }) => {
   const metadataReady = tmdbReady || imdxEnabled;
   const update = <K extends keyof DiscoverFilters>(key: K, value: DiscoverFilters[K]) => {
@@ -171,6 +242,14 @@ const DiscoverView: React.FC<{
                 {loadingMore ? 'Loading more titles…' : 'Load more titles'}
               </button>
             </div>
+          )}
+          {query && onOpenInTab && (
+            <CrossTabResults
+              query={query}
+              music={musicResults || []}
+              books={bookResults || []}
+              onOpenInTab={onOpenInTab}
+            />
           )}
         </>
       ) : (

@@ -8,6 +8,8 @@ import {
 import { openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
 import SkeletonGrid from './SkeletonGrid';
+import ContinueShelf from './ContinueShelf';
+import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 
 type SourceMode = 'openlibrary' | 'archive';
 
@@ -69,7 +71,7 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
  * downloadable pdf/epub/cbz files. Anna's Archive is offered as an external
  * site link — PRAHA does not integrate its search or downloads.
  */
-const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
+const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery }) => {
   const [mode, setMode] = useState<SourceMode>('archive');
   const [collectionId, setCollectionId] = useState<string>(ARCHIVE_COLLECTIONS[1].id);
   const [input, setInput] = useState('');
@@ -86,6 +88,7 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const [filesError, setFilesError] = useState('');
   const [readerItem, setReaderItem] = useState<BookItem | null>(null);
   const requestSeq = useRef(0);
+  const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('book'));
 
   const load = useCallback(async (nextPage: number, append: boolean) => {
     const seq = ++requestSeq.current;
@@ -122,8 +125,33 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, collectionId, submitted]);
 
+  // Universal-search deep link: a query issued in Discover lands here pre-filled.
+  const appliedPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    const term = (prefillQuery || '').trim();
+    if (!term || appliedPrefillRef.current === term) return;
+    appliedPrefillRef.current = term;
+    setInput(term);
+    setSubmitted(term);
+  }, [prefillQuery]);
+
   const openItem = async (item: BookItem) => {
     setSelected(item);
+    recordContinue({
+      domain: 'book',
+      id: item.identifier || item.id,
+      title: item.title,
+      cover: item.coverUrl,
+      detail: item.authors?.[0],
+      payload: {
+        identifier: item.identifier,
+        openLibraryKey: item.openLibraryKey,
+        source: item.source,
+        authors: item.authors,
+        year: item.year,
+      },
+    });
+    setContinueEntries(readContinue('book'));
     setFiles(null);
     setFilesError('');
     if (!item.identifier) return;
@@ -137,6 +165,20 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
     } finally {
       setFilesLoading(false);
     }
+  };
+
+  const resumeBook = (entry: ContinueEntry) => {
+    const payload = (entry.payload || {}) as { identifier?: string; openLibraryKey?: string; source?: 'openlibrary' | 'archive'; authors?: string[]; year?: string };
+    void openItem({
+      id: entry.id,
+      title: entry.title,
+      authors: payload.authors || [],
+      year: payload.year,
+      coverUrl: entry.cover,
+      identifier: payload.identifier,
+      openLibraryKey: payload.openLibraryKey,
+      source: payload.source || 'archive',
+    });
   };
 
   const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === collectionId) || ARCHIVE_COLLECTIONS[0];
@@ -274,6 +316,14 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
         </div>
       )}
 
+      <ContinueShelf
+        entries={continueEntries}
+        onResume={resumeBook}
+        onDismiss={(entry) => {
+          removeContinue('book', entry.id);
+          setContinueEntries(readContinue('book'));
+        }}
+      />
       {loading ? (
         <SkeletonGrid count={12} label="Loading books…" />
       ) : (

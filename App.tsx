@@ -36,6 +36,9 @@ import type { HomeRowSettings } from './services/homeCache';
 import { exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
+import { OctaveMusicService, type MusicTrack } from './services/musicService';
+import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
+import { buildIptvPlayback, IptvZapStore } from './services/iptvService';
 import {
   APP_VERSION,
   AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
@@ -87,6 +90,9 @@ interface ActivePlayerState {
 const App: React.FC = () => {
   const [view, setView] = useState<AppView>(() => parseHashView());
   const [query, setQuery] = useState('');
+  // Universal search extras (music + books/comics) and cross-tab deep links.
+  const [discoverExtras, setDiscoverExtras] = useState<{ music: MusicTrack[]; books: BookItem[] } | null>(null);
+  const [searchPrefill, setSearchPrefill] = useState<{ view: AppView; term: string } | null>(null);
   const [discoverFilters, setDiscoverFilters] = useState<DiscoverFilters>(DEFAULT_DISCOVER_FILTERS);
   const [discoverPage, setDiscoverPage] = useState(1);
   const [discoverHasMore, setDiscoverHasMore] = useState(false);
@@ -410,15 +416,23 @@ const App: React.FC = () => {
       try {
         if (term) {
           const imdxOn = imdxEnabled;
-          const [tmdb, stremio, anime, imdx] = await Promise.all([
+          const folkComics = ARCHIVE_COLLECTIONS.find((c) => c.id === 'folk-comics') || ARCHIVE_COLLECTIONS[0];
+          const [tmdb, stremio, anime, imdx, musicTracks, bookHits] = await Promise.all([
             tmdbReady ? tmdbService.search(term, 1).catch(() => []) : Promise.resolve([]),
             searchStremioAddons(addons, term).catch(() => []),
             animeService.search(term, 1, 20).then((result) => result.items).catch(() => []),
             imdxOn ? imdxService.search(term, settings.imdx).catch(() => []) : Promise.resolve([]),
+            // Universal search: also sweep the non-video tabs so one query
+            // covers the whole app.
+            OctaveMusicService.searchFull(term)
+              .then((data) => data.tracks.slice(0, 6))
+              .catch(() => [] as MusicTrack[]),
+            BooksService.searchArchive(term, folkComics, 1, 8).catch(() => [] as BookItem[]),
           ]);
           if (active) {
             setDiscoverItems(uniqueMedia([...tmdb, ...imdx, ...anime, ...stremio]));
             setDiscoverHasMore(tmdb.length >= 16 || anime.length >= 20 || imdx.length >= 12);
+            setDiscoverExtras({ music: musicTracks, books: bookHits });
           }
         } else if (discoverFilters.source === 'imdx' && imdxService.isEnabled(settings.imdx)) {
           const [movies, series] = await Promise.all([
@@ -428,6 +442,7 @@ const App: React.FC = () => {
           if (active) {
             setDiscoverItems(uniqueMedia([...movies, ...series]));
             setDiscoverHasMore(false);
+            setDiscoverExtras(null);
           }
         } else {
           const catalogJobs = discoverFilters.source !== 'tmdb'
@@ -445,6 +460,7 @@ const App: React.FC = () => {
           if (active) {
             setDiscoverItems(uniqueMedia([...tmdbDiscovered.items, ...addonItems.flat()]));
             setDiscoverHasMore(tmdbDiscovered.hasMore);
+            setDiscoverExtras(null);
           }
         }
       } catch (error) {
@@ -665,6 +681,13 @@ const App: React.FC = () => {
     playbackPositionRef.current = resumeTime;
     setPlayer({ media, stream, initialTime: resumeTime });
   };
+
+  const zapIptvChannel = useCallback((direction: 1 | -1) => {
+    const channel = IptvZapStore.neighbor(direction);
+    if (!channel) return;
+    const { media, stream } = buildIptvPlayback(channel);
+    setPlayer({ media, stream, initialTime: 0 });
+  }, []);
 
   const handlePlayerProgress = useCallback((currentTime: number, duration: number) => {
     if (!player || (playerIdentityRef.current !== null && playerIdentityRef.current !== playerIdentity)) return;
@@ -912,7 +935,11 @@ const App: React.FC = () => {
       />
     );
   } else if (view === 'sanka') {
-    page = <SankaExplorer />;
+    page = (
+      <SankaExplorer
+        prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
+      />
+    );
   } else if (view === 'livetv') {
     page = (
       <LiveTvView
@@ -924,9 +951,18 @@ const App: React.FC = () => {
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
   } else if (view === 'books') {
-    page = <BooksView compact={settings.compactCards} />;
+    page = (
+      <BooksView
+        compact={settings.compactCards}
+        prefillQuery={searchPrefill?.view === 'books' ? searchPrefill.term : undefined}
+      />
+    );
   } else if (view === 'music') {
-    page = <MusicView />;
+    page = (
+      <MusicView
+        prefillQuery={searchPrefill?.view === 'music' ? searchPrefill.term : undefined}
+      />
+    );
   } else if (view === 'flow') {
     page = (
       <FlowView
@@ -955,6 +991,12 @@ const App: React.FC = () => {
         onClearSearch={() => setQuery('')}
         onOpenSettings={() => navigate('settings')}
         compact={settings.compactCards}
+        musicResults={discoverExtras?.music}
+        bookResults={discoverExtras?.books}
+        onOpenInTab={(target) => {
+          setSearchPrefill({ view: target, term: query.trim() });
+          navigate(target);
+        }}
       />
     );
   } else if (view === 'library') {
@@ -1139,6 +1181,7 @@ const App: React.FC = () => {
             autoplay={settings.autoplay}
             playerSettings={settings.player}
             onPlayerSettingsChange={updatePlayerSettings}
+            onZapChannel={zapIptvChannel}
             onTryAnother={player.alternatives?.length ? () => {
               const [next, ...remaining] = player.alternatives!;
               setPlayer({ ...player, stream: next, alternatives: remaining, initialTime: playbackPositionRef.current });

@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { buildImageCandidates, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
+import ContinueShelf from './ContinueShelf';
+import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
 import ArchiveReader from './ArchiveReader';
 import {
@@ -135,7 +137,7 @@ const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
   { id: 'archive', label: 'Internet Archive (folkscanomy)' },
 ];
 
-const SankaExplorer: React.FC = () => {
+const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   // 'archive' routes search + detail to the Internet Archive folkscanomy
   // collections instead of the Sanka web sources.
   const [source, setSource] = useState<string>('bacakomik');
@@ -166,6 +168,29 @@ const SankaExplorer: React.FC = () => {
   const [readerError, setReaderError] = useState('');
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
   const chapterAbortRef = useRef<AbortController | null>(null);
+  const [scrubberPage, setScrubberPage] = useState(1);
+
+  const jumpToPage = (page: number) => {
+    if (!readerImages) return;
+    const clamped = Math.min(Math.max(1, page), readerImages.length);
+    setScrubberPage(clamped);
+    document.getElementById(`sanka-page-${clamped - 1}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Track the page under the viewport top so the scrubber label follows scrolling.
+  const onReaderScroll = () => {
+    const container = readerPagesRef.current;
+    if (!container || !readerImages) return;
+    let current = 1;
+    for (let i = 0; i < readerImages.length; i += 1) {
+      const anchor = document.getElementById(`sanka-page-${i}`);
+      if (anchor && anchor.offsetTop - container.offsetTop <= container.scrollTop + 80) current = i + 1;
+      else break;
+    }
+    setScrubberPage(current);
+  };
+  const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('comic'));
+  const readingSlugs = useMemo(() => new Set(continueEntries.map((entry) => entry.id)), [continueEntries]);
 
   // Internet Archive item overlay (folkscanomy files: pdf/epub/cbz).
   const [archiveItem, setArchiveItem] = useState<SankaTitle | null>(null);
@@ -434,6 +459,16 @@ const SankaExplorer: React.FC = () => {
     setSubmittedQuery(query.trim());
   };
 
+  // Universal-search deep link: a query issued in Discover lands here pre-filled.
+  const appliedPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    const term = (prefillQuery || '').trim();
+    if (!term || appliedPrefillRef.current === term) return;
+    appliedPrefillRef.current = term;
+    setQuery(term);
+    setSubmittedQuery(term);
+  }, [prefillQuery]);
+
   const openChapter = async (chapter: SankaChapter, chapterIndex: number) => {
     if (!selected) return;
     // Cancel the previous chapter fetch: rapid Next/Prev clicks must not stack
@@ -444,12 +479,27 @@ const SankaExplorer: React.FC = () => {
     chapterAbortRef.current = controller;
     setReaderChapterIndex(chapterIndex);
     setReaderImages(null);
+    setScrubberPage(1);
     setReaderLoading(true);
     setReaderError('');
     try {
       const pages = await fetchSankaChapterImages(selected.source, chapter.slug, controller.signal, chapter.chapterPath);
       if (controller.signal.aborted) return;
       setReaderImages(pages);
+      recordContinue({
+        domain: 'comic',
+        id: selected.slug,
+        title: selected.title,
+        cover: selected.poster,
+        detail: chapter.title,
+        payload: {
+          source: selected.source,
+          detailPath: selected.detailPath,
+          poster: selected.poster,
+          kind: selected.kind,
+          chapterIndex,
+        },
+      });
       requestAnimationFrame(() => {
         if (readerPagesRef.current) readerPagesRef.current.scrollTop = 0;
       });
@@ -467,6 +517,22 @@ const SankaExplorer: React.FC = () => {
     setSelected(null);
     setReaderImages(null);
     setReaderError('');
+    setContinueEntries(readContinue('comic'));
+  };
+
+  const resumeComic = (entry: ContinueEntry) => {
+    const payload = (entry.payload || {}) as { source?: string; detailPath?: string; poster?: string; kind?: SankaTitle['kind'] };
+    if (!payload.source) return;
+    setSelected({
+      id: entry.id,
+      slug: entry.id,
+      title: entry.title,
+      poster: payload.poster,
+      kind: payload.kind || 'comic',
+      genres: [],
+      source: payload.source,
+      detailPath: payload.detailPath,
+    });
   };
 
   const handleRetry = () => {
@@ -513,6 +579,14 @@ const SankaExplorer: React.FC = () => {
           API project <ExternalLink size={13} />
         </a>
       </div>
+      <ContinueShelf
+        entries={continueEntries}
+        onResume={resumeComic}
+        onDismiss={(entry) => {
+          removeContinue('comic', entry.id);
+          setContinueEntries(readContinue('comic'));
+        }}
+      />
 
       <div className="sanka-toolbar">
         <div className="filter-pills" role="tablist" aria-label="Comic feed">
@@ -636,8 +710,12 @@ const SankaExplorer: React.FC = () => {
                 item.rating ? `★ ${item.rating}` : undefined,
               ].filter(Boolean).join(' · ') || 'Manga / comic';
 
+              const readingEntry = readingSlugs.has(item.slug)
+                ? continueEntries.find((entry) => entry.id === item.slug)
+                : undefined;
+
               return (
-                <article className="sanka-card sanka-card-actionable" key={`${item.id}-${item.title}`}>
+                <article className={`sanka-card sanka-card-actionable ${readingEntry ? 'sanka-card-reading' : ''}`} key={`${item.id}-${item.title}`}>
                   <button
                     className="sanka-card-open"
                     type="button"
@@ -656,6 +734,7 @@ const SankaExplorer: React.FC = () => {
                     <div className="sanka-card-copy">
                       <h3 title={item.title}>{item.title}</h3>
                       <p>{metaLine}</p>
+                      {readingEntry && <span className="sanka-reading-hint">Resume · {readingEntry.detail || 'in progress'}</span>}
                       {item.genres.length > 0 && (
                         <div className="sanka-genres">
                           {item.genres.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
@@ -850,11 +929,24 @@ const SankaExplorer: React.FC = () => {
                     <X size={17} />
                   </button>
                 </header>
-                <div className="sanka-reader-pages" ref={readerPagesRef}>
+                <div className="sanka-reader-pages" ref={readerPagesRef} onScroll={onReaderScroll}>
                   {readerImages.map((url, index) => (
-                    <ReaderPageImg key={`${url}-${index}`} src={url} pageNumber={index + 1} />
+                    <div key={`${url}-${index}`} id={`sanka-page-${index}`} className="sanka-page-anchor">
+                      <ReaderPageImg src={url} pageNumber={index + 1} />
+                    </div>
                   ))}
                 </div>
+                {readerImages.length > 4 && (
+                  <div className="sanka-page-scrubber" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => jumpToPage(scrubberPage - 1)} disabled={scrubberPage <= 1} aria-label="Previous page">
+                      <ChevronLeft size={15} />
+                    </button>
+                    <span className="sanka-scrubber-label">{scrubberPage} / {readerImages.length}</span>
+                    <button onClick={() => jumpToPage(scrubberPage + 1)} disabled={scrubberPage >= readerImages.length} aria-label="Next page">
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
+                )}
                 <footer className="sanka-reader-footer">
                   <button
                     className="button button-secondary"
