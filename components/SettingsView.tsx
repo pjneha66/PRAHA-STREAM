@@ -74,6 +74,7 @@ const SettingsView: React.FC<{
   const [imdxStatus, setImdxStatus] = useState<ApiStatus>('idle');
   const [imdxMessage, setImdxMessage] = useState('');
   const [dnsOpenError, setDnsOpenError] = useState(false);
+  const [dnsCopied, setDnsCopied] = useState(false);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
 
@@ -470,13 +471,39 @@ const SettingsView: React.FC<{
             <div className="settings-card-heading"><span><ShieldCheck size={19} /></span><div><h2>Private DNS</h2><p>Encrypted DNS may help if your network's DNS cannot resolve a service.</p></div></div>
             <div className="setting-row">
               <div>
-                <strong>Use Android Private DNS</strong>
-                <p>On Android 9 or later, open Network &amp; internet → Private DNS, choose “Private DNS provider hostname”, and enter <b>dns.google</b> or <b>one.one.one.one</b>. Save, return to PRAHA, and retry. Menu names vary on TV and other devices.</p>
+                <strong>Use AdGuard DNS</strong>
+                <p>Blocks ads and trackers device-wide over encrypted DNS. Tap “Use AdGuard DNS” to copy the hostname and open Android's Private DNS screen: choose “Private DNS provider hostname”, paste <b>dns.adguard-dns.com</b>, and save. Menu names vary on TV and other devices.</p>
+                <p>Prefer Google or Cloudflare instead? Enter <b>dns.google</b> or <b>one.one.one.one</b> on the same screen.</p>
                 <p>This applies to the whole device and sends DNS queries to your chosen provider. It is not a VPN and cannot bypass IP, geographic, or service-level blocks. If your connection stops working, switch Private DNS back to Automatic.</p>
                 {!isAndroidApp() && <p>On the web, configure secure DNS in your browser or device settings instead.</p>}
                 {dnsOpenError && <p role="alert">Could not open settings. Open Android Settings and search for Private DNS.</p>}
+                {dnsCopied && <p role="status" style={{ color: '#4ade80' }}>Hostname copied — paste it into Private DNS provider hostname.</p>}
               </div>
-              {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => { void openPrivateDnsSettings().then((ok) => setDnsOpenError(!ok)); }}>Open Android settings <ExternalLink size={15} /></button>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
+                {isAndroidApp() && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      void navigator.clipboard.writeText('dns.adguard-dns.com')
+                        .then(() => setDnsCopied(true))
+                        .catch(() => undefined);
+                      window.setTimeout(() => setDnsCopied(false), 6000);
+                      void openPrivateDnsSettings().then((ok) => setDnsOpenError(!ok));
+                    }}
+                  >
+                    Use AdGuard DNS
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => { void navigator.clipboard.writeText('dns.adguard-dns.com').then(() => setDnsCopied(true)).catch(() => undefined); window.setTimeout(() => setDnsCopied(false), 6000); }}
+                >
+                  Copy dns.adguard-dns.com
+                </button>
+                {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => { void openPrivateDnsSettings().then((ok) => setDnsOpenError(!ok)); }}>Open Android settings <ExternalLink size={15} /></button>}
+              </div>
             </div>
           </section>
 

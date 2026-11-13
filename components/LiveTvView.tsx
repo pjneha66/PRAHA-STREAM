@@ -104,6 +104,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [sourceStatus, setSourceStatus] = useState('');
   const [sourceError, setSourceError] = useState('');
   const [activeSourceName, setActiveSourceName] = useState('');
+  const [sourceGroup, setSourceGroup] = useState('All');
+  const [hubLimit, setHubLimit] = useState(250);
   const [iptvOrgCountries, setIptvOrgCountries] = useState<Array<{ code: string; name: string }>>(IptvSources.IPTV_ORG_COUNTRIES_FALLBACK);
   const [iptvOrgCountry, setIptvOrgCountry] = useState<string>(() => IptvSourceStore.loadIptvOrgCountry());
   const [stepDaddyUrl, setStepDaddyUrl] = useState<string>(() => IptvSourceStore.loadStepDaddyUrl());
@@ -118,6 +120,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const applySourceChannels = (sourceName: string, channels: M3uChannel[]) => {
     setPlaylistChannels(channels);
     setActiveSourceName(sourceName);
+    setSourceGroup('All');
+    setHubLimit(250);
     setActiveTab('channels');
   };
 
@@ -259,7 +263,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
         IptvStore.savePortals(updated);
         setPortalStatus(`Added ${verifiedList.length} verified active portals.`);
       } else {
-        setPortalStatus('No new active portals responded to login checks.');
+        setPortalStatus('No active portals responded. Reddit blocks automated scraping from many networks — add your own portal with credentials from your IPTV provider, or load an M3U source in the Sources tab.');
       }
     } catch {
       setPortalStatus('Scraping error. Check network connection.');
@@ -472,11 +476,24 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     });
   }, [selectedCategory, searchQuery]);
 
+  // Group pills for the loaded source playlist.
+  const sourceGroups = useMemo(() => {
+    const counts = new Map<string, number>();
+    playlistChannels.forEach((ch) => {
+      if (ch.group) counts.set(ch.group, (counts.get(ch.group) || 0) + 1);
+    });
+    return ['All', ...Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([g]) => g)];
+  }, [playlistChannels]);
+
   const filteredPlaylistChannels = useMemo(() => {
-    if (!searchQuery) return playlistChannels.slice(0, 150);
-    const q = searchQuery.toLowerCase();
-    return playlistChannels.filter(c => c.name.toLowerCase().includes(q) || (c.group && c.group.toLowerCase().includes(q))).slice(0, 150);
-  }, [playlistChannels, searchQuery]);
+    let list = playlistChannels;
+    if (sourceGroup !== 'All') list = list.filter((c) => c.group === sourceGroup);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(c => c.name.toLowerCase().includes(q) || (c.group && c.group.toLowerCase().includes(q)));
+    }
+    return list;
+  }, [playlistChannels, searchQuery, sourceGroup]);
 
   return (
     <div style={{ padding: '24px 20px', maxWidth: '1400px', margin: '0 auto', color: '#e6edf3' }}>
@@ -555,193 +572,104 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════════
-          TAB 1: CHANNELS HUB
+          TAB 1: CHANNELS HUB (source-driven — loaded source channels only)
           ════════════════════════════════════════════════════════════════════════ */}
       {activeTab === 'channels' && (
         <div>
-          {/* Category Pills */}
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '14px', marginBottom: '16px' }}>
-            {CATEGORY_FILTERS.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: '1px solid',
-                  borderColor: selectedCategory === cat ? '#ef4444' : '#30363d',
-                  background: selectedCategory === cat ? 'rgba(239, 68, 68, 0.15)' : '#161b22',
-                  color: selectedCategory === cat ? '#f87171' : '#c9d1d9',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          {/* Channels Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '14px' }}>
-            {filteredHardcoded.map((channel) => (
-              <div
-                key={channel.id}
-                onClick={() => scanCuratedChannel(channel)}
-                style={{
-                  background: '#161b22',
-                  borderRadius: '12px',
-                  border: '1px solid #30363d',
-                  padding: '16px',
-                  cursor: 'pointer',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  transition: 'transform 0.2s, border-color 0.2s',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  minHeight: '130px',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-3px)';
-                  e.currentTarget.style.borderColor = '#ef4444';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.borderColor = '#30363d';
-                }}
-              >
-                {/* Background accent gradient badge */}
-                <div style={{
-                  position: 'absolute', top: 0, right: 0, width: '70px', height: '70px',
-                  background: `linear-gradient(135deg, transparent, ${channel.gradient[0]}22)`,
-                  borderBottomLeftRadius: '40px',
-                }} />
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    padding: '3px 8px',
-                    borderRadius: '6px',
-                    background: channel.gradient[0],
-                    color: '#ffffff',
-                    letterSpacing: '0.04em',
-                  }}>
-                    {channel.shortName}
-                  </span>
-                  <span style={{ fontSize: '11px', color: '#8b949e' }}>{channel.category}</span>
-                </div>
-
-                <div style={{ marginTop: '12px' }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: 600, margin: '0 0 4px 0', color: '#f0f6fc' }}>{channel.name}</h3>
-                  <p style={{ fontSize: '12px', color: '#8b949e', margin: 0 }}>
-                    1-Click Stream Finder
-                  </p>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', fontSize: '12px', color: '#58a6ff' }}>
-                  <Play size={13} fill="#58a6ff" />
-                  <span>Scan & Play</span>
-                </div>
+          {activeSourceName ? (
+            <>
+              {/* Group Pills */}
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '14px', marginBottom: '16px' }}>
+                {sourceGroups.map((group) => (
+                  <button
+                    key={group}
+                    onClick={() => { setSourceGroup(group); setHubLimit(250); }}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '20px',
+                      border: '1px solid',
+                      borderColor: sourceGroup === group ? '#ef4444' : '#30363d',
+                      background: sourceGroup === group ? 'rgba(239, 68, 68, 0.15)' : '#161b22',
+                      color: sourceGroup === group ? '#f87171' : '#c9d1d9',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {group}
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
 
-          {/* Channel Scanner Modal */}
-          {scanningChannel && (
-            <div style={{
-              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-              padding: '20px',
-            }}>
-              <div style={{
-                background: '#161b22', border: '1px solid #30363d', borderRadius: '16px',
-                width: '100%', maxWidth: '520px', padding: '24px', position: 'relative',
-              }}>
-                <button
-                  onClick={() => setScanningChannel(null)}
-                  style={{ position: 'absolute', right: '16px', top: '16px', background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer' }}
-                >
-                  <X size={20} />
-                </button>
+              <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#8b949e' }}>
+                {activeSourceName} · {filteredPlaylistChannels.length.toLocaleString()} channels{sourceGroup !== 'All' ? ` in ${sourceGroup}` : ''}
+              </p>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                  <div style={{
-                    width: '36px', height: '36px', borderRadius: '8px',
-                    background: scanningChannel.gradient[0], display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#ffffff', fontWeight: 700, fontSize: '12px'
-                  }}>
-                    {scanningChannel.shortName}
-                  </div>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '17px', color: '#f0f6fc' }}>{scanningChannel.name}</h3>
-                    <p style={{ margin: 0, fontSize: '12px', color: '#8b949e' }}>Live Multi-Source Scanner</p>
-                  </div>
-                </div>
-
-                {scanningBusy ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '36px 0' }}>
-                    <LoaderCircle size={32} color="#ef4444" className="animate-spin" />
-                    <p style={{ marginTop: '14px', fontSize: '13px', color: '#c9d1d9' }}>
-                      Querying default M3U feeds & active Xtream portals...
-                    </p>
-                  </div>
-                ) : channelHits.length === 0 ? (
-                  <div style={{ padding: '24px 0', textAlign: 'center' }}>
-                    <CircleAlert size={36} color="#f87171" style={{ margin: '0 auto 12px' }} />
-                    <p style={{ margin: '0 0 8px', fontSize: '14px', color: '#f0f6fc' }}>No Active Feeds Found in Initial Pool</p>
-                    <p style={{ margin: 0, fontSize: '12px', color: '#8b949e' }}>
-                      Add a custom playlist in M3U Playlists or scrape additional Xtream Portals in the Portals tab.
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    <p style={{ fontSize: '13px', color: '#7ee787', marginBottom: '12px' }}>
-                      Found {channelHits.length} live stream source(s):
-                    </p>
-                    <div style={{ maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {channelHits.map((hit, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '10px 14px', background: '#0d1117', borderRadius: '8px', border: '1px solid #30363d',
-                          }}
-                        >
-                          <div style={{ overflow: 'hidden', paddingRight: '12px' }}>
-                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#f0f6fc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                              {hit.name}
-                            </div>
-                            <div style={{ fontSize: '11px', color: '#8b949e' }}>{hit.source}</div>
-                          </div>
-                          <button
-                            onClick={() => {
-                              playStreamNow(scanningChannel.name, hit.url, hit.source, scanningChannel.logo);
-                              setScanningChannel(null);
-                            }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: '6px',
-                              padding: '6px 12px', borderRadius: '6px', border: 'none',
-                              background: '#ef4444', color: '#ffffff', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Play size={12} fill="#ffffff" />
-                            Play
-                          </button>
-                        </div>
-                      ))}
+              {/* Source Channels Grid — capped per chunk to keep the page snappy */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
+                {filteredPlaylistChannels.slice(0, hubLimit).map((ch) => (
+                  <div
+                    key={`${ch.url}-${ch.name}`}
+                    onClick={() => playStreamNow(ch.name, ch.url, ch.group || activeSourceName, ch.logo)}
+                    style={{
+                      background: '#161b22',
+                      borderRadius: '12px',
+                      border: '1px solid #30363d',
+                      padding: '14px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      minHeight: '84px',
+                    }}
+                  >
+                    {ch.logo ? (
+                      <img src={ch.logo} alt="" loading="lazy" style={{ width: '46px', height: '46px', borderRadius: '8px', objectFit: 'contain', background: '#0d1117', flexShrink: 0 }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
+                    ) : (
+                      <div style={{ width: '46px', height: '46px', borderRadius: '8px', background: '#0d1117', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Tv2 size={18} color="#8b949e" />
+                      </div>
+                    )}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <h3 style={{ fontSize: '13.5px', fontWeight: 600, margin: '0 0 3px 0', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</h3>
+                      <p style={{ fontSize: '11px', color: '#8b949e', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.group || 'Live'}</p>
                     </div>
+                    <Play size={14} fill="#58a6ff" color="#58a6ff" style={{ flexShrink: 0 }} />
                   </div>
-                )}
+                ))}
               </div>
+
+              {filteredPlaylistChannels.length > hubLimit && (
+                <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                  <button
+                    onClick={() => setHubLimit((v) => v + 250)}
+                    style={{ padding: '9px 22px', borderRadius: '10px', border: '1px solid #30363d', background: '#21262d', color: '#f0f6fc', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    Show more ({(filteredPlaylistChannels.length - hubLimit).toLocaleString()} remaining)
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ background: '#161b22', border: '1px dashed #30363d', borderRadius: '12px', padding: '40px 24px', textAlign: 'center' }}>
+              <Tv2 size={34} color="#8b949e" style={{ margin: '0 auto 12px' }} />
+              <h3 style={{ margin: '0 0 8px', fontSize: '16px', color: '#f0f6fc' }}>No source loaded</h3>
+              <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#8b949e' }}>
+                Load iptv-org, StepDaddyLiveHD or any community source — its channels fill this hub.
+              </p>
+              <button
+                onClick={() => setActiveTab('sources')}
+                style={{ padding: '9px 20px', borderRadius: '10px', border: 'none', background: '#ef4444', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Open Sources
+              </button>
             </div>
           )}
         </div>
       )}
+
 
       {/* ════════════════════════════════════════════════════════════════════════
           TAB 2: LIVE MATCHES & PPV
@@ -838,7 +766,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       {activeTab === 'playlists' && (
         <div>
           {/* Preset Buttons & Import */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto' }}>
               {Object.keys(M3uParser.defaultPlaylists).map((pName) => (
                 <button
@@ -871,6 +799,32 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
               <Plus size={15} />
               Import M3U Playlist
             </button>
+          </div>
+
+          {/* Public sources — every source loads directly from this tab */}
+          <div style={{ marginBottom: '16px' }}>
+            <p style={{ margin: '0 0 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px', color: '#8b949e' }}>PUBLIC SOURCES</p>
+            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'wrap' }}>
+              {IptvSources.CATALOG.filter((s) => s.kind === 'playlist' && s.url).map((source) => (
+                <button
+                  key={source.id}
+                  onClick={() => void loadSourceUrl(source, source.url!)}
+                  disabled={Boolean(sourceBusy)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '6px 14px', borderRadius: '20px', border: '1px solid',
+                    borderColor: activeSourceName === source.name ? '#d6f77a' : 'rgba(214, 247, 122, 0.4)',
+                    background: activeSourceName === source.name ? 'rgba(214, 247, 122, 0.15)' : 'transparent',
+                    color: activeSourceName === source.name ? '#d6f77a' : '#c9d1d9',
+                    fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                  }}
+                >
+                  {sourceBusy === source.id ? <LoaderCircle size={13} className="spin" /> : <Radio size={13} />}
+                  {source.name}
+                </button>
+              ))}
+            </div>
+            {sourceStatus && <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#8b949e' }}>{sourceStatus}</p>}
           </div>
 
           {playlistLoading ? (

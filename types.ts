@@ -95,6 +95,10 @@ export interface MediaItem {
   seasons?: TmdbSeasonSummary[];
   numberOfSeasons?: number;
   libraryStatus?: LibraryStatus;
+  networks?: string[];
+  status?: string;
+  originCountry?: string;
+  originalLanguage?: string;
 }
 
 export interface WatchProgress {

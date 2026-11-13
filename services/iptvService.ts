@@ -411,7 +411,9 @@ export class IptvAliveChecker {
 // ── Xtream-Codes Scraper (Reddit + Pastes + Curated Fallbacks) ────────────────
 
 export class IptvScraper {
-  private static readonly REDDIT_SUB = 'IPTV_ZONENEW';
+  // Reddit aggressively blocks non-browser clients, so the fetcher races the
+  // direct endpoint and several text proxies per subreddit.
+  private static readonly REDDIT_SUBS = ['IPTV_ZONENEW', 'IPTVReseller', 'iptvdoors'];
   private static readonly PROXIES = [
     'https://corsproxy.io/?{URL}',
     'https://api.allorigins.win/raw?url={URL}',
@@ -458,21 +460,24 @@ export class IptvScraper {
   }
 
   static async scrapeRedditPortals(limit = 25): Promise<IptvPortal[]> {
-    const targetUrl = `https://www.reddit.com/r/${this.REDDIT_SUB}/new.json?limit=${limit}&sort=new`;
     let jsonText: string | null = null;
 
-    // Inside the APK the native client bypasses CORS entirely — reddit's JSON
-    // endpoints need no proxy at all. Proxies remain the web fallback.
-    try {
-      const direct = await nativeFetchText(targetUrl, { timeoutMs: 6000 });
-      if (direct.ok && direct.data.trim().startsWith('{')) {
-        jsonText = direct.data;
-      }
-    } catch {
-      // Fall through to CORS proxies.
-    }
+    for (const sub of this.REDDIT_SUBS) {
+      const targetUrl = `https://www.reddit.com/r/${sub}/new.json?limit=${limit}&sort=new`;
 
-    if (!jsonText) {
+      // Inside the APK the native client bypasses CORS entirely — reddit's
+      // JSON endpoints need no proxy at all when reddit allows the client.
+      try {
+        const direct = await nativeFetchText(targetUrl, { timeoutMs: 6000 });
+        if (direct.ok && direct.data.trim().startsWith('{')) {
+          jsonText = direct.data;
+          break;
+        }
+      } catch {
+        // Fall through to CORS proxies.
+      }
+
+      if (jsonText) break;
       for (const tmpl of this.PROXIES) {
         try {
           const proxyUrl = tmpl.replace('{URL}', encodeURIComponent(targetUrl));
@@ -488,6 +493,7 @@ export class IptvScraper {
           continue;
         }
       }
+      if (jsonText) break;
     }
 
     if (!jsonText) return [];

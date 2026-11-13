@@ -278,6 +278,9 @@ export const tmdbService = {
       }));
 
     const recommendations = mapList(details.recommendations?.results, type).slice(0, 12);
+    const networks: string[] | undefined = Array.isArray(details.networks)
+      ? details.networks.slice(0, 4).map((network: { name?: string }) => String(network.name || '')).filter(Boolean)
+      : undefined;
 
     const enriched: MediaItem = {
       ...media,
@@ -302,6 +305,14 @@ export const tmdbService = {
       recommendations: recommendations.length ? recommendations : media.recommendations,
       seasons: seasons.length ? seasons : media.seasons,
       numberOfSeasons: Number(details.number_of_seasons) || seasons.length || media.numberOfSeasons,
+      networks: networks?.length ? networks : media.networks,
+      status: typeof details.status === 'string' && details.status ? details.status : media.status,
+      originCountry: Array.isArray(details.origin_country) && details.origin_country.length
+        ? String(details.origin_country[0])
+        : media.originCountry,
+      originalLanguage: typeof details.original_language === 'string' && details.original_language
+        ? details.original_language.toUpperCase()
+        : media.originalLanguage,
     };
     if (!options) return enriched;
     if (!options.basicInfo) Object.assign(enriched, { overview: media.overview, genres: media.genres, rating: media.rating, year: media.year });

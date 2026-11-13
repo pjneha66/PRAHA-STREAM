@@ -115,12 +115,16 @@ export class BooksService {
     const items: BookItem[] = docs.map((doc) => {
       const iaList = Array.isArray(doc.ia) ? (doc.ia as string[]) : [];
       const identifier = iaList[0];
+      const olCover = doc.cover_i ? `https://covers.openlibrary.org/b/cover_i/${doc.cover_i}-L.jpg` : undefined;
       return {
         id: String(doc.key || identifier || doc.title),
         title: String(doc.title || 'Untitled'),
         authors: Array.isArray(doc.author_name) ? (doc.author_name as string[]).slice(0, 3) : [],
         year: doc.first_publish_year ? String(doc.first_publish_year) : undefined,
-        coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/cover_i/${doc.cover_i}-L.jpg` : undefined,
+        // Covers.openlibrary.org is slow or blocked on some networks; the
+        // archive.org scan image is the reliable fallback when a full-text
+        // copy exists.
+        coverUrl: olCover || (identifier ? `https://archive.org/services/img/${identifier}` : undefined),
         identifier,
         openLibraryKey: String(doc.key || ''),
         source: 'openlibrary' as const,

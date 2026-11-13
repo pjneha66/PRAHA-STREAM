@@ -27,6 +27,43 @@ const cardStyle: React.CSSProperties = {
 };
 
 /**
+ * Cover image with a fallback chain: the primary URL, a wsrv.nl image proxy
+ * of the same URL (survives covers.openlibrary.org rate limits and DNS-level
+ * blocks), then the archive.org scan image, then a placeholder.
+ */
+const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
+  const [candidateIdx, setCandidateIdx] = React.useState(0);
+  React.useEffect(() => setCandidateIdx(0), [item.coverUrl, item.identifier]);
+
+  const candidates = React.useMemo(() => {
+    const list: string[] = [];
+    if (item.coverUrl) list.push(item.coverUrl);
+    if (item.coverUrl && item.coverUrl.includes('covers.openlibrary.org')) {
+      list.push(`https://wsrv.nl/?url=${encodeURIComponent(item.coverUrl)}`);
+    }
+    if (item.identifier) list.push(`https://archive.org/services/img/${item.identifier}`);
+    return list;
+  }, [item.coverUrl, item.identifier]);
+
+  const url = candidates[candidateIdx];
+  return (
+    <div style={{ aspectRatio: '3 / 4', background: '#0d1117', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {url ? (
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={() => setCandidateIdx((idx) => idx + 1)}
+        />
+      ) : (
+        <BookOpen size={30} color="#30363d" />
+      )}
+    </div>
+  );
+};
+
+/**
  * Books tab: Open Library + Internet Archive search, folkscanomy collections,
  * downloadable pdf/epub/cbz files. Anna's Archive is offered as an external
  * site link — PRAHA does not integrate its search or downloads.
@@ -245,14 +282,7 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
           {items.map((item) => (
             <div key={item.id} style={cardStyle} onClick={() => void openItem(item)} role="button" tabIndex={0}
               onKeyDown={(e) => e.key === 'Enter' && void openItem(item)}>
-              <div style={{ aspectRatio: '3 / 4', background: '#0d1117', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {item.coverUrl ? (
-                  <img src={item.coverUrl} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                ) : (
-                  <BookOpen size={30} color="#30363d" />
-                )}
-              </div>
+              <BookCover item={item} />
               <div style={{ padding: '10px 12px 12px' }}>
                 <strong style={{ color: '#f0f6fc', fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as never }}>
                   {item.title}

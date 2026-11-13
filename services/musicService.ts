@@ -1,5 +1,5 @@
 import { nativeFetchText } from './androidBridge';
-import { flowDetail, flowMusicSearch } from './flowService';
+import { flowDetail, flowMusicSearch, flowSearch } from './flowService';
 
 export interface MusicTrack {
   id: string;
@@ -220,14 +220,33 @@ export class OctaveMusicService {
    * back to the 30-second preview.
    */
   static async resolveFullTrackAudio(title: string, artist: string): Promise<string | null> {
+    const pickAudio = (detail: { audioTracks?: Array<{ url: string; hasAudio?: boolean }>; playbackUrl?: string } | null | undefined): string | null => {
+      if (!detail?.audioTracks && !detail?.playbackUrl) return null;
+      const audio = detail.audioTracks?.find((track) => track.hasAudio !== false && track.url);
+      return audio?.url || detail.playbackUrl || null;
+    };
     try {
       const query = `${title} ${artist}`.trim();
-      const music = await flowMusicSearch(query);
-      const song = music.data.videos.find((video) => !video.live) || music.data.videos[0];
-      if (!song) return null;
-      const detail = await flowDetail(song.id);
-      const audio = detail.data.audioTracks.find((track) => track.hasAudio !== false && track.url);
-      return audio?.url || detail.data.playbackUrl || null;
+      // 1. YouTube Music-flavoured search, then detail from any tier.
+      const music = await flowMusicSearch(query).catch(() => null);
+      const song = music?.data.videos.find((video) => !video.live) || music?.data.videos[0];
+      if (song) {
+        const detail = await flowDetail(song.id).catch(() => null);
+        const audio = detail ? pickAudio(detail.data) : null;
+        if (audio) return audio;
+      }
+      // 2. Mirror-tier search fallback (survives YouTube InnerTube blocks).
+      if (!song) {
+        const search = await flowSearch(query).catch(() => null);
+        const video = search?.data.videos.find((video) => !video.live) || search?.data.videos[0];
+        if (video) {
+          const detail = await flowDetail(video.id).catch(() => null);
+          const audio = detail ? pickAudio(detail.data) : null;
+          if (audio) return audio;
+        }
+      }
+      // 3. Search succeeded but no audio tracks anywhere — nothing more to try.
+      return null;
     } catch {
       return null;
     }

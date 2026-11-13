@@ -76,21 +76,25 @@ const DetailsModal: React.FC<{
     else setSelectedSeason(1);
   }, [item.id, savedProgress?.season, item.seasons]);
 
-  // Series opened from Stremio catalogs (or other non-TMDB sources) have no
-  // tmdbId and often no season list — resolve against TMDB so Seasons &
-  // Episodes always renders from TMDB data.
+  // Enrich once so Seasons & Episodes, Cast, Networks, Show Details and More
+  // like this always render — for every source (TMDB home items are usually
+  // enriched upstream; addon/catalog items are not).
   useEffect(() => {
-    if (item.type !== 'series' || animeSlug || item.tmdbId || item.seasons?.length) return;
+    if (animeSlug || enriched) return;
+    const missing = !item.cast?.length
+      || !item.recommendations?.length
+      || (item.type === 'series' && !item.tmdbId)
+      || (item.type === 'series' && !item.seasons?.length);
+    if (!missing) return;
     let active = true;
     tmdbService.enrich(item)
       .then((full) => {
         if (!active) return;
-        if (full.tmdbId && (full.seasons?.length || full.numberOfSeasons)) setEnriched(full);
-        else if (full.tmdbId) setEnriched(full);
+        if (full.tmdbId) setEnriched(full);
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [item, animeSlug]);
+  }, [item, animeSlug, enriched]);
 
   // Anime episode guides come from AniCore (season-aware) instead of TMDB.
   useEffect(() => {
@@ -362,6 +366,44 @@ const DetailsModal: React.FC<{
           <div ref={discussionRef}>
             <AnimeDiscussion item={item} initialEpisode={discussionEpisode || 1} compact />
           </div>
+        )}
+
+        {(baseItem.networks?.length || baseItem.status || baseItem.originCountry || baseItem.originalLanguage || baseItem.maturity || baseItem.runtime) && (
+          <section className="details-section">
+            <div className="details-section-head">
+              <h3><Sparkles size={17} /> Show details</h3>
+            </div>
+            <div className="details-meta-table">
+              {baseItem.status && (
+                <div className="details-meta-row"><span>Status</span><strong>{baseItem.status}</strong></div>
+              )}
+              {item.year && (
+                <div className="details-meta-row"><span>Release info</span><strong>{item.year}</strong></div>
+              )}
+              {baseItem.runtime && (
+                <div className="details-meta-row"><span>Runtime</span><strong>{baseItem.runtime}</strong></div>
+              )}
+              {baseItem.maturity && (
+                <div className="details-meta-row"><span>Certification</span><strong>{baseItem.maturity}</strong></div>
+              )}
+              {baseItem.originCountry && (
+                <div className="details-meta-row"><span>Origin country</span><strong>{baseItem.originCountry}</strong></div>
+              )}
+              {baseItem.originalLanguage && (
+                <div className="details-meta-row"><span>Original language</span><strong>{baseItem.originalLanguage}</strong></div>
+              )}
+            </div>
+            {baseItem.networks && baseItem.networks.length > 0 && (
+              <>
+                <h3 style={{ margin: '14px 0 8px', fontSize: '15px', color: 'var(--text)' }}>Networks</h3>
+                <div className="details-network-row">
+                  {baseItem.networks.map((network) => (
+                    <span className="network-chip" key={network}>{network}</span>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
         )}
 
         {item.cast && item.cast.length > 0 && (
