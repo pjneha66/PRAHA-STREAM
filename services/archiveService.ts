@@ -39,9 +39,37 @@ export interface ArchiveCollection {
   query: string;
 }
 
+/**
+ * Every subject filter from the archive.org folkscanomy comics browse,
+ * OR-combined so one item matching any of them surfaces (verified live:
+ * ~43k items). Multi-word subjects are quoted for solr.
+ */
+export const FOLKSCANOMY_COMIC_SUBJECTS = [
+  'comic', 'comics', 'manga', 'mangá', 'cómic', 'cómics', 'webcomic', 'webcomics',
+  '"web comic"', '"fan comic"', 'fancomic', '"mini-comic"', '"comic book"', '"comic books"',
+  '"comic strip"', '"comic strips"', '"graphic novel"', '"graphic novels"', '"marvel comics"',
+  '"dc comics"', '"archie comics"', '"british comics"', '"superhero comics"', '"underground comics"',
+  '"horror comics"', '"golden age comics"', '"golden age comic books"', '"hindi comics"',
+  '"manoj comics"', '"christian comics"', '"spire christian comic"', '"alternative comics"',
+  '"alternative comic"', 'manga_library', '"manga book"', '"how to draw manga"', 'comics_inbox',
+  'comicgenesis', '"sprite comic"', '"1990s comics"', '"sonic the comic"', '"whiz comics"',
+  '"wow comics"', '"comics wow"', '"comics whiz"', '"bessy comic"', '"cizgi roman comic"',
+  '"comics & graphic novels"', '"comic books and graphic novels"', '"comic books, strips, etc."',
+  '"comic europeo"', '"hanna-barbera comics"', '"wizard: the guide to comics"', '"cómic terror"',
+  '"cómic galaxia bramford"', '"exciting comics"', '"pony comics"', 'magazine',
+  '"advertising art"', '"graphic arts"',
+];
+
+export const FOLKSCANOMY_COMICS_QUERY =
+  `(collection:folkscanomy*) AND mediatype:texts AND subject:(${FOLKSCANOMY_COMIC_SUBJECTS.join(' OR ')})`;
+
 export const ARCHIVE_COLLECTIONS: ArchiveCollection[] = [
   { id: 'folkscanomy', name: 'folkscanomy — everything', query: 'collection:folkscanomy*' },
-  { id: 'folk-comics', name: 'folkscanomy — comics & manga', query: 'collection:folkscanomy* AND mediatype:texts AND (title:comic* OR title:manga* OR subject:comics OR subject:manga)' },
+  {
+    id: 'folk-comics',
+    name: 'folkscanomy — comics & manga',
+    query: FOLKSCANOMY_COMICS_QUERY,
+  },
   { id: 'folk-sf', name: 'folkscanomy — sci-fi & fantasy', query: 'collection:folkscanomy_sf' },
   { id: 'folk-fiction', name: 'folkscanomy — fiction', query: 'collection:folkscanomy_fiction' },
   { id: 'folk-computer', name: 'folkscanomy — computers', query: 'collection:folkscanomy_computer' },

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { buildImageCandidates, openSafeExternalUrl } from '../services/androidBridge';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
+import ArchiveReader from './ArchiveReader';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
   resolveArtworkFallback, SANKA_API_ORIGIN, SANKA_COMIC_SOURCES,
@@ -169,6 +170,7 @@ const SankaExplorer: React.FC = () => {
   const [archiveFiles, setArchiveFiles] = useState<BookFile[] | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveError, setArchiveError] = useState('');
+  const [readerIdentifier, setReaderIdentifier] = useState<string | null>(null);
 
   const openArchiveItem = async (item: SankaTitle) => {
     setArchiveItem(item);
@@ -193,6 +195,14 @@ const SankaExplorer: React.FC = () => {
     }
     setSelected(item);
   };
+
+  // Lock the page behind modals: the background content must not scroll
+  // under the bottom navigation while a detail/reader overlay is open.
+  useEffect(() => {
+    const anyModalOpen = Boolean(selected) || Boolean(archiveItem) || Boolean(readerImages);
+    document.body.classList.toggle('modal-open', anyModalOpen);
+    return () => document.body.classList.remove('modal-open');
+  }, [selected, archiveItem, readerImages]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -894,14 +904,31 @@ const SankaExplorer: React.FC = () => {
                 ))}
               </div>
             )}
-            <button
-              onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
-            >
-              <ExternalLink size={12} /> Read online at archive.org
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setReaderIdentifier(archiveItem.slug)}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#d6f77a', color: '#1a1d13', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                <BookOpen size={13} /> Read online
+              </button>
+              <button
+                onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                <ExternalLink size={12} /> archive.org page
+              </button>
+            </div>
           </div>
         </div>
+      )}
+
+      {/* In-app Read Online (OMLE) — archive.org BookReader embed */}
+      {readerIdentifier && (
+        <ArchiveReader
+          identifier={readerIdentifier}
+          title={archiveItem?.title}
+          onClose={() => setReaderIdentifier(null)}
+        />
       )}
     </div>
   );

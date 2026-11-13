@@ -6,8 +6,15 @@ import {
   ARCHIVE_COLLECTIONS, BooksService, type BookFile, type BookItem,
 } from '../services/archiveService';
 import { openSafeExternalUrl } from '../services/androidBridge';
+import ArchiveReader from './ArchiveReader';
 
 type SourceMode = 'openlibrary' | 'archive';
+
+/** Open Library quick subjects (openlibrary.org/subjects/...). */
+const OPEN_LIBRARY_SUBJECTS = [
+  'Classics', 'Science Fiction', 'Fantasy', 'Mystery', 'Romance', 'Horror',
+  'History', 'Philosophy', 'Manga', 'Comics', 'Poetry', 'Biography',
+];
 
 const cardStyle: React.CSSProperties = {
   background: '#161b22',
@@ -39,6 +46,7 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const [files, setFiles] = useState<BookFile[] | null>(null);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState('');
+  const [readerItem, setReaderItem] = useState<BookItem | null>(null);
   const requestSeq = useRef(0);
 
   const load = useCallback(async (nextPage: number, append: boolean) => {
@@ -145,7 +153,30 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
             ))}
           </select>
         )}
+        <button
+          onClick={() => openSafeExternalUrl(mode === 'archive' ? 'https://archive.org' : 'https://openlibrary.org')}
+          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 12px', borderRadius: '999px', border: '1px solid #30363d', background: '#161b22', color: '#8b949e', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+        >
+          <ExternalLink size={11} /> {mode === 'archive' ? 'archive.org' : 'openlibrary.org'}
+        </button>
       </div>
+
+      {mode === 'openlibrary' && (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          {OPEN_LIBRARY_SUBJECTS.map((subject) => (
+            <button
+              key={subject}
+              onClick={() => { setInput(subject); setSubmitted(subject); }}
+              style={{
+                padding: '5px 12px', borderRadius: '999px', border: '1px solid #30363d',
+                background: '#161b22', color: '#c9d1d9', fontSize: '12px', cursor: 'pointer',
+              }}
+            >
+              {subject}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Search */}
       <form
@@ -254,12 +285,12 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
             {filesError && <p style={{ color: '#f87171', fontSize: '13px' }}>{filesError}</p>}
 
             {files && files.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '12px 0' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '12px 0' }}>
                 {files.map((file) => (
                   <button
                     key={file.name}
                     onClick={() => openSafeExternalUrl(file.url)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', borderRadius: '10px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '13px', cursor: 'pointer', textAlign: 'left' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', borderRadius: '10px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '13px', cursor: 'pointer', textAlign: 'left', flex: 1, minWidth: 220 }}
                   >
                     <FileDown size={16} color="#d6f77a" />
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
@@ -269,26 +300,41 @@ const BooksView: React.FC<{ compact?: boolean }> = ({ compact }) => {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {selected.identifier && (
+            {selected.identifier && (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setReaderItem(selected)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#d6f77a', color: '#1a1d13', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  <BookOpen size={13} /> Read online
+                </button>
                 <button
                   onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}
                   style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
                 >
-                  <ExternalLink size={12} /> Read online at archive.org
+                  <ExternalLink size={12} /> archive.org page
                 </button>
-              )}
-              {selected.openLibraryKey && (
-                <button
-                  onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}
-                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  <ExternalLink size={12} /> Open Library page
-                </button>
-              )}
-            </div>
+              </div>
+            )}
+            {selected.openLibraryKey && (
+              <button
+                onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', marginTop: '8px' }}
+              >
+                <ExternalLink size={12} /> Open Library page
+              </button>
+            )}
           </div>
         </div>
+      )}
+
+      {/* In-app Read Online (OMLE) — archive.org BookReader embed */}
+      {readerItem?.identifier && (
+        <ArchiveReader
+          identifier={readerItem.identifier}
+          title={readerItem.title}
+          onClose={() => setReaderItem(null)}
+        />
       )}
     </div>
   );
