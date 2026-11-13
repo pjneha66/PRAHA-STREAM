@@ -1,6 +1,52 @@
 import { nativeFetchText } from './androidBridge';
 import type { StreamResult } from '../types';
 
+// ── In-app P2P engine (WebTorrent) ────────────────────────────────────────────
+// No TorrServer needed: webtorrent runs inside the WebView over WebRTC +
+// WebSocket trackers and streams the largest video file straight into the
+// HTML5 player. Coverage depends on the swarm, so it is the second engine in
+// the chain (TorrServer first, debrid and external apps after).
+
+interface WebTorrentFile {
+  name: string;
+  length: number;
+  streamToURL: () => Promise<string>;
+}
+interface WebTorrentInstance {
+  files: WebTorrentFile[];
+  infoHash: string;
+  progress: number;
+  destroy: () => void;
+}
+interface WebTorrentClient {
+  add: (magnet: string, opts: Record<string, unknown>, onTorrent: (torrent: WebTorrentInstance) => void) => void;
+  remove: (torrent: WebTorrentInstance, cb?: () => void) => void;
+  destroy: () => void;
+}
+
+const VIDEO_FILE_RE = /\.(mp4|mkv|webm|avi|mov|m4v)$/i;
+
+let webTorrentClient: WebTorrentClient | null = null;
+let activeWebTorrent: WebTorrentInstance | null = null;
+
+async function getWebTorrentClient(): Promise<WebTorrentClient | null> {
+  if (webTorrentClient) return webTorrentClient;
+  try {
+    const mod = await import('webtorrent');
+    const WebTorrent = (mod.default || mod) as new () => WebTorrentClient;
+    webTorrentClient = new WebTorrent();
+    return webTorrentClient;
+  } catch {
+    return null;
+  }
+}
+
+function pickVideoFile(files: WebTorrentFile[]): WebTorrentFile | null {
+  const videos = files.filter((file) => VIDEO_FILE_RE.test(file.name));
+  if (!videos.length) return null;
+  return videos.reduce((best, file) => (file.length > best.length ? file : best), videos[0]);
+}
+
 export interface TorrentStreamStats {
   speedMbps: number;
   activePeers: number;
@@ -31,6 +77,70 @@ export class TorrentStreamingEngine {
   static setHost(host: string): void {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem('praha.torrent.host', host);
+    }
+  }
+
+  /**
+   * In-app P2P: adds the magnet to the WebTorrent engine (WebRTC + WebSocket
+   * trackers), waits for metadata and the first playable buffer of the largest
+   * video file, and returns a blob URL the HTML5 <video> element streams
+   * directly. Resolves null on timeout or when the swarm has no WebRTC peers.
+   */
+  static async resolveViaWebTorrent(
+    magnetOrHash: string,
+    options: { title?: string; timeoutMs?: number } = {},
+  ): Promise<{ url: string; fileName: string; infoHash: string } | null> {
+    const client = await getWebTorrentClient();
+    if (!client) return null;
+
+    const hashMatch = magnetOrHash.match(/urn:btih:([a-zA-Z0-9]+)/i);
+    const infoHash = hashMatch ? hashMatch[1].toLowerCase() : '';
+    if (!magnetOrHash.startsWith('magnet:') && !infoHash) return null;
+    const magnetLink = magnetOrHash.startsWith('magnet:')
+      ? magnetOrHash
+      : `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(options.title || 'PRAHA-Torrent')}`;
+
+    // One torrent at a time — tearing down the previous one frees bandwidth.
+    if (activeWebTorrent) {
+      try { client.remove(activeWebTorrent); } catch { /* already gone */ }
+      activeWebTorrent = null;
+    }
+
+    const timeoutMs = options.timeoutMs ?? 90000;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: { url: string; fileName: string; infoHash: string } | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+
+      try {
+        client.add(magnetLink, { strategy: 'sequential' }, (torrent: WebTorrentInstance) => {
+          activeWebTorrent = torrent;
+          if (settled) return;
+          const file = pickVideoFile(torrent.files);
+          if (!file) { finish(null); return; }
+          file.streamToURL()
+            .then((url) => {
+              // Give the stream a moment to buffer the head of the file so
+              // playback does not stall on the first frame.
+              finish({ url, fileName: file.name, infoHash: torrent.infoHash });
+            })
+            .catch(() => finish(null));
+        });
+      } catch {
+        finish(null);
+      }
+    });
+  }
+
+  static destroyWebTorrent(): void {
+    if (activeWebTorrent) {
+      try { webTorrentClient?.remove(activeWebTorrent); } catch { /* noop */ }
+      activeWebTorrent = null;
     }
   }
 

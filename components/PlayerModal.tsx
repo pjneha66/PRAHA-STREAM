@@ -132,7 +132,10 @@ const PlayerModal: React.FC<{
   const isMagnet = isMagnetOrTorrent(activeStream) && activeStream.url.startsWith('magnet:');
   const isYoutube = Boolean(activeStream.ytId);
   const isEmbed = activeStream.format === 'embed' || /vidsrc\.to\/embed|\/embed\//i.test(activeStream.url || '');
-  const isNative = !isMagnet && !isYoutube && !isEmbed;
+  // In-app P2P (WebTorrent) streams through a blob: URL — LibVLC cannot read
+  // those, so they always play in the web engine.
+  const isBlobStream = activeStream.url.startsWith('blob:');
+  const isNative = !isMagnet && !isYoutube && !isEmbed && !isBlobStream;
 
   const customHeaders = useMemo(() => extractStreamHeaders(activeStream), [activeStream]);
   const hasCustomHeaders = Object.keys(customHeaders).length > 0;
@@ -197,18 +200,41 @@ const PlayerModal: React.FC<{
     }
   };
 
+  const resolveWithWebTorrent = async (): Promise<boolean> => {
+    setTorrentBusy(true);
+    setTorrentError('');
+    try {
+      const result = await TorrentStreamingEngine.resolveViaWebTorrent(buildMagnetUri(activeStream), {
+        title: activeStream.title || media.title,
+        timeoutMs: 90000,
+      });
+      if (!result) {
+        setTorrentError('In-app P2P could not reach peers for this torrent (WebRTC swarms only). Use Debrid, a torrent app, or another source.');
+        return false;
+      }
+      setActiveStream({
+        ...activeStream,
+        url: result.url,
+        format: 'torrent-http',
+        provider: `${activeStream.provider || 'Torrent'} (In-app P2P)`,
+      });
+      return true;
+    } finally {
+      setTorrentBusy(false);
+    }
+  };
+
   const manualStreamTorrent = async () => {
     const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
     if (!isAvail) {
-      setTorrentError('Torrent Engine (TorrServer) is offline on port 8090. Configure Debrid in Settings or open in an external torrent app.');
+      await resolveWithWebTorrent();
       return;
     }
     await resolveWithEngine();
   };
 
-  // P2P auto-resolve: when a magnet stream is selected and a torrent engine
-  // (TorrServer/MatriX) is actually reachable, resolve and play without
-  // requiring the manual button. Without an engine the manual panel stays.
+  // P2P auto-resolve chain: magnet selected -> TorrServer engine -> in-app
+  // WebTorrent P2P -> manual panel. The panel stays only when everything fails.
   const engineAutoTriedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isMagnet) return;
@@ -216,12 +242,31 @@ const PlayerModal: React.FC<{
     if (engineAutoTriedRef.current === magnetKey) return;
     engineAutoTriedRef.current = magnetKey;
     void (async () => {
+      setTorrentBusy(true);
       try {
-        const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
-        if (!isAvail) return;
-        await resolveWithEngine();
+        const isAvail = await TorrentStreamingEngine.checkEngineAvailable().catch(() => false);
+        if (isAvail) {
+          await resolveWithEngine();
+          return;
+        }
+        const web = await TorrentStreamingEngine.resolveViaWebTorrent(buildMagnetUri(activeStream), {
+          title: activeStream.title || media.title,
+          timeoutMs: 90000,
+        });
+        if (web) {
+          setActiveStream({
+            ...activeStream,
+            url: web.url,
+            format: 'torrent-http',
+            provider: `${activeStream.provider || 'Torrent'} (In-app P2P)`,
+          });
+          return;
+        }
+        setTorrentError('Torrent engines unavailable. Try Debrid, another source, or open in an external torrent app.');
       } catch {
         // Manual panel remains available.
+      } finally {
+        setTorrentBusy(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -268,6 +313,7 @@ const PlayerModal: React.FC<{
         <MpvPlayer
           stream={activeStream}
           effectiveUrl={effectiveUrl}
+          forceWebEngine={isBlobStream}
           externalSubtitles={addonSubtitles}
           introSegments={introSegments}
           initialTime={initialTime}

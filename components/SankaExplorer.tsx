@@ -694,7 +694,7 @@ const SankaExplorer: React.FC = () => {
         {' '}Availability and rights depend on the upstream source.
       </p>
 
-      {selected && (
+      {selected && !selected.id.startsWith('archive:') && (
         <div
           className="sanka-modal-backdrop"
           role="presentation"
@@ -873,7 +873,7 @@ const SankaExplorer: React.FC = () => {
         <div
           className="modal-backdrop"
           onMouseDown={(event) => event.target === event.currentTarget && setArchiveItem(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(1, 4, 9, 0.82)', zIndex: 95, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px' }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(1, 4, 9, 0.82)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px' }}
         >
           <div style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '14px', maxWidth: '520px', width: '100%', padding: '18px', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px' }}>
@@ -885,7 +885,7 @@ const SankaExplorer: React.FC = () => {
             {archiveItem.summary && <p style={{ color: '#8b949e', fontSize: '13px', margin: '0 0 10px' }}>{archiveItem.summary}</p>}
             {archiveLoading && (
               <p style={{ color: '#8b949e', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LoaderCircle size={14} className="spin" /> Loading files…
+                <LoaderCircle size={18} className="spin" /> Loading files…
               </p>
             )}
             {archiveError && <p style={{ color: '#f87171', fontSize: '13px' }}>{archiveError}</p>}

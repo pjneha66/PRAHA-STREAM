@@ -1249,7 +1249,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .player-message > span { display: flex; align-items: center; justify-content: center; width: 60px; height: 60px; border-radius: 17px; background: rgba(var(--accent-rgb), .08); color: var(--accent); }
 .player-message h2, .player-error h3 { margin: 17px 0 7px; font-size: 19px; }
 .player-message p, .player-error p { max-width: 480px; margin: 0 0 18px; color: var(--muted); font-size: 10px; line-height: 1.7; }
-.player-message > div, .player-error > div { display: flex; gap: 9px; }
+.player-message > div, .player-error > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
 .player-error { position: absolute; inset: 0; background: #090a0c; color: var(--danger); }
 .player-error p { color: var(--muted); }
 .player-footer { display: flex; align-items: center; gap: 15px; min-height: 60px; padding: 10px 16px; }
@@ -1719,8 +1719,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .details-actions { display: flex; flex-direction: column; width: 100%; gap: 10px; }
   .details-actions .button, .details-status-select { width: 100%; min-height: 48px; font-size: 13px; font-weight: 700; justify-content: center; border-radius: 12px; }
   .details-section { padding: 18px 16px 22px; }
-  .details-episode-card { grid-template-columns: 110px minmax(0, 1fr); gap: 10px; }
+  .details-episode-card { grid-template-columns: minmax(0, 1fr); gap: 10px; flex: 0 0 min(280px, 84vw); }
   .details-episode-card > .button { grid-column: 1 / -1; width: 100%; min-height: 40px; justify-content: center; }
+  /* The floating mini-player (~76px) + bottom nav sit above modals; keep the
+     audiobook sheet content clear of them. */
+  .audiobooks-view .source-modal { margin-bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
   .details-source-note { align-items: flex-start; line-height: 1.5; }
   .source-header { padding: 15px; }
   .source-header h2 { font-size: 16px; }
@@ -1737,6 +1740,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .player-modal { width: 100%; max-height: 100vh; border-radius: 0; }
   .player-source-label, .player-warning { display: none; }
   .player-stage { min-height: 270px; aspect-ratio: 16/10; }
+  .player-message, .player-error { padding: 18px 14px; }
+  .player-message h2, .player-error h3 { font-size: 16px; }
+  .player-message > div .button, .player-error > div .button { min-height: 44px; font-size: 12px; }
   .player-message, .player-error { padding: 20px; }
   .player-message h2 { font-size: 17px; }
   .player-message > div, .player-error > div { flex-direction: column; }
@@ -2072,24 +2078,34 @@ html.dpad-mode select:focus {
   color: var(--muted);
   font-size: 13px;
 }
+/* Episodes: horizontal swipe carousel — flip through episodes with one swipe
+   instead of a long vertical list (user request). */
 .details-episode-list {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 10px;
-  max-height: 360px;
-  overflow-y: auto;
-  padding-right: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 10px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
 .details-episode-card {
   display: grid;
-  grid-template-columns: 148px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 14px;
+  flex: 0 0 min(300px, 78vw);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
+  scroll-snap-align: start;
 }
+.details-episode-card > .details-episode-thumb { width: 100%; }
+.details-episode-card > .details-episode-info { width: 100%; }
+.details-episode-card > .button { width: 100%; justify-content: center; }
 .details-episode-thumb {
   position: relative;
   overflow: hidden;

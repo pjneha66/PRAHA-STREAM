@@ -522,27 +522,34 @@ export async function nativeFetchText(
   // headers on redirects, which silently breaks Stremio addons and Nuvio
   // scrapers. Reachable only from the app frame.
   if (bridgeRpcAvailable() && nativeUrl) {
-    const raw = await prahaRpc<string>(
-      'httpRequest',
-      [nativeUrl, method, JSON.stringify(headers), options.body || '', timeoutMs],
-      timeoutMs + 5000,
-    ).catch(() => null);
-    if (raw !== null) {
-      const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
-        ok?: boolean;
-        status?: number;
-        body?: string;
-        error?: string;
-      };
-      if (parsed.error && !parsed.status) throw new Error(parsed.error);
-      const status = Number(parsed.status || 0);
-      return {
-        ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
-        status,
-        data: parsed.body ?? '',
-      };
+    // Two attempts: a transport-level miss (bridge thread busy, slow first
+    // connect) must NEVER fall through to browser fetch — that is CORS-blocked
+    // in the app WebView, which is exactly the "Stremio addon error" failure.
+    for (const attempt of [1, 2]) {
+      const attemptTimeout = attempt === 1 ? timeoutMs : timeoutMs * 2;
+      const raw = await prahaRpc<string>(
+        'httpRequest',
+        [nativeUrl, method, JSON.stringify(headers), options.body || '', timeoutMs],
+        attemptTimeout + 5000,
+      ).catch(() => null);
+      if (raw !== null) {
+        const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
+          ok?: boolean;
+          status?: number;
+          body?: string;
+          error?: string;
+        };
+        if (parsed.error && !parsed.status) throw new Error(parsed.error);
+        const status = Number(parsed.status || 0);
+        return {
+          ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
+          status,
+          data: parsed.body ?? '',
+        };
+      }
     }
-    // RPC transport-level failure: fall through to the older paths below.
+    // Both RPC attempts failed at transport level: fall through to the older
+    // paths below.
   }
 
   // 2. CapacitorHttp (older WebViews without WebMessageListener): bypasses CORS, handles gzip/redirects/forbidden headers off the main thread.

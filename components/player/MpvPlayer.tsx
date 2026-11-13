@@ -32,6 +32,8 @@ const PlayerMenu: React.FC<{ id: Exclude<MenuId, null>; title: string; active: M
 interface MpvPlayerProps {
   stream: StreamResult;
   effectiveUrl: string;
+  /** In-app P2P blob streams must use the web engine (LibVLC cannot read blob:). */
+  forceWebEngine?: boolean;
   externalSubtitles?: StreamSubtitle[];
   introSegments?: IntroSegment[];
   initialTime?: number;
@@ -54,6 +56,7 @@ interface MpvPlayerProps {
 const MpvPlayer: React.FC<MpvPlayerProps> = ({
   stream,
   effectiveUrl,
+  forceWebEngine = false,
   externalSubtitles = [],
   introSegments = [],
   initialTime = 0,
@@ -208,6 +211,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     url: effectiveUrl,
     // Raw stream URL for the one-shot proxy→direct VLC fallback.
     fallbackUrl: stream.url && stream.url !== effectiveUrl ? stream.url : undefined,
+    forceWebEngine,
     streamHeaders,
     subtitles: preparedSubtitles,
     autoplay,

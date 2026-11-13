@@ -138,7 +138,12 @@ export default defineConfig({
   },
   plugins: [react(), sankaImageRelayPlugin()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, '.') },
+    alias: {
+      '@': path.resolve(__dirname, '.'),
+      // webtorrent's browser graph still imports the node-only DHT client by
+      // name; stub it so the build passes (DHT is impossible over WebRTC).
+      'bittorrent-dht': path.resolve(__dirname, 'src/stubs/bittorrent-dht-stub.ts'),
+    },
   },
   build: {
     chunkSizeWarningLimit: 900,

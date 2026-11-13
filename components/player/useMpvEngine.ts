@@ -56,6 +56,8 @@ interface EngineOptions {
   url: string;
   /** The raw stream URL; used as a one-shot fallback when `url` is a proxy URL that fails. */
   fallbackUrl?: string;
+  /** Skip LibVLC and use the web engine (in-app P2P blob: streams). */
+  forceWebEngine?: boolean;
   streamHeaders?: Record<string, string>;
   subtitles: StreamSubtitle[];
   autoplay: boolean;
@@ -89,6 +91,7 @@ const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
 export function useMpvEngine({
   url,
   fallbackUrl,
+  forceWebEngine = false,
   streamHeaders,
   subtitles,
   autoplay,
@@ -165,14 +168,35 @@ export function useMpvEngine({
     engineNameRef.current = 'HTML5';
     const shouldAutoplay = autoplay || resumeRef.current !== null;
 
-    if (isNativeVlcAvailable()) {
+    if (!forceWebEngine && isNativeVlcAvailable()) {
       engineNameRef.current = 'LibVLC (Hardware)';
       video.style.opacity = '0';
       const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
       nativeVlcPlay(url, streamHeaders || {}, resumeMs);
 
+      // Black-screen guard: if LibVLC produces no frames within 12s, fall back
+      // to the direct URL once (headers are applied natively), then surface
+      // an error instead of a silent black screen (IPTV black preview fix).
+      let sawVlcOutput = false;
+      const vlcReadyTimeout = setTimeout(() => {
+        if (disposed || sawVlcOutput) return;
+        if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
+          proxyFallbackTried = true;
+          nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
+          return;
+        }
+        if (!proxyFallbackTried) {
+          proxyFallbackTried = true;
+          // Retry the same URL once — a dead first connection is common for IPTV.
+          nativeVlcPlay(url, streamHeaders || {}, 0);
+          return;
+        }
+        onFatalError('This live stream did not start. Try another source or an external player.');
+      }, 12000);
+
       const onVlcTime = (e: any) => {
         if (disposed) return;
+        sawVlcOutput = true;
         const detail = e.detail || {};
         const cur = (detail.time || 0) / 1000;
         const dur = (detail.duration || 0) / 1000;
@@ -186,6 +210,7 @@ export function useMpvEngine({
 
       const onVlcState = (e: any) => {
         if (disposed) return;
+        sawVlcOutput = true;
         const detail = e.detail || {};
         setPlaying(Boolean(detail.playing));
         setWaiting(Boolean(detail.buffering));
@@ -258,6 +283,7 @@ export function useMpvEngine({
 
       return () => {
         disposed = true;
+        clearTimeout(vlcReadyTimeout);
         window.removeEventListener('praha:vlc-time', onVlcTime);
         window.removeEventListener('praha:vlc-state', onVlcState);
         window.removeEventListener('praha:vlc-tracks', onVlcTracks);
@@ -421,7 +447,7 @@ export function useMpvEngine({
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, autoplay, onFatalError, reloadKey]);
+  }, [url, forceWebEngine, autoplay, onFatalError, reloadKey]);
 
   /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {

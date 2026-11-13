@@ -33,28 +33,27 @@ export interface FlowSource<T> {
 
 export const MIRROR_STORAGE_KEY = 'praha.v2.flow-mirrors';
 
-/** Mixed list so one dead ecosystem cannot take the tab down. */
+/** Mixed list so one dead ecosystem cannot take the tab down.
+ * Order: instances verified live on 2026-11-13 (search endpoint answered);
+ * dead ones removed rather than leaving them in the probe path. */
 export const DEFAULT_MIRRORS = [
   'https://api.piped.private.coffee',
-  'https://pipedapi.kavin.rocks',
-  'https://inv.nadeko.net',
-  'https://pipedapi.adminforge.de',
-  'https://invidious.nerdvpn.de',
-  'https://pipedapi.leptons.xyz',
-  'https://invidious.tiekoetter.com',
-  'https://pipedapi.drgns.space',
-  'https://piped-api.codespace.cz',
-  'https://pipedapi.orangenet.cc',
-  'https://yt.chocolatemoo53.com',
   'https://pipedapi.reallyaweso.me',
+  'https://inv.nadeko.net',
+  'https://invidious.tiekoetter.com',
+  'https://invidious.nerdvpn.de',
+  'https://yt.chocolatemoo53.com',
+  'https://pipedapi.kavin.rocks',
 ];
 
-/** Instances known to proxy media streams, used when a video has no audio URLs. */
+/** Instances known to proxy media streams, used when a video has no audio URLs.
+ * kavin.rocks dropped off (403); the rest answered /streams. */
 const MEDIA_FALLBACKS = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
   'https://invidious.tiekoetter.com',
-  'https://pipedapi.kavin.rocks',
+  'https://api.piped.private.coffee',
+  'https://pipedapi.reallyaweso.me',
 ];
 
 /** The last mirror that answered; reused so later calls are not re-probed. */
