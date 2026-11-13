@@ -84,6 +84,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const gestureRef = useRef<{ x: number; y: number; mode: 'none' | 'seek' | 'volume' | 'brightness'; base: number } | null>(null);
   const tapRef = useRef<{ time: number; zone: 'left' | 'center' | 'right' } | null>(null);
   const lastTapRef = useRef<{ time: number; zone: 'left' | 'center' | 'right' } | null>(null);
+  const seekChainRef = useRef<{ side: 'left' | 'right'; amount: number; last: number } | null>(null);
   const osdTimer = useRef<number | null>(null);
 
   const [fatal, setFatal] = useState('');
@@ -212,6 +213,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     // Raw stream URL for the one-shot proxy→direct VLC fallback.
     fallbackUrl: stream.url && stream.url !== effectiveUrl ? stream.url : undefined,
     forceWebEngine,
+    // Live sources get the frozen-stream watchdog in the engine.
+    isLive: media?.source === 'iptv' || stream?.sourceType === 'iptv',
     streamHeaders,
     subtitles: preparedSubtitles,
     autoplay,
@@ -499,7 +502,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     }
 
     if (gesture.mode === 'seek' && duration) {
-      const delta = (deltaX / 320) * 90;
+      // Duration-scaled sweep (port of Nuvio): short content needs precision,
+      // long content needs reach — a full-width drag covers 60/90/120s.
+      const sweep = duration < 1800 ? 60 : duration < 3600 ? 90 : 120;
+      const delta = (deltaX / 320) * sweep;
       engine.seekTo(clamp(currentTime + delta, 0, duration));
       setGestureLabel(`${delta > 0 ? '+' : '−'}${formatTime(Math.abs(delta))}`);
     } else if (gesture.mode === 'volume') {
@@ -536,9 +542,17 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     lastTapRef.current = isDoubleTap ? null : tap;
     if (tap.zone === 'center') { wakeControls(); return; }
     if (!isDoubleTap) { wakeControls(); return; }
+    // Accumulating double-tap seek (port of Nuvio): rapid taps chain
+    // 10s → 20s → 30s… each tap applies one step from the current position
+    // while the ripple shows the chained total; a >800ms gap restarts.
+    const now = Date.now();
+    const previousChain = seekChainRef.current;
+    const chained = previousChain && previousChain.side === tap.zone && now - previousChain.last < 800;
+    const accumulated = (chained ? previousChain.amount : 0) + settings.seekStep;
+    seekChainRef.current = { side: tap.zone, amount: accumulated, last: now };
     const delta = tap.zone === 'left' ? -settings.seekStep : settings.seekStep;
     engine.seekBy(delta);
-    showRipple(tap.zone === 'left' ? 'left' : 'right', `${delta > 0 ? '+' : '−'}${settings.seekStep}s`);
+    showRipple(tap.zone === 'left' ? 'left' : 'right', `${delta > 0 ? '+' : '−'}${accumulated}s`);
   };
 
   const onUploadSubtitles = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -814,6 +828,15 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           >
             <div className="mpv-seek-track">
               <span className="buffered" style={{ width: `${bufferedRatio * 100}%` }} />
+              {/* Skip segments (intro/recap/credits) painted on the timeline —
+                  port of PlayTorrio's colored scrubber markers. */}
+              {duration > 0 && introSegments.map((seg, index) => (
+                <span
+                  key={`${seg.start}-${index}`}
+                  className="mpv-seek-skipseg"
+                  style={{ left: `${Math.min(100, (seg.start / duration) * 100)}%`, width: `${Math.min(100, ((seg.end - seg.start) / duration) * 100)}%` }}
+                />
+              ))}
               <span className="played" style={{ width: `${progressRatio * 100}%` }} />
             </div>
             <span className="mpv-seek-handle" style={{ left: `${progressRatio * 100}%` }} />

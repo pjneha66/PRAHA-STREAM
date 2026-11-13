@@ -58,6 +58,8 @@ interface EngineOptions {
   fallbackUrl?: string;
   /** Skip LibVLC and use the web engine (in-app P2P blob: streams). */
   forceWebEngine?: boolean;
+  /** Live source (IPTV): enables the frozen-stream watchdog. */
+  isLive?: boolean;
   streamHeaders?: Record<string, string>;
   subtitles: StreamSubtitle[];
   autoplay: boolean;
@@ -92,6 +94,7 @@ export function useMpvEngine({
   url,
   fallbackUrl,
   forceWebEngine = false,
+  isLive = false,
   streamHeaders,
   subtitles,
   autoplay,
@@ -156,6 +159,8 @@ export function useMpvEngine({
   const [loop, setLoop] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const loopRef = useRef(loop);
   loopRef.current = loop;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
 
   /** Attach the source: hls.js for HLS, dashjs for MPD, mpegts.js for TS/FLV, or native <video>. */
   useEffect(() => {
@@ -200,8 +205,39 @@ export function useMpvEngine({
       let guardAttempt = 0;
       let guardDeadline = Date.now() + GUARD_MS;
       const rearmGuard = () => { guardAttempt += 1; guardDeadline = Date.now() + GUARD_MS; };
+      // Frozen-live watchdog (port of PlayTorrio): a live stream whose position
+      // stops advancing while claiming to play is reconnecting, not paused.
+      let liveLastTime = 0;
+      let liveStallTicks = 0;
       const vlcReadyInterval = window.setInterval(() => {
-        if (disposed || sawVlcOutput) return;
+        if (disposed) return;
+        if (!sawVlcOutput) {
+          runStartGuard();
+          return;
+        }
+        // Playback has produced output — watch live streams for freezes.
+        if (!isLive || !playingRef.current) { liveStallTicks = 0; return; }
+        if (lastVlcTimeSec > liveLastTime + 0.5) {
+          liveLastTime = lastVlcTimeSec;
+          liveStallTicks = 0;
+          return;
+        }
+        liveStallTicks += 1;
+        if (liveStallTicks < 6) return; // ~12s frozen
+        liveStallTicks = 0;
+        // Reconnect once at the same position before giving the error path a try.
+        if (vlcEscalationRef.current.count < 1) {
+          vlcEscalationRef.current = { url, count: 1 };
+          resumeRef.current = lastVlcTimeSec;
+          setRecoveryStatus('Live stream froze — reconnecting…');
+          setReloadKey((key) => key + 1);
+        } else {
+          setRecoveryStatus('');
+          onFatalError('This live stream froze. Try another channel or source.');
+        }
+      }, 2000);
+
+      function runStartGuard() {
         if (Date.now() < guardDeadline) return;
         if (guardAttempt === 0) {
           if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
@@ -234,7 +270,7 @@ export function useMpvEngine({
         window.clearInterval(vlcReadyInterval);
         setWaiting(false);
         onFatalError('This stream did not start. Try another source or an external player.');
-      }, 2000);
+      }
 
       let recoveryCleared = false;
       const onVlcTime = (e: any) => {

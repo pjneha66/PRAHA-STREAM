@@ -1511,3 +1511,7 @@ body.player-vlc-active,
 /* Jump-to-live pill in the progress row. */
 .mpv-live-pill { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 3px 9px; border: 1px solid rgba(239,68,68,.5); border-radius: 999px; background: rgba(239,68,68,.12); color: #f87171; font-size: 10px; font-weight: 800; letter-spacing: .08em; cursor: pointer; flex-shrink: 0; }
 .mpv-live-pill:hover { background: rgba(239,68,68,.25); }
+
+/* Skip-segment markers on the timeline (intro / recap / credits). */
+.mpv-seek-track { position: relative; }
+.mpv-seek-skipseg { position: absolute; top: 0; bottom: 0; background: rgba(245, 158, 11, .45); border-radius: 2px; pointer-events: none; }
