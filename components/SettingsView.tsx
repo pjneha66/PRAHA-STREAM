@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { readBadgeRules, saveBadgeRules, type BadgeRule } from '../services/badgeRules';
+import { hashPin } from '../services/profilePin';
 import {
   Blocks, Check, CircleAlert, Database, Download, ExternalLink, Eye, EyeOff, Gauge,
   KeyRound, Keyboard, LoaderCircle, Magnet, MonitorPlay, Package, RefreshCw, RotateCcw,
@@ -41,6 +43,84 @@ const THEME_ACCENTS: Array<{ id: AppThemeAccent; label: string; color: string }>
   { id: 'lime', label: 'Lime', color: '#a2f244' },
 ];
 
+
+/** Settings search (port of Nuvio's SettingsSearch): filters settings cards by keyword. */
+const SettingsSearchBox: React.FC = () => {
+  const [term, setTerm] = React.useState('');
+  React.useEffect(() => {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.settings-card'));
+    const q = term.trim().toLowerCase();
+    cards.forEach((card) => {
+      if (!q) { card.style.display = ''; return; }
+      const text = (card.textContent || '').toLowerCase();
+      card.style.display = text.includes(q) ? '' : 'none';
+    });
+    return () => { cards.forEach((card) => { card.style.display = ''; }); };
+  }, [term]);
+  return (
+    <div style={{ position: 'relative', marginBottom: '16px' }}>
+      <input
+        value={term}
+        onChange={(event) => setTerm(event.target.value)}
+        placeholder="Search settings…"
+        aria-label="Search settings"
+        style={{ width: '100%', padding: '10px 40px 10px 14px', borderRadius: '10px', border: term ? '1px solid #58a6ff' : '1px solid var(--line-strong, #30363d)', background: 'var(--surface, #161b22)', color: 'var(--text, #f0f6fc)', fontSize: '13px', outline: 'none' }}
+      />
+      {term && (
+        <button onClick={() => setTerm('')} aria-label="Clear settings search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: '12px' }}>
+          Clear
+        </button>
+      )}
+    </div>
+  );
+};
+
+/** Stream badge rules editor (port of Nuvio's badge packs): one rule per line —
+    /regex/ | Label | #color. Rules show as colored badges in the source list. */
+const BadgeRulesEditor: React.FC = () => {
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+  const [rules, setRules] = React.useState<BadgeRule[]>(() => readBadgeRules());
+
+  const openEditor = () => {
+    setDraft(rules.map((rule) => `${rule.pattern} | ${rule.label} | ${rule.color}`).join('\n'));
+    setOpen(true);
+  };
+
+  const save = () => {
+    const parsed: BadgeRule[] = [];
+    draft.split('\n').forEach((line) => {
+      const parts = line.split('|').map((part) => part.trim());
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        parsed.push({ pattern: parts[0], label: parts[1], color: parts[2] || '#58a6ff' });
+      }
+    });
+    saveBadgeRules(parsed);
+    setRules(parsed);
+    setOpen(false);
+  };
+
+  return (
+    <div className="setting-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+        <div><strong>Stream badge rules</strong><p>Color-tag streams in the source list — one rule per line: <code>pattern | Label | #color</code>. {rules.length ? `(${rules.length} active)` : ''}</p></div>
+        <button className="button button-secondary button-small" onClick={open ? save : openEditor}>{open ? 'Save rules' : 'Edit rules'}</button>
+      </div>
+      {open && (
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          rows={5}
+          spellCheck={false}
+          placeholder={'4k|4K UHD|#f5c518\nhevc|HEVC|#3fb950'}
+          style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid var(--line-strong, #30363d)', background: 'var(--surface, #161b22)', color: 'var(--text, #f0f6fc)', fontSize: '12px', fontFamily: 'monospace', resize: 'vertical' }}
+        />
+      )}
+    </div>
+  );
+};
+
+
 const SettingsView: React.FC<{
   settings: AppSettings;
   onChange: (settings: AppSettings) => void;
@@ -60,7 +140,7 @@ const SettingsView: React.FC<{
   onCheckUpdates?: () => void;
 }> = ({
   settings, onChange, onReset, addons, repositories,
-  profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile, onOpenProfilePicker,
+  profiles, activeProfile, onSelectProfile, onCreateProfile, onDeleteProfile, onOpenProfilePicker, onUpdateProfile,
   onExportBackup, onImportBackup, jellyfinSnapshot, onJellyfinSnapshotChange,
   onCheckUpdates,
 }) => {
@@ -155,6 +235,7 @@ const SettingsView: React.FC<{
 
       <div className="settings-layout">
         <div className="settings-main">
+          <SettingsSearchBox />
           {/* Household Profiles */}
           <section className="settings-card">
             <div className="settings-card-heading">
@@ -190,6 +271,27 @@ const SettingsView: React.FC<{
                       <small>{prof.isKids ? 'Kids profile' : 'Standard profile'}{prof.id === activeProfile.id ? ' · Active' : ''}</small>
                     </div>
                   </button>
+                  {prof.id !== 'default' && onUpdateProfile && (
+                    <button
+                      className="icon-button"
+                      title={prof.pinHash ? 'Change or remove PIN' : 'Set a PIN'}
+                      aria-label={prof.pinHash ? `Change PIN for ${prof.name}` : `Set PIN for ${prof.name}`}
+                      onClick={async () => {
+                        if (prof.pinHash) {
+                          if (window.confirm(`Remove the PIN from ${prof.name}?`)) onUpdateProfile(prof.id, { pinHash: undefined });
+                          return;
+                        }
+                        const pin = window.prompt(`Set a numeric PIN for ${prof.name} (4-8 digits):`);
+                        if (!pin) return;
+                        if (!/^\d{4,8}$/.test(pin)) { window.alert('PIN must be 4-8 digits.'); return; }
+                        const confirmPin = window.prompt('Repeat the PIN:');
+                        if (pin !== confirmPin) { window.alert('PINs did not match.'); return; }
+                        onUpdateProfile(prof.id, { pinHash: await hashPin(pin) });
+                      }}
+                    >
+                      <ShieldCheck size={15} color={prof.pinHash ? '#3fb950' : undefined} />
+                    </button>
+                  )}
                   {prof.id !== 'default' && (
                     <button className="icon-button danger" onClick={() => onDeleteProfile(prof.id)} aria-label={`Delete ${prof.name}`}>
                       <Trash2 size={15} />
@@ -514,6 +616,7 @@ const SettingsView: React.FC<{
             <div className="setting-row"><div><strong>Compact posters</strong><p>Fit more titles on screen while browsing.</p></div><Toggle checked={settings.compactCards} onChange={(value) => update('compactCards', value)} label="Compact posters" /></div>
             <div className="setting-row"><div><strong>Reduce motion</strong><p>Minimize transitions and animated effects.</p></div><Toggle checked={settings.reduceMotion} onChange={(value) => update('reduceMotion', value)} label="Reduce motion" /></div>
             <div className="setting-row"><div><strong>Preferred audio language</strong><p>Used to prioritize matching streams when available.</p></div><select className="settings-select" value={settings.preferredLanguage} onChange={(event) => update('preferredLanguage', event.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="other">Other</option></select></div>
+            <BadgeRulesEditor />
           </section>
 
           {/* Player */}

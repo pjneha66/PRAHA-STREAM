@@ -124,6 +124,36 @@ async function resolveTorBox(magnet: string, apiKey: string): Promise<string> {
   return dlJson.data;
 }
 
+// Link-reuse cache (port of Nuvio's stream-link cache): the same torrent on
+// the same provider resolves to the same direct URL for hours — reuse it
+// instead of burning an API call per play. TTL 6h, capped.
+const LINK_CACHE_KEY = 'praha.debrid.linkcache.v1';
+const LINK_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const LINK_CACHE_MAX = 60;
+
+function readLinkCache(): Record<string, { url: string; ts: number }> {
+  try {
+    const raw = localStorage.getItem(LINK_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, { url: string; ts: number }>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function cacheDebridLink(infoHash: string, provider: string, url: string): void {
+  try {
+    const cache = readLinkCache();
+    cache[`${provider}:${infoHash}`] = { url, ts: Date.now() };
+    const entries = Object.entries(cache)
+      .filter(([, value]) => Date.now() - value.ts < LINK_CACHE_TTL_MS)
+      .sort((a, b) => b[1].ts - a[1].ts)
+      .slice(0, LINK_CACHE_MAX);
+    localStorage.setItem(LINK_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // best-effort
+  }
+}
+
 export async function resolveDebridStream(stream: StreamResult, debrid: DebridSettings): Promise<StreamResult> {
   if (debrid.provider === 'none' || !debrid.apiKey.trim()) {
     throw new Error('Configure Real-Debrid, AllDebrid, or TorBox in Settings → Debrid first.');
@@ -131,6 +161,19 @@ export async function resolveDebridStream(stream: StreamResult, debrid: DebridSe
   const magnet = buildMagnetUri(stream);
   if (!magnet.startsWith('magnet:')) {
     throw new Error('This source does not include a valid magnet or infoHash.');
+  }
+
+  const infoHashMatch = magnet.match(/urn:btih:([a-zA-Z0-9]+)/i);
+  const infoHash = infoHashMatch ? infoHashMatch[1].toLowerCase() : '';
+  if (infoHash) {
+    const cached = readLinkCache()[`${debrid.provider}:${infoHash}`];
+    if (cached && Date.now() - cached.ts < LINK_CACHE_TTL_MS) {
+      return {
+        ...stream,
+        url: cached.url,
+        provider: `${stream.provider || stream.sourceName} · ${debrid.provider === 'realdebrid' ? 'Real-Debrid' : debrid.provider === 'alldebrid' ? 'AllDebrid' : 'TorBox'} (cached link)`,
+      };
+    }
   }
 
   let directUrl: string;
@@ -141,6 +184,7 @@ export async function resolveDebridStream(stream: StreamResult, debrid: DebridSe
   } else {
     directUrl = await resolveTorBox(magnet, debrid.apiKey);
   }
+  if (infoHash) cacheDebridLink(infoHash, debrid.provider, directUrl);
 
   const label = debrid.provider === 'realdebrid' ? 'Real-Debrid' : debrid.provider === 'alldebrid' ? 'AllDebrid' : 'TorBox';
   return {

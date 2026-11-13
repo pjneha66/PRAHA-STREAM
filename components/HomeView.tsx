@@ -5,6 +5,25 @@ import {
 import type { HomeCatalog, InstalledAddon, MediaItem, NuvioRepository, WatchProgress } from '../types';
 import { Artwork, ContinueCard, MediaRow } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
+import { useEffect, useState as useLocalState } from 'react';
+import { probeNetworkCondition, NETWORK_CONDITION_COPY, type NetworkCondition } from '../services/networkCondition';
+
+/** Network-condition-aware hint under source errors (port of Nuvio's NetworkOfflineCard). */
+const NetworkHint: React.FC = () => {
+  const [condition, setCondition] = useLocalState<NetworkCondition | null>(null);
+  useEffect(() => {
+    let active = true;
+    probeNetworkCondition().then((result) => { if (active) setCondition(result); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  if (!condition || condition === 'online') return null;
+  const copy = NETWORK_CONDITION_COPY[condition];
+  return (
+    <p style={{ marginTop: '10px', fontSize: '12.5px', color: '#f5c518', maxWidth: '420px' }}>
+      {condition === 'no-internet' ? copy.title + ' — ' + copy.message : copy.message}
+    </p>
+  );
+};
 import AddonHomeRows from './AddonHomeRows';
 import JellyfinHome from './JellyfinHome';
 import type { JellyfinSnapshot } from '../services/jellyfinService';
@@ -115,6 +134,7 @@ const HomeView: React.FC<HomeViewProps> = ({
     return (
       <div className="home-view page-enter">
         <div className="empty-state"><span><CircleAlert size={28} /></span><h2>{tmdbReady ? 'TMDB did not answer' : 'Your metadata providers did not answer'}</h2><p>{error}</p>
+          <NetworkHint />
           <div className="tmdb-setup-actions">
             <button className="button button-primary" onClick={onRetry}><RotateCcw size={16} /> Try again</button>
             <button className="button button-secondary" onClick={onOpenSettings}>Check your API key</button>

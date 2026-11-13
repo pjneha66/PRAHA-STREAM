@@ -5,6 +5,7 @@ import {
   Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, VolumeX, X,
 } from 'lucide-react';
 import SkeletonGrid from './SkeletonGrid';
+import { fetchSyncedLyrics, activeLyricIndex, type LyricLine } from '../services/lyricsService';
 import {
   OctaveMusicService, FALLBACK_FEATURED_SECTIONS, type MusicAlbum, type MusicArtist,
   type MusicTrack, type OctaveSearchData,
@@ -36,6 +37,18 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
   const [queue, setQueue] = useState<MusicTrack[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLyrics(null);
+    if (currentTrack?.title && currentTrack?.artist) {
+      fetchSyncedLyrics({ title: currentTrack.title, artist: currentTrack.artist, duration: currentTrack.duration })
+        .then((lines) => { if (active) setLyrics(lines); })
+        .catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [currentTrack?.id]);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.85);
@@ -587,6 +600,19 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTrack.title}</span>
+                  {lyrics && (
+                    <div className="music-lyrics" aria-label="Synced lyrics">
+                      {(() => {
+                        const idx = activeLyricIndex(lyrics, currentTime);
+                        const windowLines = lyrics.slice(Math.max(0, idx - 1), idx + 3);
+                        return windowLines.map((line, i) => (
+                          <p key={`${line.time}-${i}`} className={Math.max(0, idx - 1) + i === idx ? 'active' : ''}>
+                            {line.text || '♪'}
+                          </p>
+                        ));
+                      })()}
+                    </div>
+                  )}
                   {streamLoading ? null : (
                     <span style={{
                       flexShrink: 0,

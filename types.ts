@@ -123,6 +123,8 @@ export interface UserProfile {
   avatarImage?: string;
   isKids?: boolean;
   createdAt: number;
+  /** SHA-256 hex of a 4-8 digit PIN (port of Nuvio's ProfilePinCrypto). */
+  pinHash?: string;
 }
 
 export interface StremioResource {
@@ -167,6 +169,10 @@ export interface InstalledAddon {
   enabled: boolean;
   installedAt: number;
   updatedAt: number;
+  /** User-assigned display name (port of Nuvio's ManagedAddon rename). */
+  renamedTitle?: string;
+  /** Per-feature switches (port of PlayTorrio's per-addon checkboxes). */
+  features?: { catalog?: boolean; search?: boolean; streams?: boolean };
 }
 
 export interface NuvioSettingField {

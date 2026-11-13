@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { matchBadgeRule } from '../services/badgeRules';
 import {
   Blocks, Check, CircleAlert, Copy, Film, HardDrive, Languages, Play, RefreshCw,
   ShieldCheck, Users, X, Zap, Star,
@@ -173,7 +174,13 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
               <button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
               <div className="stream-main">
                 <div className="stream-title">
-                  <strong>{stream.title}</strong>
+                  <strong>
+                    {stream.title}
+                    {(() => {
+                      const badge = matchBadgeRule(`${stream.title || ''} ${stream.provider || ''}`);
+                      return badge ? <span className="stream-badge-rule" style={{ color: badge.color, borderColor: badge.color }}>{badge.label}</span> : null;
+                    })()}
+                  </strong>
                   {badges.resolution && <span className="badge-pill badge-res">{badges.resolution}</span>}
                   {badges.hdr && <span className="badge-pill badge-hdr">{badges.hdr}</span>}
                   {badges.audio && <span className="badge-pill badge-audio">{badges.audio}</span>}

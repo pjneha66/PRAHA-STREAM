@@ -2997,3 +2997,21 @@ html.player-vlc-active .app-shell,
 .sanka-scrubber-label { font-size: 12px; font-weight: 600; color: #fff; min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
 .sanka-card-reading .sanka-poster::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #3fb950; }
 .sanka-reading-hint { display: inline-flex; margin-top: 5px; font-size: 10.5px; font-weight: 600; color: #3fb950; }
+
+/* Addon per-feature toggles */
+.extension-feature-toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+.extension-feature-toggles button { padding: 4px 10px; border: 1px solid var(--line-strong, #30363d); border-radius: 999px; background: transparent; color: var(--muted, #8b949e); font-size: 11px; font-weight: 600; cursor: pointer; }
+.extension-feature-toggles button.active { border-color: rgba(88,166,255,.5); color: #58a6ff; background: rgba(88,166,255,.08); }
+
+/* Discover recent searches */
+.discover-recent { margin-top: 24px; }
+.discover-recent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.discover-recent-head h2 { margin: 0; font-size: 15px; color: var(--text, #f0f6fc); }
+
+/* User stream badge rules */
+.stream-badge-rule { display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; vertical-align: middle; }
+
+/* Music synced lyrics */
+.music-lyrics { margin-top: 6px; max-height: 84px; overflow: hidden; }
+.music-lyrics p { margin: 2px 0; font-size: 12px; color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .2s ease; }
+.music-lyrics p.active { color: var(--accent, #f5c518); font-weight: 700; }

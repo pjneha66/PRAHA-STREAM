@@ -1,5 +1,6 @@
 import { nativeFetchText } from './androidBridge';
 import type { StreamResult } from '../types';
+import { parseTorrentTitle, torrentFileMatches } from './torrentTitle';
 
 // ── In-app P2P engine (WebTorrent) ────────────────────────────────────────────
 // No TorrServer needed: webtorrent runs inside the WebView over WebRTC +
@@ -41,10 +42,15 @@ async function getWebTorrentClient(): Promise<WebTorrentClient | null> {
   }
 }
 
-function pickVideoFile(files: WebTorrentFile[]): WebTorrentFile | null {
+function pickVideoFile(files: WebTorrentFile[], releaseTitle?: string): WebTorrentFile | null {
   const videos = files.filter((file) => VIDEO_FILE_RE.test(file.name));
   if (!videos.length) return null;
-  return videos.reduce((best, file) => (file.length > best.length ? file : best), videos[0]);
+  // PTT-driven episode matching (port of PlayTorrio): when the release name
+  // carries S/E info, prefer files of that episode over plain size ranking.
+  const parsed = releaseTitle ? parseTorrentTitle(releaseTitle) : null;
+  const matching = videos.filter((file) => torrentFileMatches(parsed, file.name));
+  const pool = matching.length ? matching : videos;
+  return pool.reduce((best, file) => (file.length > best.length ? file : best), pool[0]);
 }
 
 export interface TorrentStreamStats {
@@ -121,7 +127,7 @@ export class TorrentStreamingEngine {
         client.add(magnetLink, { strategy: 'sequential' }, (torrent: WebTorrentInstance) => {
           activeWebTorrent = torrent;
           if (settled) return;
-          const file = pickVideoFile(torrent.files);
+          const file = pickVideoFile(torrent.files, options.title);
           if (!file) { finish(null); return; }
           file.streamToURL()
             .then((url) => {

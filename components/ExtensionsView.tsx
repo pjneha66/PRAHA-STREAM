@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowDown, ArrowUp, ArrowUpRight, Blocks, Check, ChevronDown, ChevronUp, CircleAlert,
   Cloud, Compass, ExternalLink, Layers, Package, PackageOpen, Play, Plug, RefreshCw,
-  Search, Settings2, ShieldCheck, Sliders, Trash2, WandSparkles, X, Zap,
+  Search, Settings2, ShieldCheck, Sliders, Trash2, WandSparkles, X, Zap, Pencil,
 } from 'lucide-react';
 import { CURATED_EXTENSIONS, type CuratedExtensionItem } from '../data/extensionCatalog';
 import {
@@ -287,7 +287,7 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
                   <div className="extension-logo">{addon.manifest.logo ? <img src={addon.manifest.logo} alt="" /> : <Blocks size={24} />}</div>
                   <div className="extension-info">
                     <div className="extension-title">
-                      <h3>{addon.manifest.name}</h3>
+                      <h3>{addon.renamedTitle || addon.manifest.name}</h3>
                       <span>v{addon.manifest.version}</span>
                       {addon.enabled && <span className="active-badge"><i />ACTIVE</span>}
                     </div>
@@ -305,6 +305,19 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
                         <Settings2 size={16} />
                       </a>
                     )}
+                    <button
+                      className="icon-button"
+                      onClick={() => {
+                        const next = window.prompt('Rename addon', addon.renamedTitle || addon.manifest.name);
+                        if (next === null) return;
+                        const clean = next.trim();
+                        setAddons((current) => current.map((entry) => entry.manifestUrl === addon.manifestUrl ? { ...entry, renamedTitle: clean || undefined } : entry));
+                      }}
+                      aria-label={`Rename ${addon.manifest.name}`}
+                      title="Rename addon"
+                    >
+                      <Pencil size={15} />
+                    </button>
                     <Toggle checked={addon.enabled} onChange={(enabled) => setAddons((current) => current.map((entry) => entry.manifestUrl === addon.manifestUrl ? { ...entry, enabled } : entry))} label={`${addon.enabled ? 'Disable' : 'Enable'} ${addon.manifest.name}`} />
                     <button className="icon-button" onClick={() => refreshAddon(addon)} disabled={busy === addon.manifestUrl} aria-label={`Refresh ${addon.manifest.name}`}><RefreshCw size={17} className={busy === addon.manifestUrl ? 'spin' : ''} /></button>
                     <button className="icon-button danger" onClick={() => { setAddons((current) => current.filter((entry) => entry.manifestUrl !== addon.manifestUrl)); notify(`${addon.manifest.name} removed.`); }} aria-label={`Remove ${addon.manifest.name}`}><Trash2 size={17} /></button>
@@ -316,6 +329,23 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
                     <span><b>Manifest</b>{addon.manifestUrl}</span>
                     <span><b>Addon ID</b>{addon.manifest.id}</span>
                     <span><b>Updated</b>{new Date(addon.updatedAt).toLocaleDateString()}</span>
+                    <div className="extension-feature-toggles" role="group" aria-label="Addon feature switches">
+                      {(['catalog', 'search', 'streams'] as const).map((feature) => {
+                        const active = addon.features?.[feature] !== false;
+                        return (
+                          <button
+                            key={feature}
+                            type="button"
+                            className={active ? 'active' : ''}
+                            onClick={() => setAddons((current) => current.map((entry) => entry.manifestUrl === addon.manifestUrl
+                              ? { ...entry, features: { ...entry.features, [feature]: !active } }
+                              : entry))}
+                          >
+                            {feature === 'catalog' ? 'Catalogs' : feature === 'search' ? 'Search' : 'Streams'} {active ? 'on' : 'off'}
+                          </button>
+                        );
+                      })}
+                    </div>
                     {addon.manifest.catalogs.length > 0 && (
                       <div>{addon.manifest.catalogs.map((catalog) => <span key={`${catalog.type}-${catalog.id}`}>{catalog.name || catalog.id} · {catalog.type}</span>)}</div>
                     )}

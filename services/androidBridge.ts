@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import type { StreamResult } from '../types';
+import { isRateLimited, noteRateLimited } from './rateLimit';
 
 export interface NativeAudioTrackInfo {
   id: number;
@@ -516,6 +517,12 @@ export async function nativeFetchText(
   // http(s) URLs may reach it. Invalid URLs fall through to browser `fetch`.
   const nativeUrl = safeRemoteUrl(url);
 
+  // Global 429 cooldown (port of Nuvio's BackendRateLimit): a rate-limited
+  // host gets short-circuited with a fast local 429 instead of more traffic.
+  if (nativeUrl && isRateLimited(nativeUrl)) {
+    return { ok: false, status: 429, data: '' };
+  }
+
   // 1. Origin-gated async native bridge (WebView >= 116): full CORS bypass
   // with correct redirect/header handling and gzip/deflate decoding. Tried
   // FIRST because CapacitorHttp mangles JSON re-parsing and drops custom
@@ -545,6 +552,7 @@ export async function nativeFetchText(
         if (parsed) {
           if (parsed.error && !parsed.status) throw new Error(parsed.error);
           const status = Number(parsed.status || 0);
+          if (status === 429) noteRateLimited(nativeUrl);
           return {
             ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
             status,

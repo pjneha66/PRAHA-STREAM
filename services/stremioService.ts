@@ -3,6 +3,7 @@ import type {
   StremioResource, StreamResult, StreamSubtitle,
 } from '../types';
 import { nativeFetchText } from './androidBridge';
+import { sortByRelevance } from './searchRelevance';
 
 async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T> {
   const response = await nativeFetchText(url, {
@@ -119,7 +120,26 @@ export function mapStremioMeta(meta: Record<string, any>, addon: InstalledAddon,
   };
 }
 
+// In-flight dedup (port of Nuvio's CatalogData): identical catalog URLs from
+// parallel callers (home + discover + search) share one request.
+const catalogInflight = new Map<string, Promise<MediaItem[]>>();
+
 export async function fetchStremioCatalog(
+  addon: InstalledAddon,
+  catalog: StremioCatalog,
+  options: { search?: string; genre?: string; skip?: number } = {},
+): Promise<MediaItem[]> {
+  const cacheKey = `${addon.manifestUrl}|${catalog.type}|${catalog.id}|${options.search || ''}|${options.genre || ''}|${options.skip || 0}`;
+  const inflight = catalogInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const job = doFetchStremioCatalog(addon, catalog, options).finally(() => {
+    catalogInflight.delete(cacheKey);
+  });
+  catalogInflight.set(cacheKey, job);
+  return job;
+}
+
+async function doFetchStremioCatalog(
   addon: InstalledAddon,
   catalog: StremioCatalog,
   options: { search?: string; genre?: string; skip?: number } = {},
@@ -147,13 +167,16 @@ export async function fetchStremioMeta(addon: InstalledAddon, media: MediaItem):
 
 export async function searchStremioAddons(addons: InstalledAddon[], query: string) {
   const jobs: Promise<MediaItem[]>[] = [];
-  addons.filter((addon) => addon.enabled).forEach((addon) => {
+  addons.filter((addon) => addon.enabled && addon.features?.search !== false).forEach((addon) => {
     addon.manifest.catalogs
       .filter((catalog) => catalog.extra?.some((extra) => extra.name === 'search'))
       .slice(0, 4)
       .forEach((catalog) => jobs.push(fetchStremioCatalog(addon, catalog, { search: query }).catch(() => [])));
   });
-  return (await Promise.all(jobs)).flat();
+  const flat = (await Promise.all(jobs)).flat();
+  // Relevance ranking (port of PlayTorrio's RelevanceScorer): exact matches
+  // beat substring noise across federated addon results.
+  return sortByRelevance(query, flat);
 }
 
 async function fetchAddonStreams(addon: InstalledAddon, media: MediaItem, resourceId: string): Promise<StreamResult[]> {
@@ -191,7 +214,7 @@ export async function findStremioStreams(
 ): Promise<{ streams: StreamResult[]; errors: SourceError[] }> {
   const baseId = media.imdbId || media.id;
   const resourceId = media.type === 'series' && season && episode ? `${baseId}:${season}:${episode}` : baseId;
-  const eligible = addons.filter((addon) => addon.enabled && supportsResource(addon, 'stream', media.type, baseId));
+  const eligible = addons.filter((addon) => addon.enabled && addon.features?.streams !== false && supportsResource(addon, 'stream', media.type, baseId));
   const results = await Promise.allSettled(eligible.map((addon) => fetchAddonStreams(addon, media, resourceId)));
   const streams: StreamResult[] = [];
   const errors: SourceError[] = [];
@@ -263,7 +286,7 @@ export interface DiscoveredStremioAddon {
 /** Browse addons exposed by an installed `addon_catalog` resource. */
 export async function fetchStremioAddonCatalogs(addons: InstalledAddon[]): Promise<DiscoveredStremioAddon[]> {
   const catalogAddons = addons.filter((addon) =>
-    addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'addon_catalog'),
+    addon.enabled && addon.features?.catalog !== false && addon.manifest.resources.some((resource) => resource.name === 'addon_catalog'),
   );
   if (!catalogAddons.length) return [];
 

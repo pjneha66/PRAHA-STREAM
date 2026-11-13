@@ -9,6 +9,7 @@ import type { DiscoverFilters, MediaItem } from '../types';
 import type { BookItem } from '../services/archiveService';
 import { MediaCard } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
+import { readSearchHistory, clearSearchHistory } from '../services/searchHistory';
 
 /** Cross-tab universal-search section: matches living in other PRAHA tabs. */
 const CrossTabResults: React.FC<{
@@ -98,11 +99,13 @@ const DiscoverView: React.FC<{
   musicResults?: MusicTrack[];
   bookResults?: BookItem[];
   onOpenInTab?: (target: 'music' | 'books') => void;
+  onPrefillSearch?: (term: string) => void;
 }> = ({
   items, loading, loadingMore, hasMore, error, query, filters, onFiltersChange, onLoadMore,
   watchlist, tmdbReady, imdxEnabled = false, onSelect, onToggleWatchlist, onClearSearch, onOpenSettings, compact,
-  musicResults, bookResults, onOpenInTab,
+  musicResults, bookResults, onOpenInTab, onPrefillSearch,
 }) => {
+  const [recentSearches, setRecentSearches] = React.useState<string[]>(() => readSearchHistory());
   const metadataReady = tmdbReady || imdxEnabled;
   const update = <K extends keyof DiscoverFilters>(key: K, value: DiscoverFilters[K]) => {
     onFiltersChange({ ...filters, [key]: value });
@@ -252,6 +255,18 @@ const DiscoverView: React.FC<{
             />
           )}
         </>
+      ) : !query && recentSearches.length ? (
+        <div className="discover-recent">
+          <div className="discover-recent-head">
+            <h2>Recent searches</h2>
+            <button className="text-button" onClick={() => { clearSearchHistory(); setRecentSearches([]); }}>Clear</button>
+          </div>
+          <div className="filter-pills">
+            {recentSearches.map((term) => (
+              <button key={term} onClick={() => onPrefillSearch?.(term)}>{term}</button>
+            ))}
+          </div>
+        </div>
       ) : (
         <div className="empty-state">
           <span><SearchX size={28} /></span>

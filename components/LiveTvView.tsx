@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, Check, CircleAlert, Copy, ExternalLink, Globe, ListFilter, LoaderCircle,
-  Play, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles,
+  Play, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Star,
   Tv, Tv2, Users, Volume2, X,
 } from 'lucide-react';
 import type { MediaItem, StreamResult } from '../types';
@@ -15,6 +15,7 @@ import {
 } from '../services/iptvService';
 import { nativeFetchText, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
+import { pickFirstHealthyStream } from '../services/streamHealth';
 
 interface LiveTvViewProps {
   onPlayStream: (media: MediaItem, stream: StreamResult) => void;
@@ -108,6 +109,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [activeSourceName, setActiveSourceName] = useState('');
   const [sourceGroup, setSourceGroup] = useState('All');
   const [hubLimit, setHubLimit] = useState(250);
+  // Favorite channels (port of PlayTorrio's channel favorites): persisted URL set.
+  const [favChannels, setFavChannels] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('praha.iptv.favorites.v1');
+      const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+      return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleFavorite = (url: string) => {
+    setFavChannels((current) => {
+      const next = current.includes(url) ? current.filter((entry) => entry !== url) : [url, ...current];
+      try { localStorage.setItem('praha.iptv.favorites.v1', JSON.stringify(next.slice(0, 300))); } catch { /* best effort */ }
+      return next;
+    });
+  };
   const [iptvOrgCountries, setIptvOrgCountries] = useState<Array<{ code: string; name: string }>>(IptvSources.IPTV_ORG_COUNTRIES_FALLBACK);
   const [iptvOrgCountry, setIptvOrgCountry] = useState<string>(() => IptvSourceStore.loadIptvOrgCountry());
   const [stepDaddyUrl, setStepDaddyUrl] = useState<string>(() => IptvSourceStore.loadStepDaddyUrl());
@@ -412,9 +430,14 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     setChannelHits(hits);
     setScanningBusy(false);
 
-    // If hits found, auto-play first stream immediately
+    // If hits found, auto-play the first HEALTHY stream (ranged-GET probe,
+    // port of PlayTorrio's alive-checker) instead of a possibly dead one.
     if (hits.length > 0) {
-      playStreamNow(channel.name, hits[0].url, hits[0].source, channel.logo);
+      void (async () => {
+        const healthy = await pickFirstHealthyStream(hits.map((hit) => ({ url: hit.url, hit })));
+        const chosen = healthy?.hit || hits[0];
+        playStreamNow(channel.name, chosen.url, chosen.source, channel.logo);
+      })();
     }
   };
 
@@ -494,13 +517,14 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
   const filteredPlaylistChannels = useMemo(() => {
     let list = playlistChannels;
-    if (sourceGroup !== 'All') list = list.filter((c) => c.group === sourceGroup);
+    if (sourceGroup === '__favorites') list = list.filter((c) => favChannels.includes(c.url));
+    else if (sourceGroup !== 'All') list = list.filter((c) => c.group === sourceGroup);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(q) || (c.group && c.group.toLowerCase().includes(q)));
     }
     return list;
-  }, [playlistChannels, searchQuery, sourceGroup]);
+  }, [playlistChannels, searchQuery, sourceGroup, favChannels]);
 
   return (
     <div style={{ padding: '24px 20px', maxWidth: '1400px', margin: '0 auto', color: '#e6edf3' }}>
@@ -587,6 +611,24 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
             <>
               {/* Group Pills */}
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '14px', marginBottom: '16px' }}>
+                <button
+                  key="__favorites"
+                  onClick={() => { setSourceGroup('__favorites'); setHubLimit(250); }}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '20px',
+                    border: '1px solid',
+                    borderColor: sourceGroup === '__favorites' ? '#f5c518' : '#30363d',
+                    background: sourceGroup === '__favorites' ? 'rgba(245, 197, 24, 0.15)' : '#161b22',
+                    color: sourceGroup === '__favorites' ? '#f5c518' : '#c9d1d9',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  ★ Favorites
+                </button>
                 {sourceGroups.map((group) => (
                   <button
                     key={group}
@@ -643,6 +685,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                       <h3 title={ch.name} style={{ fontSize: '13.5px', fontWeight: 600, margin: '0 0 3px 0', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name || 'Unknown channel'}</h3>
                       <p style={{ fontSize: '12px', color: '#8b949e', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.group || 'Live'}</p>
                     </div>
+                    <button
+                      onClick={(event) => { event.stopPropagation(); toggleFavorite(ch.url); }}
+                      aria-label={favChannels.includes(ch.url) ? `Unfavorite ${ch.name}` : `Favorite ${ch.name}`}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', flexShrink: 0, color: favChannels.includes(ch.url) ? '#f5c518' : '#30363d' }}
+                    >
+                      <Star size={15} fill={favChannels.includes(ch.url) ? '#f5c518' : 'none'} />
+                    </button>
                     <Play size={14} fill="#58a6ff" color="#58a6ff" style={{ flexShrink: 0 }} />
                   </div>
                 ))}
@@ -807,6 +856,39 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
               Import M3U Playlist
             </button>
           </div>
+
+          {customPlaylists.length > 0 && (
+            <div style={{ marginBottom: '16px' }}>
+              <p style={{ margin: '0 0 8px', fontSize: '12px', fontWeight: 700, letterSpacing: '0.5px', color: '#8b949e' }}>MY PLAYLISTS</p>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                {customPlaylists.map((playlist) => (
+                  <div key={playlist.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', border: '1px solid #30363d', borderRadius: '10px', background: '#161b22' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ display: 'block', fontSize: '13px', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playlist.name}</strong>
+                      <small style={{ fontSize: '11px', color: '#8b949e' }}>{playlist.channels.length.toLocaleString()} channels · {(() => { try { return new URL(playlist.sourceUrl).hostname; } catch { return playlist.sourceUrl; } })()}</small>
+                    </div>
+                    <button
+                      onClick={() => { setPlaylistChannels(playlist.channels); setActiveSourceName(playlist.name); setSourceGroup('All'); setHubLimit(250); setActiveTab('channels'); }}
+                      style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #58a6ff', background: 'rgba(88,166,255,.1)', color: '#58a6ff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Load
+                    </button>
+                    <button
+                      onClick={() => {
+                        const updated = customPlaylists.filter((entry) => entry.id !== playlist.id);
+                        setCustomPlaylists(updated);
+                        IptvStore.savePlaylists(updated);
+                      }}
+                      aria-label={`Delete ${playlist.name}`}
+                      style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#f87171', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Public sources — every source loads directly from this tab */}
           <div style={{ marginBottom: '16px' }}>

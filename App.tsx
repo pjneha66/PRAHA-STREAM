@@ -37,6 +37,8 @@ import { exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } 
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import { OctaveMusicService, type MusicTrack } from './services/musicService';
+import { noteSearchTerm } from './services/searchHistory';
+import { hashPin } from './services/profilePin';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
 import { buildIptvPlayback, IptvZapStore } from './services/iptvService';
 import {
@@ -87,12 +89,55 @@ interface ActivePlayerState {
   alternatives?: StreamResult[];
 }
 
+/** Profile PIN gate: shown instead of switching when the target profile has a PIN. */
+const ProfilePinGate: React.FC<{
+  profile: UserProfile;
+  onUnlocked: () => void;
+  onCancel: () => void;
+}> = ({ profile, onUnlocked, onCancel }) => {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const submit = async () => {
+    const hash = await hashPin(pin);
+    if (hash === profile.pinHash) {
+      onUnlocked();
+    } else {
+      setError('Wrong PIN.');
+      setPin('');
+    }
+  };
+  return (
+    <div className="modal-backdrop" style={{ zIndex: 300 }} onMouseDown={(event) => event.target === event.currentTarget && onCancel()}>
+      <section role="dialog" aria-modal="true" aria-label={`Enter PIN for ${profile.name}`} style={{ margin: 'auto', background: '#161b22', border: '1px solid #30363d', borderRadius: '16px', padding: '26px 24px', width: 'min(320px, 90vw)', textAlign: 'center' }}>
+        <h2 style={{ margin: '0 0 4px', fontSize: '17px', color: '#f0f6fc' }}>Enter PIN for {profile.name}</h2>
+        <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: '#8b949e' }}>This profile is protected.</p>
+        <input
+          value={pin}
+          onChange={(event) => { setPin(event.target.value.replace(/\D/g, '').slice(0, 8)); setError(''); }}
+          onKeyDown={(event) => { if (event.key === 'Enter' && pin.length >= 4) void submit(); }}
+          inputMode="numeric"
+          autoFocus
+          placeholder="••••"
+          style={{ width: '100%', textAlign: 'center', letterSpacing: '0.5em', fontSize: '20px', padding: '10px 0', borderRadius: '10px', border: error ? '1px solid #f87171' : '1px solid #30363d', background: '#0d1117', color: '#f0f6fc' }}
+        />
+        {error && <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#f87171' }}>{error}</p>}
+        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={() => void submit()} disabled={pin.length < 4} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: 'none', background: pin.length >= 4 ? '#ef4444' : '#3a3f46', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: pin.length >= 4 ? 'pointer' : 'default' }}>Unlock</button>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+
 const App: React.FC = () => {
   const [view, setView] = useState<AppView>(() => parseHashView());
   const [query, setQuery] = useState('');
   // Universal search extras (music + books/comics) and cross-tab deep links.
   const [discoverExtras, setDiscoverExtras] = useState<{ music: MusicTrack[]; books: BookItem[] } | null>(null);
   const [searchPrefill, setSearchPrefill] = useState<{ view: AppView; term: string } | null>(null);
+  const [pinGateProfile, setPinGateProfile] = useState<UserProfile | null>(null);
   const [discoverFilters, setDiscoverFilters] = useState<DiscoverFilters>(DEFAULT_DISCOVER_FILTERS);
   const [discoverPage, setDiscoverPage] = useState(1);
   const [discoverHasMore, setDiscoverHasMore] = useState(false);
@@ -413,6 +458,7 @@ const App: React.FC = () => {
       setDiscoverError('');
       setDiscoverPage(1);
       const term = query.trim();
+      if (term) noteSearchTerm(term);
       try {
         if (term) {
           const imdxOn = imdxEnabled;
@@ -610,7 +656,11 @@ const App: React.FC = () => {
       const sameEpisode = !patch.season || (prev?.season === patch.season && prev?.episode === patch.episode);
       const duration = patch.duration ?? (sameEpisode ? prev?.duration : undefined);
       const currentTime = patch.currentTime ?? (sameEpisode ? prev?.currentTime : 0);
-      const progress = duration && duration > 0 && typeof currentTime === 'number'
+      // Placeholder-clip guard (port of Nuvio's WatchingPolicies): debrid and
+      // scrape sources sometimes resolve to tiny sample/placeholder files —
+      // never record meaningful progress for sub-2-minute "durations".
+      const isPlaceholderClip = Boolean(duration && duration < 121);
+      const progress = duration && duration > 0 && typeof currentTime === 'number' && !isPlaceholderClip
         ? Math.max(1, Math.min(100, Math.round((currentTime / duration) * 100)))
         : (sameEpisode ? prev?.progress || 1 : 1);
 
@@ -803,7 +853,7 @@ const App: React.FC = () => {
 
   const updateProfile = (
     profileId: string,
-    patch: Partial<Pick<UserProfile, 'name' | 'avatarColor' | 'isKids' | 'avatarIcon' | 'avatarImage'>>,
+    patch: Partial<Pick<UserProfile, 'name' | 'avatarColor' | 'isKids' | 'avatarIcon' | 'avatarImage' | 'pinHash'>>,
   ) => {
     setProfiles((cur) => cur.map((prof) => (prof.id === profileId ? { ...prof, ...patch } : prof)));
     notify('Profile updated.', 'success');
@@ -997,6 +1047,7 @@ const App: React.FC = () => {
           setSearchPrefill({ view: target, term: query.trim() });
           navigate(target);
         }}
+        onPrefillSearch={(term) => setQuery(term)}
       />
     );
   } else if (view === 'library') {
@@ -1056,12 +1107,17 @@ const App: React.FC = () => {
         profiles={profiles}
         activeProfile={activeProfile}
         onSelectProfile={(id) => {
-          setActiveProfileId(id);
           const target = profiles.find((p) => p.id === id);
+          if (target?.pinHash) {
+            setPinGateProfile(target);
+            return;
+          }
+          setActiveProfileId(id);
           if (target) notify(`Switched to ${target.name}.`, 'success');
         }}
         onCreateProfile={createProfile}
         onDeleteProfile={deleteProfile}
+        onUpdateProfile={updateProfile}
         onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
         onExportBackup={handleExportBackup}
         onImportBackup={handleImportBackup}
@@ -1206,6 +1262,18 @@ const App: React.FC = () => {
         <UpdateModal
           update={availableUpdate}
           onClose={() => setAvailableUpdate(null)}
+        />
+      )}
+
+      {pinGateProfile && (
+        <ProfilePinGate
+          profile={pinGateProfile}
+          onUnlocked={() => {
+            setActiveProfileId(pinGateProfile.id);
+            notify(`Switched to ${pinGateProfile.name}.`, 'success');
+            setPinGateProfile(null);
+          }}
+          onCancel={() => setPinGateProfile(null)}
         />
       )}
 
