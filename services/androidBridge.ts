@@ -532,20 +532,26 @@ export async function nativeFetchText(
         [nativeUrl, method, JSON.stringify(headers), options.body || '', timeoutMs],
         attemptTimeout + 5000,
       ).catch(() => null);
-      if (raw !== null) {
-        const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
-          ok?: boolean;
-          status?: number;
-          body?: string;
-          error?: string;
-        };
-        if (parsed.error && !parsed.status) throw new Error(parsed.error);
-        const status = Number(parsed.status || 0);
-        return {
-          ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
-          status,
-          data: parsed.body ?? '',
-        };
+      if (raw !== null && raw !== undefined) {
+        // The native side always answers with a JSON envelope — but a malformed
+        // reply must degrade to a transport miss, not throw out of
+        // nativeFetchText and kill every caller that routes through here.
+        let parsed: { ok?: boolean; status?: number; body?: string; error?: string } | null = null;
+        try {
+          parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as typeof parsed;
+        } catch {
+          parsed = null;
+        }
+        if (parsed) {
+          if (parsed.error && !parsed.status) throw new Error(parsed.error);
+          const status = Number(parsed.status || 0);
+          return {
+            ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
+            status,
+            data: parsed.body ?? '',
+          };
+        }
+        // Unparseable native reply: treat as a transport miss and retry / fall through.
       }
     }
     // Both RPC attempts failed at transport level: fall through to the older

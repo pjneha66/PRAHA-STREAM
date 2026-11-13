@@ -57,6 +57,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -68,10 +69,14 @@ public class MainActivity extends BridgeActivity {
     private final PrahaJsBridge rpcBridge = new PrahaJsBridge();
     // Bounded pool: the bridge is reachable from JS and the proxy from any local
     // client, so an unbounded cached pool is a trivial thread/OOM DoS.
+    // CallerRunsPolicy is forbidden here: onPostMessage (the bridge entry point)
+    // runs on the Android UI thread, so a saturated pool would execute entire
+    // HTTP requests on the main thread and freeze the whole app. Rejection is
+    // answered with a fast error reply instead (see the httpRequest dispatch).
     private final ExecutorService httpExecutor = new ThreadPoolExecutor(
-            2, 6, 30L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>(64),
-            new ThreadPoolExecutor.CallerRunsPolicy());
+            6, 6, 30L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(96),
+            new ThreadPoolExecutor.AbortPolicy());
     private PrahaVlcPlayer vlcPlayer;
     private VLCVideoLayout vlcVideoLayout;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
@@ -299,7 +304,24 @@ public class MainActivity extends BridgeActivity {
 
         // Network-bound calls must not occupy the WebView bridge thread.
         if ("httpRequest".equals(fMethod)) {
-            httpExecutor.execute(invoke);
+            try {
+                httpExecutor.execute(invoke);
+            } catch (RejectedExecutionException rejected) {
+                // Pool and queue saturated: fail fast so JS falls back to
+                // CapacitorHttp / browser fetch instead of waiting.
+                JSONObject reply = new JSONObject();
+                try {
+                    reply.put("id", replyId);
+                    reply.put("ok", false);
+                    reply.put("error", "Native HTTP queue is saturated; request rejected.");
+                } catch (Exception ignored) {}
+                final String payload = reply.toString();
+                runOnUiThread(() -> {
+                    try {
+                        replyProxy.postMessage(payload);
+                    } catch (Exception ignored) {}
+                });
+            }
         } else {
             invoke.run();
         }
@@ -533,7 +555,21 @@ public class MainActivity extends BridgeActivity {
                         ByteArrayOutputStream bos = new ByteArrayOutputStream();
                         byte[] buf = new byte[8192];
                         int n;
+                        long total = 0;
+                        // Cap the body: a runaway scraper response must not OOM
+                        // the WebView process (freeze / crash).
+                        final long MAX_BODY_BYTES = 8L * 1024 * 1024;
                         while ((n = in.read(buf)) != -1) {
+                            total += n;
+                            if (total > MAX_BODY_BYTES) {
+                                bos.write(buf, 0, n);
+                                try {
+                                    result.put("ok", false);
+                                    result.put("status", 0);
+                                    result.put("error", "Native HTTP response exceeded 8 MB and was truncated.");
+                                } catch (Exception ignored) {}
+                                return result;
+                            }
                             bos.write(buf, 0, n);
                         }
                         text = new String(bos.toByteArray(), StandardCharsets.UTF_8);

@@ -113,6 +113,10 @@ export function useMpvEngine({
   const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef({ network: 0, media: 0 });
   const resumeRef = useRef<number | null>(null);
+  // VLC escalation budget: per-URL, survives engine reloads (reloadKey), so a
+  // dead stream cannot ping-pong LibVLC ↔ web engine forever.
+  const vlcEscalationRef = useRef<{ url: string; count: number }>({ url: '', count: 0 });
+  const [escalateToWeb, setEscalateToWeb] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const attemptsRef = useRef(0);
@@ -156,6 +160,12 @@ export function useMpvEngine({
     if (!video || !url) return;
     let disposed = false;
     let proxyFallbackTried = false;
+    // A new source resets the web-engine escalation, but engine reloads of the
+    // same URL keep drawing from the same one-shot budget.
+    if (vlcEscalationRef.current.url !== url) {
+      vlcEscalationRef.current = { url, count: 0 };
+      if (escalateToWeb) setEscalateToWeb(false);
+    }
 
     setReady(false);
     setLevels([]);
@@ -168,31 +178,55 @@ export function useMpvEngine({
     engineNameRef.current = 'HTML5';
     const shouldAutoplay = autoplay || resumeRef.current !== null;
 
-    if (!forceWebEngine && isNativeVlcAvailable()) {
+    if (!forceWebEngine && !escalateToWeb && isNativeVlcAvailable()) {
       engineNameRef.current = 'LibVLC (Hardware)';
       video.style.opacity = '0';
       const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
       nativeVlcPlay(url, streamHeaders || {}, resumeMs);
 
-      // Black-screen guard: if LibVLC produces no frames within 12s, fall back
-      // to the direct URL once (headers are applied natively), then surface
-      // an error instead of a silent black screen (IPTV black preview fix).
+      // Black-screen guard: re-arming. Every (re)start gets a full 12s deadline;
+      // a dead stream escalates step by step — proxy/direct fallback → same-URL
+      // retry → full engine reload (optionally onto the web engine) → honest
+      // error. A single one-shot timer both killed slow-but-alive streams and
+      // left retried streams without any further check (IPTV black preview fix).
       let sawVlcOutput = false;
-      const vlcReadyTimeout = setTimeout(() => {
+      let lastVlcTimeSec = resumeMs / 1000;
+      const GUARD_MS = 12000;
+      let guardAttempt = 0;
+      let guardDeadline = Date.now() + GUARD_MS;
+      const rearmGuard = () => { guardAttempt += 1; guardDeadline = Date.now() + GUARD_MS; };
+      const vlcReadyInterval = window.setInterval(() => {
         if (disposed || sawVlcOutput) return;
-        if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
-          proxyFallbackTried = true;
-          nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
+        if (Date.now() < guardDeadline) return;
+        if (guardAttempt === 0) {
+          if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
+            proxyFallbackTried = true;
+            rearmGuard();
+            nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
+            return;
+          }
+          if (!proxyFallbackTried) {
+            proxyFallbackTried = true;
+            // Retry the same URL once — a dead first connection is common for IPTV.
+            rearmGuard();
+            nativeVlcPlay(url, streamHeaders || {}, 0);
+            return;
+          }
+        }
+        // Fallbacks exhausted. Escalate once to the web engine (hls.js/dash.js/
+        // mpegts can play streams LibVLC cannot), then surface the error.
+        if (guardAttempt === 1 && vlcEscalationRef.current.count < 1) {
+          vlcEscalationRef.current = { url, count: 1 };
+          rearmGuard();
+          resumeRef.current = lastVlcTimeSec;
+          setEscalateToWeb(true);
+          setReloadKey((key) => key + 1);
           return;
         }
-        if (!proxyFallbackTried) {
-          proxyFallbackTried = true;
-          // Retry the same URL once — a dead first connection is common for IPTV.
-          nativeVlcPlay(url, streamHeaders || {}, 0);
-          return;
-        }
-        onFatalError('This live stream did not start. Try another source or an external player.');
-      }, 12000);
+        window.clearInterval(vlcReadyInterval);
+        setWaiting(false);
+        onFatalError('This stream did not start. Try another source or an external player.');
+      }, 2000);
 
       const onVlcTime = (e: any) => {
         if (disposed) return;
@@ -200,6 +234,7 @@ export function useMpvEngine({
         const detail = e.detail || {};
         const cur = (detail.time || 0) / 1000;
         const dur = (detail.duration || 0) / 1000;
+        if (cur > 0) lastVlcTimeSec = cur;
         if (cur >= 0) setCurrentTime(cur);
         if (dur > 0) {
           setDuration(dur);
@@ -210,11 +245,21 @@ export function useMpvEngine({
 
       const onVlcState = (e: any) => {
         if (disposed) return;
-        sawVlcOutput = true;
         const detail = e.detail || {};
         setPlaying(Boolean(detail.playing));
         setWaiting(Boolean(detail.buffering));
-        if (detail.playing) setReady(true);
+        if (detail.playing) {
+          // Only actual playback output cancels the guard — Stopped/Paused
+          // events from a previous stream can arrive after this effect's
+          // listeners attach and would otherwise fake "output seen".
+          sawVlcOutput = true;
+          setReady(true);
+        }
+      };
+
+      const onVlcBuffering = (e: any) => {
+        if (disposed) return;
+        setWaiting(Boolean(e.detail?.buffering ?? true));
       };
 
       const onVlcTracks = () => {
@@ -266,15 +311,29 @@ export function useMpvEngine({
           && !fallbackUrl.startsWith('magnet:')
         ) {
           proxyFallbackTried = true;
+          rearmGuard();
           nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
           return;
         }
+        // LibVLC also emits EncounteredError for transient network blips.
+        // Mirror the web engine's bounded recovery: escalate once to the web
+        // engine before surfacing a fatal error.
+        if (vlcEscalationRef.current.count < 1) {
+          vlcEscalationRef.current = { url, count: 1 };
+          rearmGuard();
+          resumeRef.current = lastVlcTimeSec;
+          setEscalateToWeb(true);
+          setReloadKey((key) => key + 1);
+          return;
+        }
+        window.clearInterval(vlcReadyInterval);
         setWaiting(false);
         onFatalError(msg);
       };
 
       window.addEventListener('praha:vlc-time', onVlcTime);
       window.addEventListener('praha:vlc-state', onVlcState);
+      window.addEventListener('praha:vlc-buffering', onVlcBuffering);
       window.addEventListener('praha:vlc-tracks', onVlcTracks);
       window.addEventListener('praha:vlc-error', onVlcError);
 
@@ -283,9 +342,10 @@ export function useMpvEngine({
 
       return () => {
         disposed = true;
-        clearTimeout(vlcReadyTimeout);
+        window.clearInterval(vlcReadyInterval);
         window.removeEventListener('praha:vlc-time', onVlcTime);
         window.removeEventListener('praha:vlc-state', onVlcState);
+        window.removeEventListener('praha:vlc-buffering', onVlcBuffering);
         window.removeEventListener('praha:vlc-tracks', onVlcTracks);
         window.removeEventListener('praha:vlc-error', onVlcError);
         nativeVlcStop();
@@ -447,7 +507,7 @@ export function useMpvEngine({
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, forceWebEngine, autoplay, onFatalError, reloadKey]);
+  }, [url, forceWebEngine, escalateToWeb, autoplay, onFatalError, reloadKey]);
 
   /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {

@@ -106,6 +106,7 @@ public class PrahaStreamProxy {
 
     private void handleClient(Socket socket) {
         HttpURLConnection upstream = null;
+        final boolean[] responseStarted = { false };
         try {
             socket.setSoTimeout(25000);
             InputStream rawIn = socket.getInputStream();
@@ -147,6 +148,7 @@ public class PrahaStreamProxy {
             }
 
             upstream = openFollowRedirects(targetUrl, method, headersJson, clientHeaders.get("range"));
+            responseStarted[0] = true;
             int status = upstream.getResponseCode();
             String statusText = upstream.getResponseMessage();
             if (statusText == null || statusText.isEmpty()) statusText = "OK";
@@ -200,6 +202,23 @@ public class PrahaStreamProxy {
             }
             rawOut.flush();
         } catch (Exception ignored) {
+            // Upstream failed before any bytes were relayed: answer with a real
+            // HTTP 502 so players surface a proper error/retry instead of a raw
+            // connection reset.
+            if (!responseStarted[0]) {
+                try {
+                    OutputStream rawOut = new BufferedOutputStream(socket.getOutputStream());
+                    byte[] body = "PRAHA proxy upstream failure".getBytes(StandardCharsets.UTF_8);
+                    String head = "HTTP/1.1 502 Bad Gateway\r\n"
+                            + "Content-Type: text/plain; charset=utf-8\r\n"
+                            + "Content-Length: " + body.length + "\r\n"
+                            + "Connection: close\r\n\r\n";
+                    rawOut.write(head.getBytes(StandardCharsets.ISO_8859_1));
+                    rawOut.write(body);
+                    rawOut.flush();
+                } catch (IOException ignoredAgain) {
+                }
+            }
         } finally {
             if (upstream != null) upstream.disconnect();
             try {

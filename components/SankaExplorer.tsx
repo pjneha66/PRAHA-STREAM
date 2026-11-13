@@ -164,6 +164,7 @@ const SankaExplorer: React.FC = () => {
   const [readerLoading, setReaderLoading] = useState(false);
   const [readerError, setReaderError] = useState('');
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
+  const chapterAbortRef = useRef<AbortController | null>(null);
 
   // Internet Archive item overlay (folkscanomy files: pdf/epub/cbz).
   const [archiveItem, setArchiveItem] = useState<SankaTitle | null>(null);
@@ -394,6 +395,8 @@ const SankaExplorer: React.FC = () => {
     setDetailError('');
     setChapterQuery('');
     setReverseChapters(false);
+    setChapterWindow(150);
+    chapterAbortRef.current?.abort();
 
     fetchSankaMangaDetail(selected.source, selected.slug, controller.signal, selected.detailPath)
       .then((result) => { if (current) setDetail(result); })
@@ -432,20 +435,30 @@ const SankaExplorer: React.FC = () => {
 
   const openChapter = async (chapter: SankaChapter, chapterIndex: number) => {
     if (!selected) return;
+    // Cancel the previous chapter fetch: rapid Next/Prev clicks must not stack
+    // concurrent requests (native pool backlog) or let a slower stale response
+    // overwrite the newer chapter's pages.
+    chapterAbortRef.current?.abort();
+    const controller = new AbortController();
+    chapterAbortRef.current = controller;
     setReaderChapterIndex(chapterIndex);
     setReaderImages(null);
     setReaderLoading(true);
     setReaderError('');
     try {
-      const pages = await fetchSankaChapterImages(selected.source, chapter.slug, undefined, chapter.chapterPath);
+      const pages = await fetchSankaChapterImages(selected.source, chapter.slug, controller.signal, chapter.chapterPath);
+      if (controller.signal.aborted) return;
       setReaderImages(pages);
       requestAnimationFrame(() => {
         if (readerPagesRef.current) readerPagesRef.current.scrollTop = 0;
       });
     } catch (reason) {
+      if ((reason as { name?: string })?.name === 'AbortError' || controller.signal.aborted) return;
       setReaderError(reason instanceof Error ? reason.message : 'Could not load chapter pages.');
     } finally {
-      setReaderLoading(false);
+      if (chapterAbortRef.current === controller) {
+        setReaderLoading(false);
+      }
     }
   };
 
@@ -462,6 +475,7 @@ const SankaExplorer: React.FC = () => {
 
   const chapters = detail?.chapters || [];
   const selectedChapter = chapters[readerChapterIndex];
+  const [chapterWindow, setChapterWindow] = useState(150);
 
   const displayedChapters = useMemo(() => {
     const indexed = chapters.map((chapter, index) => ({ chapter, index }));
@@ -794,7 +808,10 @@ const SankaExplorer: React.FC = () => {
               )}
 
               <div className="sanka-chapter-list">
-                {displayedChapters.map(({ chapter, index }) => (
+                {/* Long-running series expose 1,000–4,000+ chapters; mounting
+                    every row (~4 nodes each) blocks the WebView main thread on
+                    every detail open. Render a window with an expander. */}
+                {displayedChapters.slice(0, chapterWindow).map(({ chapter, index }) => (
                   <button key={chapter.id} onClick={() => void openChapter(chapter, index)}>
                     <span>
                       <strong>{chapter.title}</strong>
@@ -803,6 +820,14 @@ const SankaExplorer: React.FC = () => {
                     <ChevronRight size={14} />
                   </button>
                 ))}
+                {displayedChapters.length > chapterWindow && (
+                  <button
+                    className="sanka-chapter-more"
+                    onClick={() => setChapterWindow((value) => value + 400)}
+                  >
+                    Show more chapters ({(displayedChapters.length - chapterWindow).toLocaleString()} remaining)
+                  </button>
+                )}
               </div>
             </div>
           </section>

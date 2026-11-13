@@ -1,5 +1,6 @@
 import { isAndroidApp, nativeFetchText } from './androidBridge';
 import { MangaService } from './mangaService';
+import { evictOldest } from './cacheCaps';
 
 const PRIMARY_ORIGIN = 'https://www.sankavollerei.web.id';
 const MIRROR_ORIGIN = 'https://www.sankavollerei.com';
@@ -494,6 +495,9 @@ async function fetchJson(route: string, signal?: AbortSignal, bypassCache = fals
       if (!isTestEnv) {
         preferredBase = base;
         RESPONSE_CACHE.set(cleanRoute, { expiresAt: Date.now() + FEED_TTL_MS, payload: parsed });
+        // Multi-MB payloads accumulate for the whole session otherwise — memory
+        // pressure and GC pauses read as app jank on Android.
+        evictOldest(RESPONSE_CACHE, 40);
       }
       return parsed;
     } catch (error) {
@@ -1108,6 +1112,7 @@ export async function resolveArtworkFallback(title: string, kind: SankaKind): Pr
         const url = safeUrl(poster?.medium || poster?.large || poster?.small || poster?.original, true);
         if (url) {
           ARTWORK_CACHE.set(key, url);
+          evictOldest(ARTWORK_CACHE, 200);
           return url;
         }
       }
@@ -1129,6 +1134,7 @@ export async function resolveArtworkFallback(title: string, kind: SankaKind): Pr
         const url = safeUrl(img?.webp?.large_image_url || img?.webp?.image_url || img?.jpg?.large_image_url || img?.jpg?.image_url, true);
         if (url) {
           ARTWORK_CACHE.set(key, url);
+          evictOldest(ARTWORK_CACHE, 200);
           return url;
         }
       }
@@ -1140,6 +1146,7 @@ export async function resolveArtworkFallback(title: string, kind: SankaKind): Pr
     }
 
     ARTWORK_CACHE.set(key, null);
+    evictOldest(ARTWORK_CACHE, 200);
     return null;
   })();
 

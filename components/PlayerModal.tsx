@@ -131,7 +131,11 @@ const PlayerModal: React.FC<{
 
   const isMagnet = isMagnetOrTorrent(activeStream) && activeStream.url.startsWith('magnet:');
   const isYoutube = Boolean(activeStream.ytId);
-  const isEmbed = activeStream.format === 'embed' || /vidsrc\.to\/embed|\/embed\//i.test(activeStream.url || '');
+  // /embed/ in the path does not always mean a web page: some CDNs host
+  // playable VOD under /embed/<id>.m3u8 — never iframe those.
+  const isEmbed = activeStream.format === 'embed'
+    || (/vidsrc\.to\/embed|\/embed\//i.test(activeStream.url || '')
+      && !/\.(m3u8|mp4|mkv|webm|ts|m4v|mov)(\?|$)/i.test(activeStream.url || ''));
   // In-app P2P (WebTorrent) streams through a blob: URL — LibVLC cannot read
   // those, so they always play in the web engine.
   const isBlobStream = activeStream.url.startsWith('blob:');

@@ -1141,6 +1141,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sanka-chapter-list button strong { font-weight: 650; }
 .sanka-chapter-list button small { color: var(--muted); font-size: 10px; }
 .sanka-chapter-list button:hover { border-color: rgba(var(--accent-rgb),.35); color: var(--accent); }
+.sanka-chapter-list button.sanka-chapter-more { justify-content: center; color: var(--muted); font-weight: 600; cursor: pointer; }
 .sanka-inline-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .sanka-inline-status svg { color: var(--accent); }
 .sanka-inline-error { color: var(--danger); font-size: 12px; }
