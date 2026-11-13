@@ -393,6 +393,8 @@ export interface AppSettings {
   reduceMotion: boolean;
   preferredLanguage: string;
   accent: AppThemeAccent;
+  /** Custom background image URL (port of PlayTorrio's custom background). */
+  customBackground?: string;
   tmdbApiKey: string;
   tmdbEnrichment: TmdbEnrichmentSettings;
   /** Optional IMDb-style metadata from the IMDx / Tiffara API. TMDB stays the primary catalog. */

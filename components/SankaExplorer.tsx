@@ -169,6 +169,20 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
   const chapterAbortRef = useRef<AbortController | null>(null);
   const [scrubberPage, setScrubberPage] = useState(1);
+  // Reader mode (port of PlayTorrio's manga reader): webtoon long-strip vs
+  // paged single-page. Persisted.
+  const [readerMode, setReaderMode] = useState<'webtoon' | 'paged'>(() => {
+    try {
+      const stored = localStorage.getItem('praha.comic.readerMode');
+      return stored === 'paged' ? 'paged' : 'webtoon';
+    } catch {
+      return 'webtoon';
+    }
+  });
+  const switchReaderMode = (mode: 'webtoon' | 'paged') => {
+    setReaderMode(mode);
+    try { localStorage.setItem('praha.comic.readerMode', mode); } catch { /* best effort */ }
+  };
 
   const jumpToPage = (page: number) => {
     if (!readerImages) return;
@@ -925,16 +939,33 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                     <h2 id="sanka-reader-title">{selectedChapter.title}</h2>
                   </div>
                   <span className="sanka-page-count">{readerImages.length} pages</span>
+                  <button
+                    className="button button-secondary button-small"
+                    onClick={() => switchReaderMode(readerMode === 'webtoon' ? 'paged' : 'webtoon')}
+                    title="Toggle reader mode"
+                  >
+                    {readerMode === 'webtoon' ? 'Webtoon' : 'Paged'}
+                  </button>
                   <button className="modal-close" onClick={closeDetails} aria-label="Close reader">
                     <X size={17} />
                   </button>
                 </header>
-                <div className="sanka-reader-pages" ref={readerPagesRef} onScroll={onReaderScroll}>
-                  {readerImages.map((url, index) => (
-                    <div key={`${url}-${index}`} id={`sanka-page-${index}`} className="sanka-page-anchor">
-                      <ReaderPageImg src={url} pageNumber={index + 1} />
-                    </div>
-                  ))}
+                <div
+                  className={`sanka-reader-pages ${readerMode === 'paged' ? 'sanka-reader-paged' : ''}`}
+                  ref={readerPagesRef}
+                  onScroll={readerMode === 'webtoon' ? onReaderScroll : undefined}
+                >
+                  {readerMode === 'paged'
+                    ? readerImages[scrubberPage - 1] && (
+                      <div className="sanka-page-anchor">
+                        <ReaderPageImg src={readerImages[scrubberPage - 1]} pageNumber={scrubberPage} />
+                      </div>
+                    )
+                    : readerImages.map((url, index) => (
+                      <div key={`${url}-${index}`} id={`sanka-page-${index}`} className="sanka-page-anchor">
+                        <ReaderPageImg src={url} pageNumber={index + 1} />
+                      </div>
+                    ))}
                 </div>
                 {readerImages.length > 4 && (
                   <div className="sanka-page-scrubber" onClick={(e) => e.stopPropagation()}>

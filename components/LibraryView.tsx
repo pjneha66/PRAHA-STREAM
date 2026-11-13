@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, Bookmark, Clock3, Library, Trash2 } from 'lucide-react';
 import type { LibraryStatus, MediaItem, WatchProgress } from '../types';
 import { ContinueCard, MediaCard } from './MediaCard';
+import { readCollections, saveCollections, type Collection } from '../services/collectionsStore';
 
 const STATUS_TABS: Array<{ id: 'all' | LibraryStatus; label: string }> = [
   { id: 'all', label: 'All saved' },
@@ -32,10 +33,45 @@ const LibraryView: React.FC<{
   const [statusFilter, setStatusFilter] = useState<'all' | LibraryStatus>('all');
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<'added' | 'title' | 'year' | 'rating'>('added');
+  // Collections (port of Nuvio's collection folders): named groups over the
+  // watchlist, persisted, assignable from the card menu.
+  const [collections, setCollections] = useState<Collection[]>(() => readCollections());
+  const [collectionFilter, setCollectionFilter] = useState<string>('');
+
+  const persistCollections = (next: Collection[]) => {
+    setCollections(next);
+    saveCollections(next);
+  };
+
+  const assignToCollection = (item: MediaItem, collectionName: string) => {
+    const name = collectionName.trim();
+    if (!name) return;
+    let next = collections.map((entry) => ({
+      ...entry,
+      ids: entry.ids.filter((id) => id !== item.id || entry.name === name),
+    }));
+    const existing = next.find((entry) => entry.name === name);
+    if (existing) {
+      if (!existing.ids.includes(item.id)) existing.ids.push(item.id);
+    } else {
+      next = [...next, { name, ids: [item.id] }];
+    }
+    persistCollections(next);
+  };
+
+  const collectionNames = collections.map((entry) => entry.name);
+
+  const assignItem = (item: MediaItem) => {
+    const list = collectionNames.length ? `Existing: ${collectionNames.join(', ')}\nEnter a collection name (empty cancels):` : 'Enter a new collection name:';
+    const answer = window.prompt(list);
+    if (answer === null) return;
+    assignToCollection(item, answer);
+  };
 
   const visibleWatchlist = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const filtered = watchlist.filter((item) => {
+      if (collectionFilter && !collections.find((entry) => entry.name === collectionFilter)?.ids.includes(item.id)) return false;
       if (statusFilter !== 'all' && (item.libraryStatus || 'plan') !== statusFilter) return false;
       if (normalizedQuery && !item.title.toLocaleLowerCase().includes(normalizedQuery)) return false;
       return true;
@@ -47,7 +83,7 @@ const LibraryView: React.FC<{
       if (sortBy === 'year') return (b.year || '').localeCompare(a.year || '') || a.title.localeCompare(b.title);
       return (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title);
     });
-  }, [watchlist, statusFilter, query, sortBy]);
+  }, [watchlist, statusFilter, query, sortBy, collections, collectionFilter]);
 
   return (
     <div className="standard-page page-enter">
@@ -86,6 +122,29 @@ const LibraryView: React.FC<{
                   {item.label}
                 </button>
               ))}
+              <span className="library-pill-divider" />
+              <button
+                className={collectionFilter === '' ? 'active' : ''}
+                onClick={() => setCollectionFilter('')}
+              >
+                All
+              </button>
+              {collections.map((entry) => (
+                <button
+                  key={entry.name}
+                  className={collectionFilter === entry.name ? 'active' : ''}
+                  onClick={() => setCollectionFilter(collectionFilter === entry.name ? '' : entry.name)}
+                  title={`${entry.ids.length} items — click to filter, shift-click to delete`}
+                  onClickCapture={(event) => {
+                    if (event.shiftKey) {
+                      persistCollections(collections.filter((candidate) => candidate.name !== entry.name));
+                      if (collectionFilter === entry.name) setCollectionFilter('');
+                    }
+                  }}
+                >
+                  {entry.name} <small>{entry.ids.length}</small>
+                </button>
+              ))}
             </div>
           )}
 
@@ -114,14 +173,22 @@ const LibraryView: React.FC<{
           {visibleWatchlist.length ? (
             <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
               {visibleWatchlist.map((item) => (
-                <MediaCard
-                  key={item.id}
-                  item={item}
-                  onSelect={onSelect}
-                  onToggleWatchlist={onToggleWatchlist}
-                  inWatchlist
-                  compact={compact}
-                />
+                <div key={item.id} className="library-card-wrap">
+                  <MediaCard
+                    item={item}
+                    onSelect={onSelect}
+                    onToggleWatchlist={onToggleWatchlist}
+                    inWatchlist
+                    compact={compact}
+                  />
+                  <button
+                    className="library-assign"
+                    onClick={(event) => { event.stopPropagation(); assignItem(item); }}
+                    title="Add to a collection"
+                  >
+                    ＋ Collection
+                  </button>
+                </div>
               ))}
             </div>
           ) : (

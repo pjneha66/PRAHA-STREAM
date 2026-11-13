@@ -118,6 +118,68 @@ const AudiobooksView: React.FC = () => {
     setIsPlaying(true);
   };
 
+  // Chapter bookmarks (port of PlayTorrio's audiobook player): per-book,
+  // persisted, one-tap jump back to the saved spot.
+  const [bookmarks, setBookmarks] = useState<Array<{ chapter: number; time: number; label: string }>>(() => {
+    try {
+      const raw = localStorage.getItem('praha.audiobook.bookmarks.v1');
+      return raw ? (JSON.parse(raw) as Record<string, Array<{ chapter: number; time: number; label: string }>>)[selectedBookId()] || [] : [];
+    } catch {
+      return [];
+    }
+  });
+
+  function selectedBookId(): string {
+    return selectedBook?.id || '';
+  }
+
+  // Reload the bookmark list whenever a different book opens.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('praha.audiobook.bookmarks.v1');
+      const all = raw ? (JSON.parse(raw) as Record<string, Array<{ chapter: number; time: number; label: string }>>) : {};
+      setBookmarks(all[selectedBookId()] || []);
+    } catch {
+      setBookmarks([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBook?.id]);
+
+  const persistBookmarks = (list: Array<{ chapter: number; time: number; label: string }>) => {
+    try {
+      const raw = localStorage.getItem('praha.audiobook.bookmarks.v1');
+      const all = raw ? (JSON.parse(raw) as Record<string, Array<{ chapter: number; time: number; label: string }>>) : {};
+      if (selectedBookId()) all[selectedBookId()] = list;
+      localStorage.setItem('praha.audiobook.bookmarks.v1', JSON.stringify(all));
+    } catch {
+      // best effort
+    }
+  };
+
+  const addBookmark = () => {
+    if (!selectedBookId()) return;
+    const entry = { chapter: currentChapterIndex, time: Math.floor(currentTime), label: `Ch. ${currentChapterIndex + 1} · ${formatStamp(currentTime)}` };
+    const next = [entry, ...bookmarks].slice(0, 20);
+    setBookmarks(next);
+    persistBookmarks(next);
+  };
+
+  const jumpToBookmark = (bookmark: { chapter: number; time: number }) => {
+    if (bookmark.chapter !== currentChapterIndex) {
+      setCurrentChapterIndex(bookmark.chapter);
+    }
+    requestAnimationFrame(() => {
+      if (audioRef.current) audioRef.current.currentTime = bookmark.time;
+      setCurrentTime(bookmark.time);
+    });
+  };
+
+  const formatStamp = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const sec = Math.floor(seconds % 60);
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  };
+
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
@@ -490,6 +552,33 @@ const AudiobooksView: React.FC = () => {
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
           />
+
+          {/* Bookmarks (port of PlayTorrio) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', position: 'relative' }}>
+            <button
+              onClick={addBookmark}
+              title="Bookmark this spot"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '7px 11px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#f5c518', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              ⚑ Bookmark
+            </button>
+            {bookmarks.length > 0 && (
+              <select
+                onChange={(event) => {
+                  const entry = bookmarks[Number(event.target.value)];
+                  if (entry) jumpToBookmark(entry);
+                  event.currentTarget.selectedIndex = 0;
+                }}
+                aria-label="Jump to bookmark"
+                style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '12px', maxWidth: '180px' }}
+              >
+                <option value="">⚑ {bookmarks.length} bookmark{bookmarks.length === 1 ? '' : 's'}</option>
+                {bookmarks.map((entry, index) => (
+                  <option key={`${entry.chapter}-${entry.time}-${index}`} value={index}>{entry.label}</option>
+                ))}
+              </select>
+            )}
+          </div>
 
           {/* Book Info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: '220px', maxWidth: '30%' }}>
