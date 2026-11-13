@@ -42,6 +42,7 @@ const MusicView: React.FC = () => {
   const [isLooping, setIsLooping] = useState(false);
   const [resolvedStreamUrl, setResolvedStreamUrl] = useState<string | null>(null);
   const [streamLoading, setStreamLoading] = useState(false);
+  const [isFullAudio, setIsFullAudio] = useState(false);
 
   // Load featured sections once on mount
   useEffect(() => {
@@ -92,29 +93,31 @@ const MusicView: React.FC = () => {
     }
   };
 
-  // Play a track: resolve high-quality stream or fallback to preview
+  // Play a track: full-length audio via the YouTube pipeline, 30s preview as fallback
   const playTrack = async (track: MusicTrack, newQueue?: MusicTrack[]) => {
     setCurrentTrack(track);
     if (newQueue) setQueue(newQueue);
     setCurrentTime(0);
     setError('');
-
-    if (track.previewUrl) {
-      setResolvedStreamUrl(track.previewUrl);
-      setIsPlaying(true);
-      setStreamLoading(false);
-      return;
-    }
-
     setStreamLoading(true);
     setResolvedStreamUrl(null);
+    setIsFullAudio(false);
 
     try {
-      const directUrl = await OctaveMusicService.getAudioStreamUrl(track.id, 'high');
-      const playable = directUrl || track.previewUrl || null;
-      if (playable) {
-        setResolvedStreamUrl(playable);
+      // Full song first — 30-second previews are the fallback, not the feature.
+      const full = await OctaveMusicService.resolveFullTrackAudio(track.title, track.artist);
+      if (full) {
+        setResolvedStreamUrl(full);
+        setIsFullAudio(true);
         setIsPlaying(true);
+        setStreamLoading(false);
+        return;
+      }
+      const preview = track.previewUrl || await OctaveMusicService.getAudioStreamUrl(track.id, 'high') || null;
+      if (preview) {
+        setResolvedStreamUrl(preview);
+        setIsPlaying(true);
+        setError('Full stream unavailable — playing the 30-second preview.');
       } else {
         setError(`Audio stream unavailable for "${track.title}".`);
       }
@@ -526,8 +529,10 @@ const MusicView: React.FC = () => {
         onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
         onEnded={nextTrack}
         onError={() => {
+          // Full-length stream failed: fall back to the 30-second preview.
           if (currentTrack?.previewUrl && resolvedStreamUrl !== currentTrack.previewUrl) {
             setResolvedStreamUrl(currentTrack.previewUrl);
+            setIsFullAudio(false);
           }
         }}
         autoPlay
@@ -564,8 +569,22 @@ const MusicView: React.FC = () => {
                 )}
               </div>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {currentTrack.title}
+                <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTrack.title}</span>
+                  {streamLoading ? null : (
+                    <span style={{
+                      flexShrink: 0,
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      letterSpacing: '0.5px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: isFullAudio ? 'rgba(74, 222, 128, 0.15)' : 'rgba(250, 179, 135, 0.15)',
+                      color: isFullAudio ? '#4ade80' : '#fab135',
+                    }}>
+                      {isFullAudio ? 'FULL' : '30s PREVIEW'}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#a497c4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {currentTrack.artist}

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookOpen, Check, Compass, Home, LayoutGrid, Library,
+  Blocks, BookHeadphones, BookMarked, BookOpen, Check, Compass, Home, LayoutGrid, Library,
   MoreHorizontal, Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
   UserPlus, Users, X,
 } from 'lucide-react';
@@ -28,6 +28,7 @@ const mainNav = [
   { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2 },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
+  { id: 'books' as const, label: 'Books', icon: BookMarked },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
@@ -44,6 +45,7 @@ const primaryMobileNavItems = [
 const moreNavItems = [
   { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones, desc: '9 audiobook sources & player' },
+  { id: 'books' as const, label: 'Books', icon: BookMarked, desc: 'Open Library, folkscanomy & archive.org' },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play, desc: 'Video streams & trending clips' },
   { id: 'discover' as const, label: 'Discover', icon: Compass, desc: 'Recommendations & genres' },
   { id: 'library' as const, label: 'My Library', icon: Library, desc: 'Watchlist & history' },

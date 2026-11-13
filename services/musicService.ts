@@ -1,4 +1,5 @@
 import { nativeFetchText } from './androidBridge';
+import { flowDetail, flowMusicSearch } from './flowService';
 
 export interface MusicTrack {
   id: string;
@@ -209,6 +210,27 @@ export class OctaveMusicService {
       }
     } catch {}
     return null;
+  }
+
+  /**
+   * Full-length playback: resolves the track through the YouTube pipeline
+   * (YouTube Music search → streamable audio-only URL via Piped/Invidious
+   * mirrors). iTunes previews are 30 seconds — this is what makes songs play
+   * end-to-end. Returns null when no mirror answers, so the caller can fall
+   * back to the 30-second preview.
+   */
+  static async resolveFullTrackAudio(title: string, artist: string): Promise<string | null> {
+    try {
+      const query = `${title} ${artist}`.trim();
+      const music = await flowMusicSearch(query);
+      const song = music.data.videos.find((video) => !video.live) || music.data.videos[0];
+      if (!song) return null;
+      const detail = await flowDetail(song.id);
+      const audio = detail.data.audioTracks.find((track) => track.hasAudio !== false && track.url);
+      return audio?.url || detail.data.playbackUrl || null;
+    } catch {
+      return null;
+    }
   }
 
   /**

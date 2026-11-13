@@ -10,6 +10,7 @@ import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
 import AudiobooksView from './components/AudiobooksView';
+import BooksView from './components/BooksView';
 import MusicView from './components/MusicView';
 import LiveTvView from './components/LiveTvView';
 import FlowView from './components/FlowView';
@@ -46,7 +47,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'music', 'audiobooks', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -922,6 +923,8 @@ const App: React.FC = () => {
     );
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
+  } else if (view === 'books') {
+    page = <BooksView compact={settings.compactCards} />;
   } else if (view === 'music') {
     page = <MusicView />;
   } else if (view === 'flow') {

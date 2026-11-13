@@ -1,9 +1,10 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpDown, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
-  Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
+  FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
 } from 'lucide-react';
-import { buildImageCandidates } from '../services/androidBridge';
+import { buildImageCandidates, openSafeExternalUrl } from '../services/androidBridge';
+import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
   resolveArtworkFallback, SANKA_API_ORIGIN, SANKA_COMIC_SOURCES,
@@ -126,8 +127,17 @@ function mergeUniqueTitles(existing: SankaTitle[], incoming: SankaTitle[]): { me
   return { merged, addedCount };
 }
 
+// Web sources plus the Internet Archive folkscanomy collections.
+const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
+  ...SANKA_COMIC_SOURCES.map((option) => ({ id: option.id as string, label: option.label })),
+  { id: 'archive', label: 'Internet Archive (folkscanomy)' },
+];
+
 const SankaExplorer: React.FC = () => {
+  // 'archive' routes search + detail to the Internet Archive folkscanomy
+  // collections instead of the Sanka web sources.
   const [source, setSource] = useState<string>('bacakomik');
+  const isArchiveMode = source === 'archive';
   const [feed, setFeed] = useState<ComicFeed>('latest');
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
@@ -154,6 +164,36 @@ const SankaExplorer: React.FC = () => {
   const [readerError, setReaderError] = useState('');
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
 
+  // Internet Archive item overlay (folkscanomy files: pdf/epub/cbz).
+  const [archiveItem, setArchiveItem] = useState<SankaTitle | null>(null);
+  const [archiveFiles, setArchiveFiles] = useState<BookFile[] | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState('');
+
+  const openArchiveItem = async (item: SankaTitle) => {
+    setArchiveItem(item);
+    setArchiveFiles(null);
+    setArchiveError('');
+    setArchiveLoading(true);
+    try {
+      const files = await BooksService.itemFiles(item.slug);
+      setArchiveFiles(files);
+      if (!files.length) setArchiveError('No downloadable pdf/epub/cbz files in this item.');
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Could not load the archive.org file list.');
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
+  const handleSelectTitle = (item: SankaTitle) => {
+    if (isArchiveMode || item.id.startsWith('archive:')) {
+      void openArchiveItem(item);
+      return;
+    }
+    setSelected(item);
+  };
+
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
@@ -167,6 +207,36 @@ const SankaExplorer: React.FC = () => {
     const load = async () => {
       const bypassCache = attempt > 0;
       const activeSource = source;
+
+      // Internet Archive folkscanomy branch (comic & manga collections).
+      if (activeSource === 'archive') {
+        const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === 'folk-comics') || ARCHIVE_COLLECTIONS[0];
+        try {
+          const found = await BooksService.searchArchive(submittedQuery, collection, 1, 24);
+          if (!current) return;
+          setItems(found.map((book) => ({
+            id: book.id,
+            slug: book.identifier || book.id,
+            title: book.title,
+            poster: book.coverUrl,
+            year: book.year,
+            summary: book.authors.join(', '),
+            genres: [],
+            kind: 'comic' as const,
+            source: 'archive',
+          })));
+          setPage(1);
+          setHasMore(found.length >= 24);
+          if (!found.length) setError(submittedQuery ? 'No archive.org items matched that search.' : '');
+        } catch (err) {
+          if (!current) return;
+          setItems([]);
+          setHasMore(false);
+          setError(err instanceof Error ? err.message : 'archive.org did not answer.');
+        }
+        return;
+      }
+
       try {
         const primary = await fetchSankaTitlesPage('comic', {
           query: submittedQuery,
@@ -244,6 +314,30 @@ const SankaExplorer: React.FC = () => {
     const nextPage = page + 1;
     setLoadingMore(true);
     try {
+      if (source === 'archive') {
+        const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === 'folk-comics') || ARCHIVE_COLLECTIONS[0];
+        const found = await BooksService.searchArchive(submittedQuery, collection, nextPage, 24);
+        const mapped = found.map((book) => ({
+          id: book.id,
+          slug: book.identifier || book.id,
+          title: book.title,
+          poster: book.coverUrl,
+          year: book.year,
+          summary: book.authors.join(', '),
+          genres: [],
+          kind: 'comic' as const,
+          source: 'archive',
+        }));
+        let added = 0;
+        setItems((prev) => {
+          const result = mergeUniqueTitles(prev, mapped);
+          added = result.addedCount;
+          return result.merged;
+        });
+        setPage(nextPage);
+        setHasMore(added > 0 && found.length >= 24);
+        return;
+      }
       const next = await fetchSankaTitlesPage('comic', {
         query: submittedQuery,
         source,
@@ -274,6 +368,13 @@ const SankaExplorer: React.FC = () => {
       setDetail(null);
       setDetailError('');
       setDetailLoading(false);
+      return;
+    }
+    // Archive items have no Sanka detail endpoint; they open the file overlay.
+    if (selected.id.startsWith('archive:')) {
+      setDetail(null);
+      setDetailLoading(false);
+      setDetailError('');
       return;
     }
     const controller = new AbortController();
@@ -373,7 +474,7 @@ const SankaExplorer: React.FC = () => {
     return { chapter: chapters[0], index: 0 };
   }, [chapters]);
 
-  const activeSourceLabel = SANKA_COMIC_SOURCES.find((item) => item.id === source)?.label || source;
+  const activeSourceLabel = COMIC_SOURCE_OPTIONS.find((item) => item.id === source)?.label || source;
 
   return (
     <div className="standard-page page-enter sanka-page">
@@ -420,7 +521,7 @@ const SankaExplorer: React.FC = () => {
                 setQuery('');
               }}
             >
-              {SANKA_COMIC_SOURCES.map((option) => (
+              {COMIC_SOURCE_OPTIONS.map((option) => (
                 <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>
@@ -479,7 +580,7 @@ const SankaExplorer: React.FC = () => {
           <h2>Couldn’t reach {activeSourceLabel}</h2>
           <p>{error} Try switching to another comic source or retrying.</p>
           <div className="sanka-source-pills">
-            {SANKA_COMIC_SOURCES.map((option) => (
+            {COMIC_SOURCE_OPTIONS.map((option) => (
               <button
                 key={option.id}
                 type="button"
@@ -518,7 +619,7 @@ const SankaExplorer: React.FC = () => {
                   <button
                     className="sanka-card-open"
                     type="button"
-                    onClick={() => setSelected(item)}
+                    onClick={() => handleSelectTitle(item)}
                     aria-label={`Open ${item.title} chapters`}
                   >
                     <div className="sanka-poster">
@@ -754,6 +855,52 @@ const SankaExplorer: React.FC = () => {
               <button onClick={() => setReaderError('')}>Close</button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Internet Archive (folkscanomy) item overlay */}
+      {archiveItem && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => event.target === event.currentTarget && setArchiveItem(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(1, 4, 9, 0.82)', zIndex: 95, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px' }}
+        >
+          <div style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '14px', maxWidth: '520px', width: '100%', padding: '18px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px' }}>
+              <strong style={{ color: '#f0f6fc', fontSize: '16px' }}>{archiveItem.title}</strong>
+              <button onClick={() => setArchiveItem(null)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            {archiveItem.summary && <p style={{ color: '#8b949e', fontSize: '13px', margin: '0 0 10px' }}>{archiveItem.summary}</p>}
+            {archiveLoading && (
+              <p style={{ color: '#8b949e', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <LoaderCircle size={14} className="spin" /> Loading files…
+              </p>
+            )}
+            {archiveError && <p style={{ color: '#f87171', fontSize: '13px' }}>{archiveError}</p>}
+            {archiveFiles && archiveFiles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '12px 0' }}>
+                {archiveFiles.map((file) => (
+                  <button
+                    key={file.name}
+                    onClick={() => openSafeExternalUrl(file.url)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', borderRadius: '10px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '13px', cursor: 'pointer', textAlign: 'left' }}
+                  >
+                    <FileDown size={16} color="#d6f77a" />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
+                    <span style={{ color: '#8b949e', fontSize: '11.5px' }}>{file.format}{BooksService.formatSize(file.sizeBytes) ? ` · ${BooksService.formatSize(file.sizeBytes)}` : ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              <ExternalLink size={12} /> Read online at archive.org
+            </button>
+          </div>
         </div>
       )}
     </div>
