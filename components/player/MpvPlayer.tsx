@@ -89,6 +89,9 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const osdTimer = useRef<number | null>(null);
 
   const [fatal, setFatal] = useState('');
+  // Auto-recovery (port of PlayTorrio): when playback fatals, open the source
+  // list automatically once per stream — faster than reading buttons.
+  const autoRecoveredRef = useRef<string | null>(null);
   useEffect(() => { setFatal(''); }, [effectiveUrl]);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [menu, setMenu] = useState<MenuId>(null);
@@ -594,6 +597,17 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     preloadFiredRef.current = key;
     onPreloadNextEpisode();
   }, [showUpNext, onPreloadNextEpisode, media?.id, duration]);
+
+  useEffect(() => {
+    if (!fatal || !onFindSources) return;
+    const key = `${media?.id || ''}:${stream.id || ''}`;
+    if (autoRecoveredRef.current === key) return;
+    const timer = window.setTimeout(() => {
+      autoRecoveredRef.current = key;
+      onFindSources();
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [fatal, onFindSources, media?.id, stream.id]);
 
   const progressRatio = duration ? currentTime / duration : 0;
   const bufferedRatio = duration ? buffered / duration : 0;

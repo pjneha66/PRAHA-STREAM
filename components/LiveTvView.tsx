@@ -109,6 +109,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [activeSourceName, setActiveSourceName] = useState('');
   const [sourceGroup, setSourceGroup] = useState('All');
   const [hubLimit, setHubLimit] = useState(250);
+  // Hub appearance (port of PT's IPTV settings): compact cards + hide logos.
+  const [hubCompact, setHubCompact] = useState(() => localStorage.getItem('praha.iptv.hubCompact') === '1');
+  const [hubHideLogos, setHubHideLogos] = useState(() => localStorage.getItem('praha.iptv.hubHideLogos') === '1');
+  const setIptvPref = (key: string, value: boolean, setter: (v: boolean) => void) => {
+    setter(value);
+    try { localStorage.setItem(key, value ? '1' : '0'); } catch { /* best effort */ }
+  };
   // Favorite channels (port of PlayTorrio's channel favorites): persisted URL set.
   const [favChannels, setFavChannels] = useState<string[]>(() => {
     try {
@@ -651,9 +658,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 ))}
               </div>
 
-              <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#8b949e' }}>
-                {activeSourceName} · {filteredPlaylistChannels.length.toLocaleString()} channels{sourceGroup !== 'All' ? ` in ${sourceGroup}` : ''}
-              </p>
+              <div style={{ margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <p style={{ margin: 0, fontSize: '13px', color: '#8b949e', flex: 1 }}>
+                  {activeSourceName} · {filteredPlaylistChannels.length.toLocaleString()} channels{sourceGroup !== 'All' ? ` in ${sourceGroup}` : ''}
+                </p>
+                <button
+                  onClick={() => setIptvPref('praha.iptv.hubCompact', !hubCompact, setHubCompact)}
+                  style={{ padding: '4px 10px', borderRadius: '7px', border: '1px solid #30363d', background: hubCompact ? 'rgba(88,166,255,.12)' : '#161b22', color: hubCompact ? '#58a6ff' : '#8b949e', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Compact
+                </button>
+                <button
+                  onClick={() => setIptvPref('praha.iptv.hubHideLogos', !hubHideLogos, setHubHideLogos)}
+                  style={{ padding: '4px 10px', borderRadius: '7px', border: '1px solid #30363d', background: hubHideLogos ? 'rgba(88,166,255,.12)' : '#161b22', color: hubHideLogos ? '#58a6ff' : '#8b949e', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  No logos
+                </button>
+              </div>
 
               {/* Source Channels Grid — capped per chunk to keep the page snappy */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
@@ -665,18 +686,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                       background: '#161b22',
                       borderRadius: '12px',
                       border: '1px solid #30363d',
-                      padding: '14px',
+                      padding: hubCompact ? '8px 10px' : '14px',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '10px',
-                      minHeight: '84px',
+                      minHeight: hubCompact ? '56px' : '84px',
                     }}
                   >
-                    {ch.logo ? (
-                      <img src={ch.logo} alt="" loading="lazy" style={{ width: '46px', height: '46px', borderRadius: '8px', objectFit: 'contain', background: '#0d1117', flexShrink: 0 }}
+                    {ch.logo && !hubHideLogos ? (
+                      <img src={ch.logo} alt="" loading="lazy" style={{ width: hubCompact ? '32px' : '46px', height: hubCompact ? '32px' : '46px', borderRadius: '8px', objectFit: 'contain', background: '#0d1117', flexShrink: 0 }}
                         onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
-                    ) : (
+                    ) : hubHideLogos ? null : (
                       <div style={{ width: '46px', height: '46px', borderRadius: '8px', background: '#0d1117', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Tv2 size={18} color="#8b949e" />
                       </div>

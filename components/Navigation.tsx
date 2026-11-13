@@ -21,6 +21,17 @@ interface NavigationProps {
   children: React.ReactNode;
 }
 
+// Hidden nav ids (port of PT's dock settings, minimal): configurable in Settings.
+function readHiddenNav(): string[] {
+  try {
+    const raw = localStorage.getItem('praha.nav.hidden.v1');
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
@@ -60,6 +71,16 @@ const Navigation: React.FC<NavigationProps> = ({
   const searchRef = useRef<HTMLInputElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [hiddenNav, setHiddenNav] = useState<string[]>(readHiddenNav);
+  useEffect(() => {
+    const refresh = () => setHiddenNav(readHiddenNav());
+    window.addEventListener('praha:nav-changed', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('praha:nav-changed', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
   const profilePopoverRef = useRef<HTMLDivElement>(null);
   const moreSheetRef = useRef<HTMLDivElement>(null);
   const profileRestoreRef = useRef<HTMLElement | null>(null);
@@ -140,7 +161,7 @@ const Navigation: React.FC<NavigationProps> = ({
 
         <nav className="side-nav" aria-label="Main navigation">
           <p className="nav-label">MENU</p>
-          {mainNav.map(navButton)}
+          {mainNav.filter((item) => !hiddenNav.includes(item.id)).map(navButton)}
           <p className="nav-label nav-label-spaced">YOUR SPACE</p>
           {navButton({ id: 'extensions', label: 'Extensions', icon: Blocks })}
           {navButton({ id: 'settings', label: 'Settings', icon: Settings })}

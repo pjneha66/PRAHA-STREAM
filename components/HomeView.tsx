@@ -1,16 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight, Blocks, Check, ChevronLeft, ChevronRight, CircleAlert, ExternalLink, Info, Play, Plus, RotateCcw, Star,
 } from 'lucide-react';
 import type { HomeCatalog, InstalledAddon, MediaItem, NuvioRepository, WatchProgress } from '../types';
 import { Artwork, ContinueCard, MediaRow } from './MediaCard';
 import TmdbSetupCard from './TmdbSetupCard';
-import { useEffect, useState as useLocalState } from 'react';
 import { probeNetworkCondition, NETWORK_CONDITION_COPY, type NetworkCondition } from '../services/networkCondition';
 
 /** Network-condition-aware hint under source errors (port of Nuvio's NetworkOfflineCard). */
 const NetworkHint: React.FC = () => {
-  const [condition, setCondition] = useLocalState<NetworkCondition | null>(null);
+  const [condition, setCondition] = useState<NetworkCondition | null>(null);
   useEffect(() => {
     let active = true;
     probeNetworkCondition().then((result) => { if (active) setCondition(result); }).catch(() => undefined);
@@ -74,6 +73,30 @@ const HomeView: React.FC<HomeViewProps> = ({
   // Hero auto-rotation (port of Nuvio's HomeHeroSection): advances the
   // spotlight every 9s; any manual move resets the timer.
   const [autoRotateTick, setAutoRotateTick] = useState(0);
+  // Continue-watching prefs (port of Nuvio's ContinueWatchingPreferences):
+  // hide finished (>=90%) + newest-first/title sort, persisted.
+  const [cwPrefs, setCwPrefs] = useState<{ hideFinished: boolean; sort: 'recent' | 'title' }>(() => {
+    try {
+      const raw = localStorage.getItem('praha.cw.prefs.v1');
+      return raw ? (JSON.parse(raw) as { hideFinished?: boolean; sort?: 'recent' | 'title' }) as { hideFinished: boolean; sort: 'recent' | 'title' } : { hideFinished: false, sort: 'recent' };
+    } catch {
+      return { hideFinished: false, sort: 'recent' as const };
+    }
+  });
+  const setCwPref = (patch: Partial<{ hideFinished: boolean; sort: 'recent' | 'title' }>) => {
+    setCwPrefs((current) => {
+      const next = { ...current, ...patch };
+      try { localStorage.setItem('praha.cw.prefs.v1', JSON.stringify(next)); } catch { /* best effort */ }
+      return next;
+    });
+  };
+  const continueEntries = useMemo(() => {
+    let list = [...history];
+    if (cwPrefs.hideFinished) list = list.filter((entry) => entry.progress < 90);
+    if (cwPrefs.sort === 'title') list.sort((a, b) => a.media.title.localeCompare(b.media.title));
+    else list.sort((a, b) => b.watchedAt - a.watchedAt);
+    return list;
+  }, [history, cwPrefs]);
   useEffect(() => {
     if (spotlight.length < 2) return;
     const timer = window.setInterval(() => {
@@ -243,9 +266,16 @@ const HomeView: React.FC<HomeViewProps> = ({
         <button className="text-button" onClick={() => onHomeRowsChange(DEFAULT_HOME_ROWS)}>Reset rows</button>
       </details>
       {homeRows.order.filter((row) => !homeRows.hidden.includes(row)).map((row) => {
-        if (row === 'continue') return history.length ? <section className="media-section continue-section" key={row}>
-          <div className="section-heading"><div><h2>Pick up where you left off</h2><p>Resume at your exact timestamp or jump to the next episode.</p></div><button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button></div>
-          <div className="continue-row">{history.slice(0, 6).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} onResumeEntry={onResumeEntry} onRemove={onRemoveHistory} />)}</div>
+        if (row === 'continue') return continueEntries.length ? <section className="media-section continue-section" key={row}>
+          <div className="section-heading">
+            <div><h2>Pick up where you left off</h2><p>Resume at your exact timestamp or jump to the next episode.</p></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button className="text-button" onClick={() => setCwPref({ hideFinished: !cwPrefs.hideFinished })}>{cwPrefs.hideFinished ? 'Show finished' : 'Hide finished'}</button>
+              <button className="text-button" onClick={() => setCwPref({ sort: cwPrefs.sort === 'recent' ? 'title' : 'recent' })}>Sort: {cwPrefs.sort === 'recent' ? 'recent' : 'A–Z'}</button>
+              <button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button>
+            </div>
+          </div>
+          <div className="continue-row">{continueEntries.slice(0, 6).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} onResumeEntry={onResumeEntry} onRemove={onRemoveHistory} />)}</div>
         </section> : null;
         const rows = {
           trending: ['Trending this week', 'Live from TMDB — what everyone is pressing play on.'],

@@ -24,6 +24,7 @@ const DetailsModal: React.FC<{
   onClose: () => void;
   onPlay: (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => void;
   onEmbeddedPlayers: (item: MediaItem, season?: number, episode?: number) => void;
+  onOpenPerson?: (personId: number, name: string) => void;
   onSelectRecommendation: (item: MediaItem) => void;
   onToggleWatchlist: (item: MediaItem, status?: LibraryStatus) => void;
   onUpdateStatus: (item: MediaItem, status: LibraryStatus) => void;
@@ -36,6 +37,7 @@ const DetailsModal: React.FC<{
   onClose,
   onPlay,
   onEmbeddedPlayers,
+  onOpenPerson,
   onSelectRecommendation,
   onToggleWatchlist,
   onUpdateStatus,
@@ -46,6 +48,25 @@ const DetailsModal: React.FC<{
   const [episodes, setEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [animeEpisodes, setAnimeEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  // Per-episode IMDb ratings (Cinemeta fills gaps in TMDB episode ratings).
+  const [imdbRatings, setImdbRatings] = useState<Record<number, number>>({});
+  // Section manager (port of Nuvio's MetaScreenSettingsRepository): hide
+  // sections per user preference, persisted.
+  const [hiddenSections, setHiddenSections] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('praha.details.sections.v1');
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleSection = (sectionId: string) => {
+    setHiddenSections((current) => {
+      const next = current.includes(sectionId) ? current.filter((entry) => entry !== sectionId) : [...current, sectionId];
+      try { localStorage.setItem('praha.details.sections.v1', JSON.stringify(next)); } catch { /* best effort */ }
+      return next;
+    });
+  };
   // Addon-catalog items carry no TMDB id; enrich once so the episode list is
   // always TMDB-backed for series (user request), with the addon manifest
   // left to do what it does best: streams.
@@ -131,6 +152,26 @@ const DetailsModal: React.FC<{
       .finally(() => { if (active) setEpisodesLoading(false); });
     return () => { active = false; };
   }, [item.id, item.type, baseItem.tmdbId, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
+
+  // Cinemeta carries per-episode IMDb ratings — merge any TMDB missed.
+  useEffect(() => {
+    if (item.type !== 'series' || !item.imdbId || animeSlug) return;
+    let active = true;
+    fetch(`https://v3-cinemeta.strem.io/series/${encodeURIComponent(item.imdbId)}.json`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { meta?: { videos?: Array<{ season?: number; episode?: number; imdbRating?: string | number }> } } | null) => {
+        if (!active || !data?.meta?.videos) return;
+        const ratings: Record<number, number> = {};
+        for (const video of data.meta.videos) {
+          if (video.season !== selectedSeason || video.imdbRating === undefined) continue;
+          const rating = Number(video.imdbRating);
+          if (Number.isFinite(rating) && rating > 0) ratings[video.episode || 0] = rating;
+        }
+        setImdbRatings(ratings);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [item.id, item.type, item.imdbId, selectedSeason, animeSlug]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -288,7 +329,7 @@ const DetailsModal: React.FC<{
           </div>
         </div>
 
-        {item.type === 'series' && (baseItem.tmdbId || animeSlug) && seasonNumbers.length > 0 && (
+        {!hiddenSections.includes('episodes') && item.type === 'series' && (baseItem.tmdbId || animeSlug) && seasonNumbers.length > 0 && (
           <section className="details-section">
             <div className="details-section-head">
               <h3><Tv size={17} /> Seasons & Episodes</h3>
@@ -334,7 +375,7 @@ const DetailsModal: React.FC<{
                           <span>
                             {ep.runtime ? `${ep.runtime}m` : ''}
                             {ep.airDate ? ` · ${ep.airDate}` : ''}
-                            {ep.rating ? ` · ★ ${ep.rating}` : ''}
+                            {ep.rating ? ` · ★ ${ep.rating}` : (!ep.rating && imdbRatings[ep.episode] ? ` · ★ ${imdbRatings[ep.episode].toFixed(1)}` : '')}
                           </span>
                         </div>
                         <p>{ep.overview || 'Tap to search available sources for this episode.'}</p>
@@ -364,7 +405,7 @@ const DetailsModal: React.FC<{
 
         {(item.type === 'series' || isAnime) && (isAnime || hasAnikuraId(item)) && (
           <div ref={discussionRef}>
-            <AnimeDiscussion item={item} initialEpisode={discussionEpisode || 1} compact />
+            {!hiddenSections.includes('discussion') && <AnimeDiscussion item={item} initialEpisode={discussionEpisode || 1} compact />}
           </div>
         )}
 
@@ -406,14 +447,34 @@ const DetailsModal: React.FC<{
           </section>
         )}
 
-        {item.cast && item.cast.length > 0 && (
+        <div className="details-section-manager" aria-label="Show or hide sections">
+          <span>Sections:</span>
+          {([['episodes', 'Episodes'], ['cast', 'Cast'], ['recs', 'More like this'], ['discussion', 'Comments']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              className={!hiddenSections.includes(id) ? 'active' : ''}
+              onClick={() => toggleSection(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {item.cast && item.cast.length > 0 && !hiddenSections.includes('cast') && (
           <section className="details-section">
             <div className="details-section-head">
               <h3><Users size={17} /> Cast</h3>
             </div>
             <div className="details-cast-row">
               {item.cast.map((actor) => (
-                <div className="cast-chip" key={actor.id}>
+                <div
+                  className="cast-chip cast-chip-clickable"
+                  key={actor.id}
+                  onClick={() => onOpenPerson?.(actor.id, actor.name)}
+                  role={onOpenPerson ? 'button' : undefined}
+                  title={onOpenPerson ? `Open ${actor.name}` : undefined}
+                  style={onOpenPerson ? { cursor: 'pointer' } : undefined}
+                >
                   <div className="cast-avatar"><Artwork src={actor.profile} alt={actor.name} /></div>
                   <div>
                     <strong>{actor.name}</strong>
@@ -425,13 +486,13 @@ const DetailsModal: React.FC<{
           </section>
         )}
 
-        {item.recommendations && item.recommendations.length > 0 && (
+        {!hiddenSections.includes('recs') && baseItem.recommendations && baseItem.recommendations.length > 0 && (
           <section className="details-section">
             <div className="details-section-head">
               <h3><Film size={17} /> More like this</h3>
             </div>
             <div className="details-rec-grid">
-              {item.recommendations.slice(0, 6).map((rec) => (
+              {baseItem.recommendations.slice(0, 6).map((rec) => (
                 <MediaCard
                   key={rec.id}
                   item={rec}

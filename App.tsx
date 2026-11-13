@@ -15,6 +15,7 @@ import MusicView from './components/MusicView';
 import LiveTvView from './components/LiveTvView';
 import FlowView from './components/FlowView';
 import ProfilePicker from './components/ProfilePicker';
+import PersonModal from './components/PersonModal';
 import SettingsView from './components/SettingsView';
 import DetailsModal from './components/DetailsModal';
 import SourceModal from './components/SourceModal';
@@ -138,6 +139,7 @@ const App: React.FC = () => {
   const [discoverExtras, setDiscoverExtras] = useState<{ music: MusicTrack[]; books: BookItem[] } | null>(null);
   const [searchPrefill, setSearchPrefill] = useState<{ view: AppView; term: string } | null>(null);
   const [pinGateProfile, setPinGateProfile] = useState<UserProfile | null>(null);
+  const [personModal, setPersonModal] = useState<{ id: number; name: string } | null>(null);
   const [discoverFilters, setDiscoverFilters] = useState<DiscoverFilters>(DEFAULT_DISCOVER_FILTERS);
   const [discoverPage, setDiscoverPage] = useState(1);
   const [discoverHasMore, setDiscoverHasMore] = useState(false);
@@ -338,6 +340,21 @@ const App: React.FC = () => {
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
   }, [profileSwitcherOpen, player, sourceState, embedState, selected, view, notify]);
 
+  // Custom background image (port of PlayTorrio's custom background): URL
+  // based, dimmed with a scrim so text stays readable.
+  useEffect(() => {
+    const url = (settings.customBackground || '').trim();
+    if (url && /^https?:\/\//.test(url)) {
+      document.body.style.backgroundImage = `linear-gradient(rgba(8,9,11,.82), rgba(8,9,11,.9)), url("${url.replace(/"/g, '')}")`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+      document.body.style.backgroundAttachment = 'fixed';
+    } else {
+      document.body.style.backgroundImage = '';
+    }
+    return () => { document.body.style.backgroundImage = ''; };
+  }, [settings.customBackground]);
+
   const updatePlayerSettings = useCallback((patch: Partial<PlayerSettings>) => {
     setSettings((current) => {
       const norm = normalizeSettings(current);
@@ -491,10 +508,11 @@ const App: React.FC = () => {
             setDiscoverExtras(null);
           }
         } else {
+          const addonGenre = discoverFilters.genre !== 'all' ? discoverFilters.genre : undefined;
           const catalogJobs = discoverFilters.source !== 'tmdb'
             ? addons.filter((addon) => addon.enabled).flatMap((addon) =>
                 addon.manifest.catalogs.filter((cat) => cat.id === 'top').slice(0, 2)
-                  .map((cat) => fetchStremioCatalog(addon, cat).catch(() => [])),
+                  .map((cat) => fetchStremioCatalog(addon, cat, { genre: addonGenre }).catch(() => [])),
               )
             : [];
           const [addonItems, tmdbDiscovered] = await Promise.all([
@@ -1046,6 +1064,7 @@ const App: React.FC = () => {
         onSelect={openDetails}
         onPlay={(item) => openSources(item)}
         onEmbeddedPlayers={openEmbeddedPlayers}
+            onOpenPerson={(personId, personName) => setPersonModal({ id: personId, name: personName })}
         onResumeEntry={resumeWatchEntry}
         onRemoveHistory={removeHistoryEntry}
         onToggleWatchlist={(item) => toggleWatchlist(item)}
@@ -1354,6 +1373,18 @@ const App: React.FC = () => {
         <UpdateModal
           update={availableUpdate}
           onClose={() => setAvailableUpdate(null)}
+        />
+      )}
+
+      {personModal && (
+        <PersonModal
+          personId={personModal.id}
+          name={personModal.name}
+          onClose={() => setPersonModal(null)}
+          onSelect={(item) => { setPersonModal(null); openDetails(item); }}
+          watchlist={watchlist}
+          onToggleWatchlist={(item) => toggleWatchlist(item)}
+          compact={settings.compactCards}
         />
       )}
 

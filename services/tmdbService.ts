@@ -325,6 +325,40 @@ export const tmdbService = {
     return enriched;
   },
 
+  /** Person details + combined credits (port of Nuvio's PersonDetailScreen). */
+  async getPerson(personId: number | string): Promise<{
+    name: string;
+    biography: string;
+    profile: string;
+    birthday?: string;
+    placeOfBirth?: string;
+    knownFor: MediaItem[];
+  } | null> {
+    try {
+      const [details, credits] = await Promise.all([
+        request<Record<string, any>>(`/person/${personId}`),
+        request<Record<string, any>>(`/person/${personId}/combined_credits`),
+      ]);
+      const castCredits = Array.isArray(credits.cast) ? credits.cast : [];
+      const knownFor = castCredits
+        .filter((entry: Record<string, any>) => entry.poster_path && (entry.popularity || 0) > 1)
+        .sort((a: Record<string, any>, b: Record<string, any>) => (b.popularity || 0) - (a.popularity || 0))
+        .slice(0, 12)
+        .map((entry: Record<string, any>) => mapTmdbItem(entry, entry.media_type === 'tv' ? 'tv' : 'movie'))
+        .filter((item: MediaItem | null): item is MediaItem => Boolean(item));
+      return {
+        name: String(details.name || 'Unknown'),
+        biography: String(details.biography || '').split('\n\n')[0] || '',
+        profile: tmdbImage(details.profile_path, 'w342'),
+        birthday: details.birthday || undefined,
+        placeOfBirth: details.place_of_birth || undefined,
+        knownFor,
+      };
+    } catch {
+      return null;
+    }
+  },
+
   /** Load full episode guide for one TV season (cached in-memory for instant switching). */
   async getSeason(tmdbId: number | string, seasonNumber: number): Promise<TmdbEpisodeInfo[]> {
     const cacheKey = `${tmdbId}:${seasonNumber}`;

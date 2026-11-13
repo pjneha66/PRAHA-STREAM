@@ -44,7 +44,48 @@ const THEME_ACCENTS: Array<{ id: AppThemeAccent; label: string; color: string }>
 ];
 
 
+/** Group jump-chips (port of Nuvio's categorized settings tree, light-touch):
+    quick anchors to each settings card group. */
+const SETTINGS_GROUPS: Array<[string, string]> = [
+  ['Profiles', 'Profiles'],
+  ['TMDB API', 'TMDB'],
+  ['IMDx · Tiffara (optional)', 'IMDx'],
+  ['Debrid & Magnet Streaming', 'Debrid'],
+  ['Backup, Restore & Sync', 'Backup'],
+  ['Android & TV Experience', 'Android/TV'],
+  ['Private DNS', 'DNS'],
+  ['Playback & browsing', 'Playback'],
+  ['Player', 'Player'],
+  ['Appearance & Palette', 'Appearance'],
+  ['Navigation', 'Navigation'],
+];
+
+const SettingsJumpChips: React.FC = () => {
+  const jump = (heading: string) => {
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.settings-card'));
+    const target = cards.find((card) => card.querySelector('h2')?.textContent === heading);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  return (
+    <div className="filter-pills settings-jump-chips" style={{ marginBottom: '16px' }}>
+      {SETTINGS_GROUPS.map(([heading, label]) => (
+        <button key={heading} onClick={() => jump(heading)}>{label}</button>
+      ))}
+    </div>
+  );
+};
+
 /** Settings search (port of Nuvio's SettingsSearch): filters settings cards by keyword. */
+const hiddenNavDefaults = (): string[] => {
+  try {
+    const raw = localStorage.getItem('praha.nav.hidden.v1');
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
 const SettingsSearchBox: React.FC = () => {
   const [term, setTerm] = React.useState('');
   React.useEffect(() => {
@@ -144,6 +185,7 @@ const SettingsView: React.FC<{
   onExportBackup, onImportBackup, jellyfinSnapshot, onJellyfinSnapshotChange,
   onCheckUpdates,
 }) => {
+  const [hiddenNav, setHiddenNav] = useState<string[]>(hiddenNavDefaults);
   const importFileRef = useRef<HTMLInputElement | null>(null);
 
   const [apiDraft, setApiDraft] = useState(settings.tmdbApiKey || '');
@@ -236,6 +278,7 @@ const SettingsView: React.FC<{
       <div className="settings-layout">
         <div className="settings-main">
           <SettingsSearchBox />
+          <SettingsJumpChips />
           {/* Household Profiles */}
           <section className="settings-card">
             <div className="settings-card-heading">
@@ -617,6 +660,31 @@ const SettingsView: React.FC<{
             <div className="setting-row"><div><strong>Reduce motion</strong><p>Minimize transitions and animated effects.</p></div><Toggle checked={settings.reduceMotion} onChange={(value) => update('reduceMotion', value)} label="Reduce motion" /></div>
             <div className="setting-row"><div><strong>Preferred audio language</strong><p>Used to prioritize matching streams when available.</p></div><select className="settings-select" value={settings.preferredLanguage} onChange={(event) => update('preferredLanguage', event.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="es">Spanish</option><option value="other">Other</option></select></div>
             <BadgeRulesEditor />
+          </section>
+
+          {/* Navigation visibility (port of PT's dock settings) */}
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Navigation</h2><p>Show or hide sections of the sidebar. Extensions and Settings always stay.</p></div></div>
+            <div className="setting-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
+              {[['home', 'Home'], ['livetv', 'Live TV'], ['anime', 'Anime'], ['sanka', 'Manga & Comics'], ['music', 'Music'], ['audiobooks', 'Audiobooks'], ['books', 'Books'], ['discover', 'Discover'], ['flow', 'Flow · YouTube'], ['explore', 'Explore'], ['library', 'My Library']].map(([id, label]) => {
+                const visible = !hiddenNav.includes(id);
+                return (
+                  <button
+                    key={id}
+                    className={visible ? 'active' : ''}
+                    onClick={() => {
+                      const next = visible ? [...hiddenNav, id] : hiddenNav.filter((entry) => entry !== id);
+                      setHiddenNav(next);
+                      try { localStorage.setItem('praha.nav.hidden.v1', JSON.stringify(next)); } catch { /* best effort */ }
+                      window.dispatchEvent(new Event('praha:nav-changed'));
+                    }}
+                    style={{ padding: '6px 12px', borderRadius: '999px', border: '1px solid', borderColor: visible ? 'rgba(88,166,255,.5)' : 'var(--line-strong, #30363d)', background: visible ? 'rgba(88,166,255,.08)' : 'transparent', color: visible ? '#58a6ff' : 'var(--muted, #8b949e)', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {label} {visible ? 'shown' : 'hidden'}
+                  </button>
+                );
+              })}
+            </div>
           </section>
 
           {/* Player */}
