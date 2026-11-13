@@ -42,6 +42,7 @@ export interface PrahaNativeInterface {
   openExternalPlayer(url: string, title: string, packageName: string, headersJson: string): boolean;
   shareText(filename: string, content: string): boolean;
   downloadAndInstallUpdate?(apkUrl: string, versionName: string): boolean;
+  downloadFile?(url: string, title: string, headersJson: string): string;
   getAppVersionName?(): string;
   exitApp(): void;
 
@@ -744,6 +745,34 @@ export function openExternalPlayer(
   }).catch(() => {
     openFallback();
   });
+}
+
+/**
+ * Starts a system DownloadManager download (progress + notification handled
+ * by Android). Direct http(s) files only — magnets go through the torrent
+ * engines instead. Returns the download id, or null on rejection.
+ */
+export async function downloadStreamFile(
+  url: string,
+  title: string,
+  headers: Record<string, string> = {},
+): Promise<string | null> {
+  const safeUrl = safeRemoteUrl(url);
+  if (!safeUrl || url.startsWith('magnet:')) return null;
+  try {
+    if (bridgeRpcAvailable()) {
+      const result = await prahaRpc<string>('downloadFile', [safeUrl, title, JSON.stringify(headers)], 10000).catch(() => null);
+      if (result && result !== '-1') return result;
+      return null;
+    }
+    if (typeof window !== 'undefined' && window.PrahaNative?.downloadFile) {
+      const result = window.PrahaNative.downloadFile(safeUrl, title, JSON.stringify(headers));
+      return result && result !== '-1' ? result : null;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 export async function exportBackupFile(filename: string, jsonText: string): Promise<'shared' | 'downloaded'> {

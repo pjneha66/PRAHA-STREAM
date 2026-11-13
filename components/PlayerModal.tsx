@@ -92,6 +92,21 @@ const PlayerModal: React.FC<{
   const [introSegments, setIntroSegments] = useState<IntroSegment[]>([]);
   // Zap bar availability — re-checked whenever the playing stream changes.
   const zapAvailable = useMemo(() => Boolean(IptvZapStore.get()), [stream]);
+  // P2P consent (port of PlayTorrio's p2p_warning_dialog): torrent engines
+  // connect to other peers — gate first use behind an explicit opt-in.
+  const [p2pConsent, setP2pConsent] = useState<'unknown' | 'accepted'>(() => {
+    try {
+      return localStorage.getItem('praha.p2p.consent.v1') === 'accepted' ? 'accepted' : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  });
+  const [p2pNeverAsk, setP2pNeverAsk] = useState(false);
+  const acceptP2p = () => {
+    try { localStorage.setItem('praha.p2p.consent.v1', 'accepted'); } catch { /* best effort */ }
+    setP2pNeverAsk(true);
+    setP2pConsent('accepted');
+  };
 
   useEffect(() => {
     setActiveStream(stream);
@@ -137,6 +152,7 @@ const PlayerModal: React.FC<{
   }, [addons, media, season, episode, activeStream]);
 
   const isMagnet = isMagnetOrTorrent(activeStream) && activeStream.url.startsWith('magnet:');
+  const needsP2pConsent = p2pConsent !== 'accepted';
   const isYoutube = Boolean(activeStream.ytId);
   // /embed/ in the path does not always mean a web page: some CDNs host
   // playable VOD under /embed/<id>.m3u8 — never iframe those.
@@ -248,7 +264,7 @@ const PlayerModal: React.FC<{
   // WebTorrent P2P -> manual panel. The panel stays only when everything fails.
   const engineAutoTriedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isMagnet) return;
+    if (!isMagnet || needsP2pConsent) return;
     const magnetKey = buildMagnetUri(activeStream);
     if (engineAutoTriedRef.current === magnetKey) return;
     engineAutoTriedRef.current = magnetKey;
@@ -281,7 +297,7 @@ const PlayerModal: React.FC<{
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMagnet, activeStream]);
+  }, [isMagnet, activeStream, needsP2pConsent]);
 
   const fullTitle = media.type === 'series' && season
     ? `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`
@@ -455,6 +471,38 @@ const PlayerModal: React.FC<{
           </div>
         </div>
       </section>
+
+      {needsP2pConsent && (
+        <div className="modal-backdrop p2p-consent-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+          <section role="alertdialog" aria-modal="true" aria-label="Peer-to-peer notice" style={{ margin: 'auto', background: '#161b22', border: '1px solid #30363d', borderRadius: '16px', padding: '24px 22px', width: 'min(400px, 92vw)' }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: '17px', color: '#f0f6fc' }}>Peer-to-peer stream</h2>
+            <p style={{ margin: '0 0 12px', fontSize: '13px', lineHeight: 1.6, color: '#c9d1d9' }}>
+              This source is a torrent. Playing it connects your device directly to other users in the swarm — your IP address is visible to them. Torrent engines only run while a torrent stream is playing.
+            </p>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px', color: '#8b949e', marginBottom: '14px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={p2pNeverAsk} onChange={(event) => setP2pNeverAsk(event.target.checked)} />
+              Don&apos;t ask again
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={onClose} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (p2pNeverAsk) acceptP2p();
+                  else {
+                    try { localStorage.setItem('praha.p2p.consent.v1', 'ask'); } catch { /* best effort */ }
+                    setP2pConsent('accepted');
+                  }
+                }}
+                style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: 'none', background: '#ef4444', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Accept &amp; play
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

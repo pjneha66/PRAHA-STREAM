@@ -354,6 +354,8 @@ public class MainActivity extends BridgeActivity {
                         args.optString(2, ""), args.optString(3, ""));
             case "shareText":
                 return rpcBridge.shareText(args.optString(0, ""), args.optString(1, ""));
+            case "downloadFile":
+                return rpcBridge.downloadFile(args.optString(0, ""), args.optString(2, ""), args.optString(1, ""));
             case "downloadAndInstallUpdate":
                 return rpcBridge.downloadAndInstallUpdate(args.optString(0, ""), args.optString(1, ""));
             case "openSubtitlePicker":
@@ -906,6 +908,45 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        /**
+         * Saves a direct http(s) media file into the system Downloads folder
+         * via DownloadManager (notification + progress handled by the system).
+         * Returns the DownloadManager id, or -1 on rejection/failure.
+         */
+        public String downloadFile(final String url, final String title, final String headersJson) {
+            if (url == null || url.isEmpty()) return "-1";
+            if (!isAllowedRemoteUrl(url, false)) return "-1";
+            try {
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                String safeTitle = (title == null || title.trim().isEmpty())
+                        ? "PRAHA download"
+                        : title.replaceAll("[\\/:*?\"<>|]", "_").trim();
+                request.setTitle(safeTitle);
+                request.setDescription("PRAHA STREAM download");
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PRAHA/" + safeTitle);
+                if (headersJson != null && !headersJson.trim().isEmpty()) {
+                    try {
+                        JSONObject headers = new JSONObject(headersJson);
+                        java.util.Iterator<String> keys = headers.keys();
+                        while (keys.hasNext()) {
+                            String key = keys.next();
+                            String value = headers.optString(key, "");
+                            if (!key.isEmpty() && !value.isEmpty() && !"host".equalsIgnoreCase(key)) {
+                                request.addRequestHeader(key, value);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                if (dm == null) return "-1";
+                long id = dm.enqueue(request);
+                return String.valueOf(id);
+            } catch (Exception e) {
+                return "-1";
+            }
+        }
+
         public boolean downloadAndInstallUpdate(final String apkUrl, final String versionName) {
             if (apkUrl == null || apkUrl.isEmpty()) return false;
             // Pin self-updates to the GitHub release feed over HTTPS and require

@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { matchBadgeRule } from '../services/badgeRules';
+import { downloadStreamFile } from '../services/androidBridge';
 import {
   Blocks, Check, CircleAlert, Copy, Film, HardDrive, Languages, Play, RefreshCw,
-  ShieldCheck, Users, X, Zap, Star,
+  ShieldCheck, Users, X, Zap, Star, ArrowDownToLine,
 } from 'lucide-react';
 import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth } from '../types';
 import { Artwork } from './MediaCard';
@@ -87,6 +88,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   onPlay, onOpenExtensions, showClose, onClose, health = [], preferredSource = '', onPreferredSourceChange,
 }) => {
   const [quality, setQuality] = useState('all');
+  const [downloadHint, setDownloadHint] = useState('');
   const [provider, setProvider] = useState('all');
   const [language, setLanguage] = useState('all');
   const [codec, setCodec] = useState('all');
@@ -171,7 +173,20 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
           const badges = parseStreamBadges(stream);
           return (
             <article className="stream-row" key={stream.id}>
-              <button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
+              <button
+                  className="stream-play"
+                  title="Download to device (system Downloads)"
+                  aria-label={`Download ${stream.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void downloadStreamFile(stream.url || '', stream.title || 'PRAHA download', stream.headers || {}).then((id) => {
+                      setDownloadHint(id ? 'Download started — see the notification shade.' : 'This stream can\'t be downloaded directly.');
+                      window.setTimeout(() => setDownloadHint(''), 3500);
+                    });
+                  }}
+                >
+                  <ArrowDownToLine size={17} />
+                </button><button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
               <div className="stream-main">
                 <div className="stream-title">
                   <strong>
