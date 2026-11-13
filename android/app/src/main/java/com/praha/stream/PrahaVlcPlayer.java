@@ -143,6 +143,19 @@ public class PrahaVlcPlayer {
         this.activity = activity;
     }
 
+    /**
+     * VLC view operations (attachViews / detachViews / setVisibility) must run on the
+     * UI thread. Bridge calls arrive on the WebView JS-bridge thread, so marshal them
+     * (IPTV crash fix: off-thread surface handling).
+     */
+    private void runOnUi(Runnable r) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            r.run();
+        } else {
+            mainHandler.post(r);
+        }
+    }
+
     public void init(VLCVideoLayout layout, WebView webView) {
         this.videoLayout = layout;
         this.webView = webView;
@@ -154,7 +167,14 @@ public class PrahaVlcPlayer {
             libVlc = new LibVLC(activity, options);
             mediaPlayer = new MediaPlayer(libVlc);
             if (videoLayout != null) {
-                mediaPlayer.attachViews(videoLayout, null, true, false);
+                final MediaPlayer player = mediaPlayer;
+                runOnUi(() -> {
+                    try {
+                        player.attachViews(videoLayout, null, true, false);
+                    } catch (Exception e) {
+                        Log.e(TAG, "attachViews failed", e);
+                    }
+                });
             }
             setupListeners();
             isInitialized = true;
@@ -245,8 +265,9 @@ public class PrahaVlcPlayer {
             mediaPlayer.setMedia(currentMedia);
             currentMedia.release();
 
-            if (videoLayout != null) {
-                videoLayout.setVisibility(View.VISIBLE);
+            final VLCVideoLayout layout = videoLayout;
+            if (layout != null) {
+                runOnUi(() -> layout.setVisibility(View.VISIBLE));
             }
             mediaPlayer.play();
             if (resumeMs > 0) {
@@ -280,8 +301,9 @@ public class PrahaVlcPlayer {
                 mediaPlayer.stop();
             } catch (Exception ignored) {}
         }
-        if (videoLayout != null) {
-            videoLayout.setVisibility(View.GONE);
+        final VLCVideoLayout layout = videoLayout;
+        if (layout != null) {
+            runOnUi(() -> layout.setVisibility(View.GONE));
         }
     }
 
@@ -725,19 +747,22 @@ public class PrahaVlcPlayer {
 
     public void release() {
         stop();
-        if (mediaPlayer != null) {
-            try {
-                mediaPlayer.detachViews();
-                mediaPlayer.release();
-            } catch (Exception ignored) {}
-            mediaPlayer = null;
-        }
-        if (libVlc != null) {
-            try {
-                libVlc.release();
-            } catch (Exception ignored) {}
-            libVlc = null;
-        }
-        isInitialized = false;
+        // Teardown touches views (detachViews) — keep it ordered on the UI thread.
+        runOnUi(() -> {
+            if (mediaPlayer != null) {
+                try {
+                    mediaPlayer.detachViews();
+                    mediaPlayer.release();
+                } catch (Exception ignored) {}
+                mediaPlayer = null;
+            }
+            if (libVlc != null) {
+                try {
+                    libVlc.release();
+                } catch (Exception ignored) {}
+                libVlc = null;
+            }
+            isInitialized = false;
+        });
     }
 }

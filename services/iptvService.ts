@@ -1543,6 +1543,22 @@ export class IptvSourceStore {
     this.patch({ iptvOrgCountry: code });
   }
 
+  /** Last successfully loaded public source — restored on launch so the Channels Hub survives restarts. */
+  static loadLastSource(): { name: string; url: string } | null {
+    try {
+      const raw = localStorage.getItem(this.SOURCE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as { lastSource?: { name?: string; url?: string } }) : {};
+      const src = parsed.lastSource;
+      return src && src.name && src.url ? { name: src.name, url: src.url } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  static saveLastSource(name: string, url: string): void {
+    this.patch({ lastSource: { name, url } });
+  }
+
   private static patch(data: Record<string, unknown>): void {
     try {
       const raw = localStorage.getItem(this.SOURCE_KEY);

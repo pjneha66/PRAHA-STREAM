@@ -133,6 +133,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     try {
       const channels = await IptvSources.loadPlaylist(url);
       setSourceStatus(`${channels.length.toLocaleString()} channels loaded from ${source.name}.`);
+      IptvSourceStore.saveLastSource(source.name, url);
       applySourceChannels(source.name, channels);
     } catch (err) {
       setSourceStatus('');
@@ -173,7 +174,25 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
   // ── Load Initial Data ──
   useEffect(() => {
-    loadPresetPlaylist(activePreset);
+    (async () => {
+      await loadPresetPlaylist(activePreset);
+      // Restore the last loaded source so the Channels Hub survives restarts
+      // (runs after the preset fetch so it wins the setPlaylistChannels race).
+      const last = IptvSourceStore.loadLastSource();
+      if (last) {
+        try {
+          const channels = await IptvSources.loadPlaylist(last.url);
+          if (channels.length > 0) {
+            setPlaylistChannels(channels);
+            setActiveSourceName(last.name);
+            setSourceGroup('All');
+            setHubLimit(250);
+          }
+        } catch {
+          // Source is unreachable right now — keep whatever the preset loaded.
+        }
+      }
+    })();
     loadLiveMatches();
   }, []);
 
@@ -531,7 +550,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 fontWeight: activeTab === tab ? 600 : 500,
                 fontSize: '13px',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                transition: 'background 0.15s ease, color 0.15s ease',
                 textTransform: 'capitalize',
               }}
             >
@@ -585,7 +604,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                     key={group}
                     onClick={() => { setSourceGroup(group); setHubLimit(250); }}
                     style={{
-                      padding: '6px 14px',
+                      padding: '8px 16px',
                       borderRadius: '20px',
                       border: '1px solid',
                       borderColor: sourceGroup === group ? '#ef4444' : '#30363d',
@@ -608,9 +627,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
               {/* Source Channels Grid — capped per chunk to keep the page snappy */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
-                {filteredPlaylistChannels.slice(0, hubLimit).map((ch) => (
+                {filteredPlaylistChannels.slice(0, hubLimit).map((ch, i) => (
                   <div
-                    key={`${ch.url}-${ch.name}`}
+                    key={`${i}-${ch.url}-${ch.name || 'unknown'}`}
                     onClick={() => playStreamNow(ch.name, ch.url, ch.group || activeSourceName, ch.logo)}
                     style={{
                       background: '#161b22',
@@ -633,8 +652,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                       </div>
                     )}
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <h3 style={{ fontSize: '13.5px', fontWeight: 600, margin: '0 0 3px 0', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</h3>
-                      <p style={{ fontSize: '11px', color: '#8b949e', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.group || 'Live'}</p>
+                      <h3 title={ch.name} style={{ fontSize: '13.5px', fontWeight: 600, margin: '0 0 3px 0', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name || 'Unknown channel'}</h3>
+                      <p style={{ fontSize: '12px', color: '#8b949e', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.group || 'Live'}</p>
                     </div>
                     <Play size={14} fill="#58a6ff" color="#58a6ff" style={{ flexShrink: 0 }} />
                   </div>
@@ -719,11 +738,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 >
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 600, color: '#f87171', background: 'rgba(239, 68, 68, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#f87171', background: 'rgba(239, 68, 68, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
                         {m.league}
                       </span>
                       <span style={{
-                        fontSize: '11px', fontWeight: 600,
+                        fontSize: '12px', fontWeight: 600,
                         color: m.isLive ? '#7ee787' : '#8b949e',
                         display: 'flex', alignItems: 'center', gap: '4px',
                       }}>
@@ -734,7 +753,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
                     <h4 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 8px 0', color: '#f0f6fc' }}>{m.title}</h4>
                     {m.viewers !== undefined && m.viewers > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8b949e' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#8b949e' }}>
                         <Users size={12} />
                         <span>{m.viewers.toLocaleString()} watching</span>
                       </div>
@@ -803,7 +822,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
           {/* Public sources — every source loads directly from this tab */}
           <div style={{ marginBottom: '16px' }}>
-            <p style={{ margin: '0 0 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px', color: '#8b949e' }}>PUBLIC SOURCES</p>
+            <p style={{ margin: '0 0 8px', fontSize: '12px', fontWeight: 700, letterSpacing: '0.5px', color: '#8b949e' }}>PUBLIC SOURCES</p>
             <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'wrap' }}>
               {IptvSources.CATALOG.filter((s) => s.kind === 'playlist' && s.url).map((source) => (
                 <button
@@ -878,7 +897,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                       <div style={{ fontSize: '13px', fontWeight: 600, color: '#f0f6fc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                         {ch.name}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#8b949e' }}>
+                      <div style={{ fontSize: '12px', color: '#8b949e' }}>
                         {ch.group || activePreset}
                       </div>
                     </div>
@@ -1203,10 +1222,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 >
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#7ee787', background: 'rgba(126, 231, 135, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#7ee787', background: 'rgba(126, 231, 135, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
                         ACTIVE
                       </span>
-                      <span style={{ fontSize: '11px', color: '#8b949e' }}>Expires: {vp.expiry}</span>
+                      <span style={{ fontSize: '12px', color: '#8b949e' }}>Expires: {vp.expiry}</span>
                     </div>
 
                     <h4 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 4px', color: '#f0f6fc' }}>
@@ -1383,7 +1402,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                               <div style={{ fontSize: '13px', fontWeight: 600, color: '#f0f6fc', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                                 {s.name}
                               </div>
-                              <div style={{ fontSize: '11px', color: '#8b949e' }}>Xtream Live Feed</div>
+                              <div style={{ fontSize: '12px', color: '#8b949e' }}>Xtream Live Feed</div>
                             </div>
                             <Play size={14} fill="#ef4444" color="#ef4444" style={{ flexShrink: 0 }} />
                           </div>

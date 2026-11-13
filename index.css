@@ -1886,7 +1886,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   font-size: 12px;
   font-weight: 600;
   text-align: left;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
   cursor: pointer;
 }
 .accent-badge:hover {
