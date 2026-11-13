@@ -10,7 +10,18 @@ async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T> {
     timeoutMs,
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return JSON.parse(response.data) as T;
+  const text = (response.data || '').trim();
+  if (!text) throw new Error('The addon returned an empty response.');
+  if (text.startsWith('<')) {
+    // 404/500 pages and parked domains return HTML; parsing that produced the
+    // cryptic "Unexpected token '<'" error on device.
+    throw new Error('This addon returned an HTML page instead of JSON. The addon URL is wrong, the repository moved, or the server is erroring.');
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('This addon returned a malformed JSON response.');
+  }
 }
 
 export function normalizeStremioUrl(rawUrl: string) {

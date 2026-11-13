@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, CircleAlert, Copy, ExternalLink, FastForward, Link, LoaderCircle,
   Magnet, Play, ShieldCheck, Smartphone, Sparkles, X,
@@ -173,15 +173,11 @@ const PlayerModal: React.FC<{
     }
   };
 
-  const manualStreamTorrent = async () => {
+  const resolveWithEngine = async (): Promise<boolean> => {
     setTorrentBusy(true);
     setTorrentError('');
     try {
-      const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
-      if (!isAvail) {
-        throw new Error('Torrent Engine (TorrServer) is offline on port 8090. Configure Debrid in Settings or open in an external torrent app.');
-      }
-      const { streamUrl, infoHash } = await TorrentStreamingEngine.streamTorrent(activeStream.url, {
+      const { streamUrl, infoHash } = await TorrentStreamingEngine.streamTorrent(buildMagnetUri(activeStream), {
         title: activeStream.title || media.title,
         fileIdx: activeStream.fileIdx,
       });
@@ -192,12 +188,44 @@ const PlayerModal: React.FC<{
         provider: `${activeStream.provider || 'Torrent'} (Torrent Engine)`,
       });
       TorrentStreamingEngine.subscribeStats(infoHash, (stats) => setTorrentStats(stats));
+      return true;
     } catch (err) {
       setTorrentError(err instanceof Error ? err.message : 'Unable to connect to Torrent Streaming Engine.');
+      return false;
     } finally {
       setTorrentBusy(false);
     }
   };
+
+  const manualStreamTorrent = async () => {
+    const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
+    if (!isAvail) {
+      setTorrentError('Torrent Engine (TorrServer) is offline on port 8090. Configure Debrid in Settings or open in an external torrent app.');
+      return;
+    }
+    await resolveWithEngine();
+  };
+
+  // P2P auto-resolve: when a magnet stream is selected and a torrent engine
+  // (TorrServer/MatriX) is actually reachable, resolve and play without
+  // requiring the manual button. Without an engine the manual panel stays.
+  const engineAutoTriedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isMagnet) return;
+    const magnetKey = buildMagnetUri(activeStream);
+    if (engineAutoTriedRef.current === magnetKey) return;
+    engineAutoTriedRef.current = magnetKey;
+    void (async () => {
+      try {
+        const isAvail = await TorrentStreamingEngine.checkEngineAvailable();
+        if (!isAvail) return;
+        await resolveWithEngine();
+      } catch {
+        // Manual panel remains available.
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMagnet, activeStream]);
 
   const fullTitle = media.type === 'series' && season
     ? `${media.title} · S${season} E${episode || 1}${episodeTitle ? ` — ${episodeTitle}` : ''}`

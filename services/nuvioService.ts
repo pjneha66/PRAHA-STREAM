@@ -8,7 +8,11 @@ import { getTmdbApiKey } from './tmdbConfig';
 async function fetchText(url: string, timeoutMs = 20000) {
   const response = await nativeFetchText(url, { timeoutMs });
   if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${new URL(url).hostname}.`);
-  return response.data;
+  const text = response.data || '';
+  if (text.trimStart().startsWith('<')) {
+    throw new Error(`That repository URL returned an HTML page instead of JSON. Check the URL — ${new URL(url).hostname} may be offline or moved.`);
+  }
+  return text;
 }
 
 export function normalizeNuvioRepositoryUrl(rawUrl: string) {

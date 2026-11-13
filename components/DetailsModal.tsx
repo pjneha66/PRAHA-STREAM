@@ -46,8 +46,14 @@ const DetailsModal: React.FC<{
   const [episodes, setEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [animeEpisodes, setAnimeEpisodes] = useState<TmdbEpisodeInfo[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  // Addon-catalog items carry no TMDB id; enrich once so the episode list is
+  // always TMDB-backed for series (user request), with the addon manifest
+  // left to do what it does best: streams.
+  const [enriched, setEnriched] = useState<MediaItem | null>(null);
   const [discussionEpisode, setDiscussionEpisode] = useState<number | undefined>();
   const discussionRef = React.useRef<HTMLDivElement | null>(null);
+
+  const baseItem = enriched || item;
 
   const animeSlug = item.anime?.slug || (item.source === 'anicore' ? item.id.slice('anicore:'.length) : '');
   const isAnime = Boolean(animeSlug);
@@ -64,10 +70,27 @@ const DetailsModal: React.FC<{
 
   useEffect(() => {
     setShowTrailer(false);
+    setEnriched(null);
     if (savedProgress?.season) setSelectedSeason(savedProgress.season);
     else if (item.seasons?.length) setSelectedSeason(item.seasons[0].seasonNumber);
     else setSelectedSeason(1);
   }, [item.id, savedProgress?.season, item.seasons]);
+
+  // Series opened from Stremio catalogs (or other non-TMDB sources) have no
+  // tmdbId and often no season list — resolve against TMDB so Seasons &
+  // Episodes always renders from TMDB data.
+  useEffect(() => {
+    if (item.type !== 'series' || animeSlug || item.tmdbId || item.seasons?.length) return;
+    let active = true;
+    tmdbService.enrich(item)
+      .then((full) => {
+        if (!active) return;
+        if (full.tmdbId && (full.seasons?.length || full.numberOfSeasons)) setEnriched(full);
+        else if (full.tmdbId) setEnriched(full);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [item, animeSlug]);
 
   // Anime episode guides come from AniCore (season-aware) instead of TMDB.
   useEffect(() => {
@@ -92,18 +115,18 @@ const DetailsModal: React.FC<{
   }, [animeSlug, item.id, item.type]);
 
   useEffect(() => {
-    if (!tmdbEpisodesEnabled || item.type !== 'series' || !item.tmdbId || animeSlug) {
+    if (!tmdbEpisodesEnabled || item.type !== 'series' || !baseItem.tmdbId || animeSlug) {
       setEpisodes([]);
       return;
     }
     let active = true;
     setEpisodesLoading(true);
-    tmdbService.getSeason(item.tmdbId, selectedSeason)
+    tmdbService.getSeason(baseItem.tmdbId, selectedSeason)
       .then((list) => { if (active) setEpisodes(list); })
       .catch(() => { if (active) setEpisodes([]); })
       .finally(() => { if (active) setEpisodesLoading(false); });
     return () => { active = false; };
-  }, [item.id, item.type, item.tmdbId, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
+  }, [item.id, item.type, baseItem.tmdbId, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -123,15 +146,15 @@ const DetailsModal: React.FC<{
         episodeCount,
       }));
     }
-    if (item.seasons?.length) return item.seasons;
-    const total = item.numberOfSeasons || (item.type === 'series' ? 1 : 0);
+    if (baseItem.seasons?.length) return baseItem.seasons;
+    const total = baseItem.numberOfSeasons || (item.type === 'series' ? 1 : 0);
     return Array.from({ length: total }, (_, idx) => ({
       id: idx + 1,
       seasonNumber: idx + 1,
       name: `Season ${idx + 1}`,
       episodeCount: 0,
     }));
-  }, [item.seasons, item.numberOfSeasons, item.type, animeEpisodes]);
+  }, [baseItem.seasons, baseItem.numberOfSeasons, item.type, animeEpisodes]);
 
   const visibleEpisodes = useMemo(
     () => (animeEpisodes.length ? animeEpisodes.filter((episode) => episode.season === selectedSeason) : episodes),
@@ -261,7 +284,7 @@ const DetailsModal: React.FC<{
           </div>
         </div>
 
-        {item.type === 'series' && (item.tmdbId || animeSlug) && seasonNumbers.length > 0 && (
+        {item.type === 'series' && (baseItem.tmdbId || animeSlug) && seasonNumbers.length > 0 && (
           <section className="details-section">
             <div className="details-section-head">
               <h3><Tv size={17} /> Seasons & Episodes</h3>

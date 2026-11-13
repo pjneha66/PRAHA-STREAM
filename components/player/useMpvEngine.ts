@@ -54,6 +54,8 @@ type VideoWithAudioTracks = HTMLVideoElement & { audioTracks?: NativeAudioTrackL
 
 interface EngineOptions {
   url: string;
+  /** The raw stream URL; used as a one-shot fallback when `url` is a proxy URL that fails. */
+  fallbackUrl?: string;
   streamHeaders?: Record<string, string>;
   subtitles: StreamSubtitle[];
   autoplay: boolean;
@@ -86,6 +88,7 @@ const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
  */
 export function useMpvEngine({
   url,
+  fallbackUrl,
   streamHeaders,
   subtitles,
   autoplay,
@@ -149,6 +152,7 @@ export function useMpvEngine({
     const video = videoRef.current;
     if (!video || !url) return;
     let disposed = false;
+    let proxyFallbackTried = false;
 
     setReady(false);
     setLevels([]);
@@ -226,6 +230,20 @@ export function useMpvEngine({
         const detail = e.detail || {};
         const msg = detail.message || 'Native player playback error';
         console.error('[useMpvEngine] VLC error:', msg);
+        // One-shot fallback: when playback through the local header proxy
+        // fails, retry once with the direct stream URL — LibVLC applies the
+        // Referer/User-Agent headers natively, so the proxy is not required.
+        if (
+          !proxyFallbackTried
+          && fallbackUrl
+          && fallbackUrl !== url
+          && url.startsWith('http://127.0.0.1:')
+          && !fallbackUrl.startsWith('magnet:')
+        ) {
+          proxyFallbackTried = true;
+          nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
+          return;
+        }
         setWaiting(false);
         onFatalError(msg);
       };

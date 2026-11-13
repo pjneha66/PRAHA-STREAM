@@ -160,17 +160,29 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     try {
       const rawPortals = await IptvScraper.scrapeRedditPortals(30);
       const candidates = rawPortals.length > 0 ? rawPortals : IptvScraper.getFallbackPortals();
-      setPortalStatus(`Found ${candidates.length} candidate portals. Verifying authentication...`);
+      const list = candidates.slice(0, 12);
+      setPortalStatus(`Found ${list.length} candidate portals. Verifying authentication...`);
 
+      // Verify concurrently: sequential 4s logins made the button look hung
+      // for over a minute on dead portals.
       const verifiedList: VerifiedPortal[] = [];
-      for (const p of candidates.slice(0, 10)) {
-        try {
-          const v = await IptvClient.verifyOrNull(p, 4000);
-          if (v) verifiedList.push(v);
-        } catch {
-          // ignore dead portal
+      let done = 0;
+      const queue = [...list];
+      const verifyNext = async () => {
+        while (queue.length) {
+          const p = queue.shift();
+          if (!p) return;
+          try {
+            const v = await IptvClient.verifyOrNull(p, 4000);
+            if (v) verifiedList.push(v);
+          } catch {
+            // ignore dead portal
+          }
+          done += 1;
+          setPortalStatus(`Verifying portals… ${done}/${list.length} checked, ${verifiedList.length} active.`);
         }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(5, list.length) }, () => verifyNext()));
 
       if (verifiedList.length > 0) {
         const updated = [...portals, ...verifiedList.filter(v => !portals.some(p => p.portal.url === v.portal.url))];

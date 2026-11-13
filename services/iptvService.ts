@@ -195,6 +195,20 @@ export class IptvClient {
   }
 
   private static async httpGet(url: string, timeoutMs = 8000): Promise<string | null> {
+    // Xtream portals (player_api.php) do not send CORS headers, so a plain
+    // browser fetch is blocked inside the app WebView — portal scraping and
+    // login verification silently failed on device. Route through the native
+    // CORS-bypass client first, with plain fetch as the web fallback.
+    try {
+      const res = await nativeFetchText(url, {
+        headers: { 'User-Agent': this.UA, Accept: 'application/json, text/plain, */*' },
+        timeoutMs,
+      });
+      if (res.status >= 200 && res.status < 300 && res.data) return res.data;
+      if (res.ok && res.data) return res.data;
+    } catch {
+      // Fall through to the plain browser fetch below.
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -446,19 +460,32 @@ export class IptvScraper {
     const targetUrl = `https://www.reddit.com/r/${this.REDDIT_SUB}/new.json?limit=${limit}&sort=new`;
     let jsonText: string | null = null;
 
-    for (const tmpl of this.PROXIES) {
-      try {
-        const proxyUrl = tmpl.replace('{URL}', encodeURIComponent(targetUrl));
-        const resp = await fetchWithTimeout(proxyUrl, { headers: { Accept: 'application/json' } }, 5000);
-        if (resp.ok) {
-          const body = await resp.text();
-          if (body.trim().startsWith('{')) {
-            jsonText = body;
-            break;
+    // Inside the APK the native client bypasses CORS entirely — reddit's JSON
+    // endpoints need no proxy at all. Proxies remain the web fallback.
+    try {
+      const direct = await nativeFetchText(targetUrl, { timeoutMs: 6000 });
+      if (direct.ok && direct.data.trim().startsWith('{')) {
+        jsonText = direct.data;
+      }
+    } catch {
+      // Fall through to CORS proxies.
+    }
+
+    if (!jsonText) {
+      for (const tmpl of this.PROXIES) {
+        try {
+          const proxyUrl = tmpl.replace('{URL}', encodeURIComponent(targetUrl));
+          const resp = await fetchWithTimeout(proxyUrl, { headers: { Accept: 'application/json' } }, 5000);
+          if (resp.ok) {
+            const body = await resp.text();
+            if (body.trim().startsWith('{')) {
+              jsonText = body;
+              break;
+            }
           }
+        } catch {
+          continue;
         }
-      } catch {
-        continue;
       }
     }
 

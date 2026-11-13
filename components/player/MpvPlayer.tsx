@@ -206,6 +206,8 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
 
   const engine = useMpvEngine({
     url: effectiveUrl,
+    // Raw stream URL for the one-shot proxy→direct VLC fallback.
+    fallbackUrl: stream.url && stream.url !== effectiveUrl ? stream.url : undefined,
     streamHeaders,
     subtitles: preparedSubtitles,
     autoplay,
