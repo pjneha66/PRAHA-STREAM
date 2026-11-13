@@ -2,6 +2,7 @@ import type {
   DiscoverFilters, MediaCastMember, MediaItem, TmdbEpisodeInfo, TmdbSeasonSummary, TmdbEnrichmentSettings,
 } from '../types';
 import { getTmdbApiKey } from './tmdbConfig';
+import { evictOldest } from './cacheCaps';
 
 const API_URL = 'https://api.themoviedb.org/3';
 const IMAGE_URL = 'https://image.tmdb.org/t/p';
@@ -332,6 +333,7 @@ export const tmdbService = {
       rating: Number(ep.vote_average) ? Number(Number(ep.vote_average).toFixed(1)) : undefined,
     }));
     seasonCache.set(cacheKey, episodes);
+    evictOldest(seasonCache, 150);
     return episodes;
   },
 };

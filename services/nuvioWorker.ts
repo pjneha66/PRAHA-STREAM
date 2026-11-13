@@ -6,6 +6,18 @@ import CryptoJS from 'crypto-js';
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 const originalFetch = worker.fetch.bind(worker);
 
+/**
+ * The real TMDB API key must never enter the worker realm (audit H-open):
+ * every scraper we execute is third-party code. Scrapers that read the
+ * `TMDB_API_KEY` global instead receive this placeholder, and any request
+ * carrying it is routed to the main thread, which substitutes the real key
+ * before the request leaves the app.
+ */
+const TMDB_KEY_PLACEHOLDER = '__PRAHA_TMDB__';
+
+const isProxyTimeoutError = (error: unknown) =>
+  error instanceof Error && /timed out/i.test(error.message);
+
 interface PendingProxyRequest {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
@@ -28,6 +40,13 @@ function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): 
   return new Promise<Response>((resolve, reject) => {
     pendingProxy.set(reqId, { resolve, reject });
     worker.postMessage({ type: 'fetch-proxy', reqId, url, method, headers, body });
+    // If the main thread never answers (crash, busy, dropped message), the
+    // promise must reject so the scraper's 30s budget isn't the only guard.
+    setTimeout(() => {
+      if (pendingProxy.delete(reqId)) {
+        reject(new Error('Proxy fetch timed out after 20000ms.'));
+      }
+    }, 20000);
   });
 }
 
@@ -35,8 +54,18 @@ function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): 
  * Intercepts worker `fetch`: attempts standard worker fetch first, and if CORS
  * or forbidden headers (`Referer`, `User-Agent`, `Origin`) block it, delegates
  * to the main thread where Android's native HTTP bridge resolves it cleanly.
+ * Requests carrying the TMDB key placeholder always go through the main
+ * thread, which is the only realm holding the real key.
  */
 const smartFetch: typeof fetch = async (input, init) => {
+  const requestUrl = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+  if (requestUrl.includes(TMDB_KEY_PLACEHOLDER)) {
+    return proxyFetchViaMainThread(input, init);
+  }
   let hasForbiddenHeader = false;
   if (init?.headers) {
     try {
@@ -53,7 +82,8 @@ const smartFetch: typeof fetch = async (input, init) => {
   if (!hasForbiddenHeader) {
     try {
       return await originalFetch(input, init);
-    } catch {
+    } catch (error) {
+      if (isProxyTimeoutError(error)) throw error;
       return proxyFetchViaMainThread(input, init);
     }
   }
@@ -79,7 +109,7 @@ worker.onmessage = async (event) => {
     return;
   }
 
-  const { code, args, scraperId, settings, tmdbApiKey, mode } = payload;
+  const { code, args, scraperId, settings, mode } = payload;
   try {
     const module = { exports: {} as Record<string, unknown> };
     const setGlobal = (name: string, value: unknown) => {
@@ -89,7 +119,7 @@ worker.onmessage = async (event) => {
     setGlobal('global', worker);
     setGlobal('SCRAPER_ID', scraperId);
     setGlobal('SCRAPER_SETTINGS', settings || {});
-    setGlobal('TMDB_API_KEY', tmdbApiKey || '');
+    setGlobal('TMDB_API_KEY', TMDB_KEY_PLACEHOLDER);
     setGlobal('cheerio', cheerio);
     setGlobal('CryptoJS', CryptoJS);
     const require = (name: string) => {

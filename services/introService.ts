@@ -1,7 +1,13 @@
 import type { IntroSegment } from '../types';
 import { nativeFetchText } from './androidBridge';
+import { evictOldest } from './cacheCaps';
 
 const introCache = new Map<string, IntroSegment[]>();
+
+function rememberIntro(cacheKey: string, segments: IntroSegment[]): void {
+  introCache.set(cacheKey, segments);
+  evictOldest(introCache, 300);
+}
 
 /**
  * Queries IntroDB (`api.introdb.app`) for community-verified episode intro
@@ -20,7 +26,7 @@ export async function fetchIntroSegments(
     const url = `https://api.introdb.app/intro?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${episode}`;
     const res = await nativeFetchText(url, { timeoutMs: 6000 });
     if (!res.ok) {
-      introCache.set(cacheKey, []);
+      rememberIntro(cacheKey, []);
       return [];
     }
     const data = JSON.parse(res.data) as {
@@ -42,13 +48,13 @@ export async function fetchIntroSegments(
 
     if (start !== null && end !== null && end > start + 5) {
       const segments: IntroSegment[] = [{ start, end, label: 'Skip Intro' }];
-      introCache.set(cacheKey, segments);
+      rememberIntro(cacheKey, segments);
       return segments;
     }
   } catch {
     // Non-fatal: simply hide Skip Intro when unavailable.
   }
 
-  introCache.set(cacheKey, []);
+  rememberIntro(cacheKey, []);
   return [];
 }

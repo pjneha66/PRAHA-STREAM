@@ -28,9 +28,15 @@ import androidx.core.content.FileProvider;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import androidx.webkit.WebViewCompat.WebMessageListener;
 
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.videolan.libvlc.util.VLCVideoLayout;
 
@@ -56,6 +62,10 @@ import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends BridgeActivity {
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
+    // The full bridge instance used for RPC dispatch on the origin-gated path.
+    // It is intentionally NOT injected into JavaScript on that path; only the
+    // read-only wrapper is.
+    private final PrahaJsBridge rpcBridge = new PrahaJsBridge();
     // Bounded pool: the bridge is reachable from JS and the proxy from any local
     // client, so an unbounded cached pool is a trivial thread/OOM DoS.
     private final ExecutorService httpExecutor = new ThreadPoolExecutor(
@@ -168,12 +178,29 @@ public class MainActivity extends BridgeActivity {
             settings.setAllowContentAccess(false);
             settings.setAllowFileAccessFromFileURLs(false);
             settings.setAllowUniversalAccessFromFileURLs(false);
-            // RESIDUAL RISK: addJavascriptInterface injects this object into
-            // EVERY frame with no way to verify the calling origin. Origin-gated
-            // WebViewCompat.addWebMessageListener is the correct long-term fix
-            // (audit C-01); until then the web layer must keep untrusted iframes
-            // sandboxed and scheme-allowlisted.
-            webView.addJavascriptInterface(new PrahaJsBridge(), "PrahaNative");
+            // C-01 fix: the actuator surface (network, intents, APK install,
+            // player control) is no longer reachable through
+            // addJavascriptInterface, which injects into EVERY frame with no
+            // origin check. It now lives behind an origin-gated
+            // WebViewCompat.addWebMessageListener that only the app's own
+            // main frame (https://localhost) can post to, and only in that
+            // frame is the prahaNativeBridge object injected at all.
+            // The synchronous PrahaNative object retains ONLY read-only,
+            // side-effect-free accessors the UI needs during render.
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                webView.addJavascriptInterface(new PrahaReadOnlyBridge(rpcBridge), "PrahaNative");
+                WebViewCompat.addWebMessageListener(
+                        webView,
+                        "prahaNativeBridge",
+                        java.util.Collections.singleton("https://localhost"),
+                        (WebMessageListener) (view, message, sourceOrigin, isMainFrame, replyProxy) ->
+                                handleBridgeMessage(message, isMainFrame, replyProxy));
+            } else {
+                // Very old WebView without WebMessageListener support: keep the
+                // legacy full JS interface so the app still works. Devices on
+                // Play-updated WebView (>=116) get the origin-gated path.
+                webView.addJavascriptInterface(new PrahaJsBridge(), "PrahaNative");
+            }
 
             FrameLayout root = findViewById(android.R.id.content);
             if (root != null) {
@@ -204,10 +231,11 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    /** VLC PiP lifecycle (audit M-open): auto-pause must not fire in PiP. */
     @Override
     public void onPause() {
         super.onPause();
-        if (vlcPlayer != null && vlcPlayer.isPlaying()) {
+        if (vlcPlayer != null && vlcPlayer.isPlaying() && !isInPictureInPictureMode()) {
             vlcPlayer.pause();
         }
     }
@@ -220,6 +248,129 @@ public class MainActivity extends BridgeActivity {
         streamProxy.stop();
         httpExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    /**
+     * Entry point for the origin-gated bridge (audit C-01). The WebView only
+     * delivers messages posted by frames matching https://localhost, and we
+     * additionally require the main frame — sandboxed embed iframes with
+     * opaque origins can never reach this code.
+     */
+    private void handleBridgeMessage(WebMessageCompat message, boolean isMainFrame, JavaScriptReplyProxy replyProxy) {
+        if (message == null || !isMainFrame || message.getData() == null) return;
+        String id = "";
+        String method = "";
+        JSONArray args;
+        try {
+            JSONObject envelope = new JSONObject(message.getData());
+            id = envelope.optString("id", "");
+            method = envelope.optString("method", "");
+            args = envelope.optJSONArray("args");
+        } catch (Exception e) {
+            return; // Malformed envelope; nothing to correlate a reply with.
+        }
+        if (args == null) args = new JSONArray();
+        final String replyId = id;
+        final String fMethod = method;
+        final JSONArray fArgs = args;
+
+        Runnable invoke = () -> {
+            Object result = null;
+            String error = null;
+            try {
+                result = dispatchBridgeCall(fMethod, fArgs);
+            } catch (Throwable t) {
+                error = t.getMessage() != null ? t.getMessage() : String.valueOf(t);
+            }
+            JSONObject reply = new JSONObject();
+            try {
+                reply.put("id", replyId);
+                reply.put("ok", error == null);
+                if (result != null) reply.put("result", result);
+                if (error != null) reply.put("error", error);
+            } catch (Exception ignored) {}
+            final String payload = reply.toString();
+            runOnUiThread(() -> {
+                try {
+                    replyProxy.postMessage(payload);
+                } catch (Exception ignored) {}
+            });
+        };
+
+        // Network-bound calls must not occupy the WebView bridge thread.
+        if ("httpRequest".equals(fMethod)) {
+            httpExecutor.execute(invoke);
+        } else {
+            invoke.run();
+        }
+    }
+
+    private Object dispatchBridgeCall(String method, JSONArray args) throws Exception {
+        if (method == null || method.isEmpty()) throw new IllegalArgumentException("Missing bridge method");
+        switch (method) {
+            case "openBrowser":
+                return rpcBridge.openBrowser(args.optString(0, ""));
+            case "openProtectedEmbed":
+                return rpcBridge.openProtectedEmbed(args.optString(0, ""));
+            case "openPrivateDnsSettings":
+                return rpcBridge.openPrivateDnsSettings();
+            case "httpRequest":
+                return rpcBridge.executeHttpRequest(
+                        args.optString(0, ""), args.optString(1, "GET"),
+                        args.optString(2, ""), args.optString(3, ""),
+                        (int) args.optLong(4, 18000)).toString();
+            case "setImmersiveMode":
+                rpcBridge.setImmersiveMode(args.optBoolean(0, false), args.optBoolean(1, true));
+                return null;
+            case "enterPip":
+                return rpcBridge.enterPip();
+            case "exitApp":
+                rpcBridge.exitApp();
+                return null;
+            case "openExternalPlayer":
+                return rpcBridge.openExternalPlayer(args.optString(0, ""), args.optString(1, ""),
+                        args.optString(2, ""), args.optString(3, ""));
+            case "shareText":
+                return rpcBridge.shareText(args.optString(0, ""), args.optString(1, ""));
+            case "downloadAndInstallUpdate":
+                return rpcBridge.downloadAndInstallUpdate(args.optString(0, ""), args.optString(1, ""));
+            case "openSubtitlePicker":
+                return rpcBridge.openSubtitlePicker();
+            case "addSlave":
+                return rpcBridge.addSlave((int) args.optLong(0, 0), args.optString(1, ""), args.optBoolean(2, true));
+            case "setAudioTrack":
+                return rpcBridge.setAudioTrack((int) args.optLong(0, -1));
+            case "setSpuTrack":
+                return rpcBridge.setSpuTrack((int) args.optLong(0, -1));
+            case "setSpuDelay":
+                return rpcBridge.setSpuDelay(args.optLong(0, 0));
+            case "setAudioDelay":
+                return rpcBridge.setAudioDelay(args.optLong(0, 0));
+            case "vlcPlay":
+                return rpcBridge.vlcPlay(args.optString(0, ""), args.optString(1, ""), args.optLong(2, 0));
+            case "vlcPause":
+                rpcBridge.vlcPause();
+                return null;
+            case "vlcResume":
+                rpcBridge.vlcResume();
+                return null;
+            case "vlcStop":
+                rpcBridge.vlcStop();
+                return null;
+            case "vlcSeek":
+                rpcBridge.vlcSeek(args.optLong(0, 0));
+                return null;
+            case "vlcSetVolume":
+                rpcBridge.vlcSetVolume((int) args.optLong(0, 0));
+                return null;
+            case "vlcSetRate":
+                rpcBridge.vlcSetRate((float) args.optDouble(0, 1.0));
+                return null;
+            case "vlcSetAspectRatio":
+                return rpcBridge.vlcSetAspectRatio(args.optString(0, ""));
+            default:
+                throw new IllegalArgumentException("Unknown bridge method: " + method);
+        }
     }
 
     public class PrahaJsBridge {
@@ -297,7 +448,7 @@ public class MainActivity extends BridgeActivity {
             });
         }
 
-        private JSONObject executeHttpRequest(String urlString, String method, String headersJson, String body, int timeoutMs) {
+        JSONObject executeHttpRequest(String urlString, String method, String headersJson, String body, int timeoutMs) {
             HttpURLConnection conn = null;
             JSONObject result = new JSONObject();
             int redirects = 0;
@@ -810,6 +961,88 @@ public class MainActivity extends BridgeActivity {
                     finish();
                 }
             });
+        }
+    }
+
+    /**
+     * The synchronous JS surface on the origin-gated path (audit C-01).
+     * Exposes ONLY read-only, side-effect-free accessors that must stay
+     * synchronous for the web UI. Every actuating method — network, intents,
+     * APK install, player control, share, PiP, immersive mode — lives behind
+     * the origin-gated WebMessageListener instead, so a malicious iframe
+     * (opaque origin, sandboxed) cannot reach it even by calling the native
+     * object directly.
+     */
+    public class PrahaReadOnlyBridge {
+        private final PrahaJsBridge impl;
+
+        PrahaReadOnlyBridge(PrahaJsBridge impl) {
+            this.impl = impl;
+        }
+
+        @JavascriptInterface
+        public boolean isAndroid() {
+            return impl.isAndroid();
+        }
+
+        @JavascriptInterface
+        public boolean isTelevision() {
+            return impl.isTelevision();
+        }
+
+        @JavascriptInterface
+        public int getProxyPort() {
+            return impl.getProxyPort();
+        }
+
+        @JavascriptInterface
+        public String proxyStreamUrl(String url, String headersJson) {
+            return impl.proxyStreamUrl(url, headersJson);
+        }
+
+        @JavascriptInterface
+        public String getAppVersionName() {
+            return impl.getAppVersionName();
+        }
+
+        @JavascriptInterface
+        public String getAllAudioTracks() {
+            return impl.getAllAudioTracks();
+        }
+
+        @JavascriptInterface
+        public int getSelectedAudioTrack() {
+            return impl.getSelectedAudioTrack();
+        }
+
+        @JavascriptInterface
+        public String getAllSpuTracks() {
+            return impl.getAllSpuTracks();
+        }
+
+        @JavascriptInterface
+        public int getSelectedSpuTrack() {
+            return impl.getSelectedSpuTrack();
+        }
+
+        @JavascriptInterface
+        public long getSpuDelay() {
+            return impl.getSpuDelay();
+        }
+
+        @JavascriptInterface
+        public long getAudioDelay() {
+            return impl.getAudioDelay();
+        }
+
+        @JavascriptInterface
+        public boolean isVlcAvailable() {
+            return impl.isVlcAvailable();
+        }
+
+        @JavascriptInterface
+        public boolean isVlcPlaying() {
+            return impl.isVlcPlaying();
         }
     }
 }

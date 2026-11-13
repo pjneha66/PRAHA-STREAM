@@ -72,6 +72,7 @@ export interface PrahaNativeInterface {
 declare global {
   interface Window {
     PrahaNative?: PrahaNativeInterface;
+    prahaNativeBridge?: PrahaBridgeRpcObject;
     __prahaNativeHttpCallback?: (requestId: string, rawResult: string | object) => void;
   }
 }
@@ -118,6 +119,103 @@ export function registerNativeHttpCallback(): void {
 
 registerNativeHttpCallback();
 
+// ---------------------------------------------------------------------------
+// Origin-gated async bridge (audit C-01)
+// ---------------------------------------------------------------------------
+// On WebViews that support WebViewCompat.addWebMessageListener, the actuator
+// half of the native bridge (network, intents, APK install, player control)
+// is no longer exposed through addJavascriptInterface, which injects into
+// EVERY frame with no origin check. The app's main frame instead receives a
+// `prahaNativeBridge` object and talks to native code via request/reply
+// messages. Sandboxed embed iframes (opaque origins) never receive the
+// object and cannot reach the native actuator even by calling it directly.
+
+interface BridgeRpcReply {
+  id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+interface PrahaBridgeRpcObject {
+  postMessage(message: string): void;
+  addEventListener?(type: 'message', listener: (event: { data: unknown }) => void): void;
+}
+
+const rpcPending = new Map<string, {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+let rpcSeq = 0;
+let rpcListenerAttached = false;
+
+function getBridgeRpc(): PrahaBridgeRpcObject | null {
+  if (typeof window === 'undefined') return null;
+  const bridge = (window as unknown as { prahaNativeBridge?: PrahaBridgeRpcObject }).prahaNativeBridge;
+  return bridge && typeof bridge.postMessage === 'function' ? bridge : null;
+}
+
+/** True when the origin-gated async native bridge is available. */
+export function bridgeRpcAvailable(): boolean {
+  return Boolean(getBridgeRpc());
+}
+
+function ensureRpcListener(): void {
+  if (rpcListenerAttached) return;
+  const bridge = getBridgeRpc();
+  if (!bridge || typeof bridge.addEventListener !== 'function') return;
+  bridge.addEventListener('message', (event: { data: unknown }) => {
+    let reply: BridgeRpcReply;
+    try {
+      reply = (typeof event?.data === 'string' ? JSON.parse(event.data) : event?.data) as BridgeRpcReply;
+    } catch {
+      return;
+    }
+    if (!reply || typeof reply.id !== 'string') return;
+    const pending = rpcPending.get(reply.id);
+    if (!pending) return;
+    rpcPending.delete(reply.id);
+    clearTimeout(pending.timer);
+    if (reply.ok) pending.resolve(reply.result);
+    else pending.reject(new Error(reply.error || 'Native bridge call failed.'));
+  });
+  rpcListenerAttached = true;
+}
+
+function prahaRpc<T>(method: string, args: unknown[], timeoutMs = 15000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const bridge = getBridgeRpc();
+    if (!bridge) {
+      reject(new Error('The origin-gated native bridge is not available.'));
+      return;
+    }
+    ensureRpcListener();
+    const id = `rpc_${++rpcSeq}_${Date.now()}`;
+    const timer = setTimeout(() => {
+      rpcPending.delete(id);
+      reject(new Error(`Native bridge call '${method}' timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    rpcPending.set(id, {
+      resolve: resolve as (value: unknown) => void,
+      reject,
+      timer,
+    });
+    try {
+      bridge.postMessage(JSON.stringify({ id, method, args }));
+    } catch (err) {
+      clearTimeout(timer);
+      rpcPending.delete(id);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+/** Fire-and-forget RPC for void-native operations (player controls, UI mode). */
+function prahaRpcFire(method: string, args: unknown[], timeoutMs = 15000): void {
+  prahaRpc(method, args, timeoutMs).catch(() => undefined);
+}
+
 export type ExternalPlayerTarget = 'chooser' | 'vlc' | 'mpv' | 'mx' | 'justplayer';
 
 const PLAYER_PACKAGES: Record<Exclude<ExternalPlayerTarget, 'chooser'>, string> = {
@@ -138,8 +236,11 @@ export function isAndroidApp(): boolean {
 }
 
 /** Opens Android settings without changing device-wide DNS automatically. */
-export function openPrivateDnsSettings(): boolean {
+export async function openPrivateDnsSettings(): Promise<boolean> {
   try {
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('openPrivateDnsSettings', [], 8000));
+    }
     return Boolean(window.PrahaNative?.openPrivateDnsSettings?.());
   } catch {
     return false;
@@ -157,18 +258,27 @@ export function getNativeAppVersion(): string | null {
 }
 
 /** The Android player uses a dedicated WebView with no privileged JavaScript bridge. */
-export function openProtectedEmbed(url: string): boolean {
-  try {
-    const target = new URL(url);
-    return target.protocol === 'https:' && !target.username && !target.password && Boolean(window.PrahaNative?.openProtectedEmbed?.(target.href));
-  } catch { return false; }
-}
-
-export function openSafeExternalUrl(url: string): boolean {
+export async function openProtectedEmbed(url: string): Promise<boolean> {
   try {
     const target = new URL(url);
     if (target.protocol !== 'https:' || target.username || target.password) return false;
-    if (isAndroidApp()) return Boolean(window.PrahaNative?.openBrowser?.(target.href));
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('openProtectedEmbed', [target.href], 8000));
+    }
+    return Boolean(window.PrahaNative?.openProtectedEmbed?.(target.href));
+  } catch { return false; }
+}
+
+export async function openSafeExternalUrl(url: string): Promise<boolean> {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== 'https:' || target.username || target.password) return false;
+    if (isAndroidApp()) {
+      if (bridgeRpcAvailable()) {
+        return Boolean(await prahaRpc<boolean>('openBrowser', [target.href], 8000));
+      }
+      return Boolean(window.PrahaNative?.openBrowser?.(target.href));
+    }
     // noreferrer also prevents the destination from controlling the opener.
     window.open(target.href, '_blank', 'noopener,noreferrer');
     return true;
@@ -406,7 +516,36 @@ export async function nativeFetchText(
   // http(s) URLs may reach it. Invalid URLs fall through to browser `fetch`.
   const nativeUrl = safeRemoteUrl(url);
 
-  // 1. On native Android Capacitor platform, use CapacitorHttp directly (bypasses CORS, handles gzip/redirects/forbidden headers off the main thread).
+  // 1. Origin-gated async native bridge (WebView >= 116): full CORS bypass
+  // with correct redirect/header handling and gzip/deflate decoding. Tried
+  // FIRST because CapacitorHttp mangles JSON re-parsing and drops custom
+  // headers on redirects, which silently breaks Stremio addons and Nuvio
+  // scrapers. Reachable only from the app frame.
+  if (bridgeRpcAvailable() && nativeUrl) {
+    const raw = await prahaRpc<string>(
+      'httpRequest',
+      [nativeUrl, method, JSON.stringify(headers), options.body || '', timeoutMs],
+      timeoutMs + 5000,
+    ).catch(() => null);
+    if (raw !== null) {
+      const parsed = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
+        ok?: boolean;
+        status?: number;
+        body?: string;
+        error?: string;
+      };
+      if (parsed.error && !parsed.status) throw new Error(parsed.error);
+      const status = Number(parsed.status || 0);
+      return {
+        ok: Boolean(parsed.ok ?? (status >= 200 && status < 300)),
+        status,
+        data: parsed.body ?? '',
+      };
+    }
+    // RPC transport-level failure: fall through to the older paths below.
+  }
+
+  // 2. CapacitorHttp (older WebViews without WebMessageListener): bypasses CORS, handles gzip/redirects/forbidden headers off the main thread.
   if (Capacitor.isNativePlatform() && nativeUrl) {
     try {
       const response = await CapacitorHttp.request({
@@ -429,7 +568,7 @@ export async function nativeFetchText(
     }
   }
 
-  // 2. Native Android Java bridge (supports all custom headers & redirects asynchronously).
+  // 3. Legacy Android Java bridge (supports all custom headers & redirects asynchronously).
   if (typeof window !== 'undefined' && window.PrahaNative && nativeUrl) {
     if (window.PrahaNative.httpRequestAsync) {
       if (!window.__prahaNativeHttpCallback) registerNativeHttpCallback();
@@ -472,7 +611,7 @@ export async function nativeFetchText(
     }
   }
 
-  // 3. Browser / standard web fetch
+  // 4. Browser / standard web fetch
   const controller = new AbortController();
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -490,10 +629,14 @@ export async function nativeFetchText(
 }
 
 export async function setImmersiveFullscreen(enabled: boolean, lockLandscape = true): Promise<void> {
-  try {
-    window.PrahaNative?.setImmersiveMode?.(enabled, lockLandscape);
-  } catch {
-    // Ignore native bridge failure.
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('setImmersiveMode', [enabled, lockLandscape]);
+  } else {
+    try {
+      window.PrahaNative?.setImmersiveMode?.(enabled, lockLandscape);
+    } catch {
+      // Ignore native bridge failure.
+    }
   }
   try {
     const orientation = (screen as Screen & { orientation?: { lock?: (mode: string) => Promise<void>; unlock?: () => void } }).orientation;
@@ -507,8 +650,11 @@ export async function setImmersiveFullscreen(enabled: boolean, lockLandscape = t
   }
 }
 
-export function enterNativeAndroidPip(): boolean {
+export async function enterNativeAndroidPip(): Promise<boolean> {
   try {
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('enterPip', [], 5000));
+    }
     if (window.PrahaNative?.enterPip) {
       return Boolean(window.PrahaNative.enterPip());
     }
@@ -550,24 +696,40 @@ export function openExternalPlayer(
   const headers = extractStreamHeaders(stream);
   const pkg = target === 'chooser' ? '' : PLAYER_PACKAGES[target];
 
-  try {
-    if (window.PrahaNative?.openExternalPlayer) {
-      const handled = window.PrahaNative.openExternalPlayer(safeUrl, title, pkg, JSON.stringify(headers));
-      if (handled) return;
-    }
-  } catch {
-    // Fall back to intent:// or direct href.
-  }
-
-  const href = isAndroidApp() && !safeUrl.startsWith('magnet:')
+  const intentHref = isAndroidApp() && !safeUrl.startsWith('magnet:')
     ? buildAndroidIntentUrl(safeUrl, title, target)
     : safeUrl;
-  window.open(href, '_blank', 'noopener,noreferrer');
+  // On the web this must run synchronously to keep the user-gesture context.
+  const openFallback = () => window.open(intentHref, '_blank', 'noopener,noreferrer');
+
+  const rpc = bridgeRpcAvailable()
+    ? prahaRpc<boolean>('openExternalPlayer', [safeUrl, title, pkg, JSON.stringify(headers)], 8000)
+    : null;
+
+  if (!rpc) {
+    if (window.PrahaNative?.openExternalPlayer) {
+      try {
+        if (window.PrahaNative.openExternalPlayer(safeUrl, title, pkg, JSON.stringify(headers))) return;
+      } catch {
+        // Fall back to intent:// or direct href.
+      }
+    }
+    openFallback();
+    return;
+  }
+
+  void rpc.then((handled) => {
+    if (!handled) openFallback();
+  }).catch(() => {
+    openFallback();
+  });
 }
 
 export async function exportBackupFile(filename: string, jsonText: string): Promise<'shared' | 'downloaded'> {
   try {
-    if (window.PrahaNative?.shareText && window.PrahaNative.shareText(filename, jsonText)) {
+    if (bridgeRpcAvailable()) {
+      if (await prahaRpc<boolean>('shareText', [filename, jsonText], 10000)) return 'shared';
+    } else if (window.PrahaNative?.shareText && window.PrahaNative.shareText(filename, jsonText)) {
       return 'shared';
     }
   } catch {
@@ -598,7 +760,7 @@ export async function exportBackupFile(filename: string, jsonText: string): Prom
   return 'downloaded';
 }
 
-export function downloadAndInstallUpdate(apkUrl: string, versionName: string): boolean {
+export async function downloadAndInstallUpdate(apkUrl: string, versionName: string): Promise<boolean> {
   // Installing an APK is the highest-impact native sink in the app. Pin it to
   // the release feed: HTTPS only, GitHub-hosted, and an .apk path.
   const safeUrl = safeRemoteUrl(apkUrl, {
@@ -607,6 +769,9 @@ export function downloadAndInstallUpdate(apkUrl: string, versionName: string): b
   });
   if (!safeUrl || !/\.apk($|\?)/i.test(new URL(safeUrl).pathname + new URL(safeUrl).search)) return false;
   try {
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('downloadAndInstallUpdate', [safeUrl, versionName], 10000));
+    }
     if (window.PrahaNative?.downloadAndInstallUpdate) {
       return window.PrahaNative.downloadAndInstallUpdate(safeUrl, versionName);
     }
@@ -618,6 +783,10 @@ export function downloadAndInstallUpdate(apkUrl: string, versionName: string): b
 }
 
 export function exitAndroidApp(): void {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('exitApp', []);
+    return;
+  }
   try {
     window.PrahaNative?.exitApp?.();
   } catch {
@@ -660,6 +829,10 @@ export function getSelectedNativeAudioTrack(): number {
 }
 
 export function setNativeAudioTrack(id: number): boolean {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('setAudioTrack', [id]);
+    return true;
+  }
   try {
     return Boolean(window.PrahaNative?.setAudioTrack?.(id));
   } catch {
@@ -686,6 +859,10 @@ export function getSelectedNativeSpuTrack(): number {
 }
 
 export function setNativeSpuTrack(id: number): boolean {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('setSpuTrack', [id]);
+    return true;
+  }
   try {
     return Boolean(window.PrahaNative?.setSpuTrack?.(id));
   } catch {
@@ -700,6 +877,10 @@ export function addNativeSubtitleSlave(uri: string, select = true): boolean {
     ? uri
     : safeRemoteUrl(uri);
   if (!safeUri) return false;
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('addSlave', [0, safeUri, select]);
+    return true;
+  }
   try {
     return Boolean(window.PrahaNative?.addSlave?.(0, safeUri, select));
   } catch {
@@ -708,6 +889,10 @@ export function addNativeSubtitleSlave(uri: string, select = true): boolean {
 }
 
 export function openNativeSubtitlePicker(): boolean {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('openSubtitlePicker', []);
+    return true;
+  }
   try {
     return Boolean(window.PrahaNative?.openSubtitlePicker?.());
   } catch {
@@ -716,6 +901,10 @@ export function openNativeSubtitlePicker(): boolean {
 }
 
 export function setNativeSubtitleDelay(delaySeconds: number): boolean {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('setSpuDelay', [Math.round(delaySeconds * 1000000)]);
+    return true;
+  }
   try {
     const micros = Math.round(delaySeconds * 1000000);
     return Boolean(window.PrahaNative?.setSpuDelay?.(micros));
@@ -727,6 +916,10 @@ export function setNativeSubtitleDelay(delaySeconds: number): boolean {
 export const setNativeSpuDelay = setNativeSubtitleDelay;
 
 export function setNativeAudioDelay(delaySeconds: number): boolean {
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('setAudioDelay', [Math.round(delaySeconds * 1000000)]);
+    return true;
+  }
   try {
     const micros = Math.round(delaySeconds * 1000000);
     return Boolean(window.PrahaNative?.setAudioDelay?.(micros));
@@ -735,57 +928,64 @@ export function setNativeAudioDelay(delaySeconds: number): boolean {
   }
 }
 
-export function nativeVlcPlay(url: string, headers: Record<string, string> = {}, resumeMs = 0): boolean {
+export function nativeVlcPlay(url: string, headers: Record<string, string> = {}, resumeMs = 0): void {
   const safeUrl = safeRemoteUrl(url);
-  if (!safeUrl) return false;
-  try {
-    return Boolean(window.PrahaNative?.vlcPlay?.(safeUrl, JSON.stringify(headers), resumeMs));
-  } catch {
-    return false;
+  if (!safeUrl) return;
+  if (bridgeRpcAvailable()) {
+    prahaRpcFire('vlcPlay', [safeUrl, JSON.stringify(headers), resumeMs], 10000);
+    return;
   }
+  try {
+    window.PrahaNative?.vlcPlay?.(safeUrl, JSON.stringify(headers), resumeMs);
+  } catch {}
 }
 
 export function nativeVlcPause(): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcPause', []);
   try {
     window.PrahaNative?.vlcPause?.();
   } catch {}
 }
 
 export function nativeVlcResume(): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcResume', []);
   try {
     window.PrahaNative?.vlcResume?.();
   } catch {}
 }
 
 export function nativeVlcStop(): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcStop', []);
   try {
     window.PrahaNative?.vlcStop?.();
   } catch {}
 }
 
 export function nativeVlcSeek(timeMs: number): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcSeek', [Math.round(timeMs)]);
   try {
     window.PrahaNative?.vlcSeek?.(timeMs);
   } catch {}
 }
 
 export function nativeVlcSetVolume(volumePercent: number): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcSetVolume', [Math.round(volumePercent)]);
   try {
     window.PrahaNative?.vlcSetVolume?.(volumePercent);
   } catch {}
 }
 
 export function nativeVlcSetRate(rate: number): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcSetRate', [rate]);
   try {
     window.PrahaNative?.vlcSetRate?.(rate);
   } catch {}
 }
 
-export function nativeVlcSetAspectRatio(aspect: string): boolean {
+export function nativeVlcSetAspectRatio(aspect: string): void {
+  if (bridgeRpcAvailable()) return prahaRpcFire('vlcSetAspectRatio', [aspect]);
   try {
-    return Boolean(window.PrahaNative?.vlcSetAspectRatio?.(aspect));
-  } catch {
-    return false;
-  }
+    window.PrahaNative?.vlcSetAspectRatio?.(aspect);
+  } catch {}
 }
 

@@ -98,9 +98,9 @@ const EmbedModal: React.FC<{ media: MediaItem; initialSeason?: number; initialEp
         // A browser popup after an asynchronous ID lookup may be blocked;
         // ask for a fresh click instead of silently losing the request.
         if (resolvedAsync && !isAndroidApp()) { setPendingExternal({ url, name: provider.name }); return; }
-        if (!openSafeExternalUrl(url)) setError('Could not open your browser. Check that a browser is installed.');
+        if (!(await openSafeExternalUrl(url))) setError('Could not open your browser. Check that a browser is installed.');
       } else if (isAndroidApp()) {
-        if (!openProtectedEmbed(url)) setError('Could not open the protected player. Update the Android app or use Browser.');
+        if (!(await openProtectedEmbed(url))) setError('Could not open the protected player. Update the Android app or use Browser.');
       } else setFrame({ url, name: provider.name });
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not build the player URL.'); }
   };

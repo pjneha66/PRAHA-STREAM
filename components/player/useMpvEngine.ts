@@ -1043,7 +1043,7 @@ export function useMpvEngine({
   }, [landscapeLock]);
 
   const togglePip = useCallback(async () => {
-    if (enterNativeAndroidPip()) return;
+    if (await enterNativeAndroidPip()) return;
     const video = videoRef.current;
     if (!video) return;
     try {

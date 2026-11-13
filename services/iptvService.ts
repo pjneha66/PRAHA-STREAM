@@ -215,27 +215,51 @@ export class IptvClient {
   }
 
   static async login(portal: IptvPortal, timeoutMs = 6000): Promise<Record<string, any> | null> {
+    const attempt = await this.loginWithTransport(portal, timeoutMs);
+    return attempt?.info ?? null;
+  }
+
+  /**
+   * Audit M-open (IPTV HTTPS migration): metadata endpoints almost always
+   * support TLS even when stream URLs do not. Probe the https variant of an
+   * http portal first and report which transport answered, so the UI can pin
+   * the upgraded URL. Plain http is kept as the fallback so portals that never
+   * implemented TLS keep working — availability beats purity here.
+   */
+  static async loginWithTransport(
+    portal: IptvPortal,
+    timeoutMs = 6000,
+  ): Promise<{ info: Record<string, any>; base: string } | null> {
     const cleanUrl = portal.url.replace(/\/+$/, '');
-    const url = `${cleanUrl}/player_api.php?username=${this.enc(portal.username)}&password=${this.enc(portal.password)}`;
-    const text = await this.httpGet(url, timeoutMs);
-    if (!text) return null;
-    try {
-      const root = JSON.parse(text);
-      const info = root.user_info || root;
-      const auth = String(info.auth ?? '');
-      const status = String(info.status ?? '').toLowerCase();
-      const ok = auth === '1' || status === 'active' || !!root.user_info;
-      return ok ? info : null;
-    } catch {
-      return null;
+    const variants = cleanUrl.startsWith('http://')
+      ? [`https://${cleanUrl.slice('http://'.length)}`, cleanUrl]
+      : [cleanUrl];
+    for (const base of variants) {
+      const url = `${base}/player_api.php?username=${this.enc(portal.username)}&password=${this.enc(portal.password)}`;
+      const text = await this.httpGet(url, timeoutMs);
+      if (!text) continue;
+      try {
+        const root = JSON.parse(text);
+        const info = root.user_info || root;
+        const auth = String(info.auth ?? '');
+        const status = String(info.status ?? '').toLowerCase();
+        const ok = auth === '1' || status === 'active' || !!root.user_info;
+        if (ok) return { info, base };
+      } catch {
+        // Not a valid Xtream response — try the next transport.
+      }
     }
+    return null;
   }
 
   static async verifyOrNull(portal: IptvPortal, timeoutMs = 6000): Promise<VerifiedPortal | null> {
-    const info = await this.login(portal, timeoutMs);
-    if (!info) return null;
+    const attempt = await this.loginWithTransport(portal, timeoutMs);
+    if (!attempt) return null;
+    const info = attempt.info;
+    // Pin the working (possibly https-upgraded) transport for every later call.
+    const verifiedPortal: IptvPortal = attempt.base !== portal.url ? { ...portal, url: attempt.base } : portal;
     return {
-      portal,
+      portal: verifiedPortal,
       name: info.username ? String(info.username) : portal.username,
       expiry: this.formatExpiry(info.exp_date),
       maxConnections: String(info.max_connections ?? '1'),
@@ -391,7 +415,7 @@ export class IptvScraper {
       const qIdx = url.indexOf('?');
       if (qIdx >= 0) url = url.substring(0, qIdx);
       url = url.replace(/\/(?:get|live|portal|c|index|playlist|player_api)\.php$/i, '').replace(/\/+$/, '');
-      if (!url.startsWith('http')) url = `http://${url}`;
+      if (!url.startsWith('http')) url = `https://${url}`;
 
       const user = rawUser.replace(/^[=:]+/, '').trim();
       const pass = rawPass.replace(/^[=:]+/, '').trim();
@@ -455,10 +479,12 @@ export class IptvScraper {
   }
 
   static getFallbackPortals(): IptvPortal[] {
+    // HTTPS-preferred curated portals; loginWithTransport still falls back to
+    // plain http per portal when TLS is not available.
     return [
-      { url: 'http://watch.topiptv.xyz:80', username: 'stream', password: 'password', source: 'Curated' },
-      { url: 'http://cdn.megastreams.io:8080', username: 'free', password: 'tv', source: 'Curated' },
-      { url: 'http://live.stream4k.xyz:80', username: 'demo', password: 'demo', source: 'Curated' },
+      { url: 'https://watch.topiptv.xyz:80', username: 'stream', password: 'password', source: 'Curated' },
+      { url: 'https://cdn.megastreams.io:8080', username: 'free', password: 'tv', source: 'Curated' },
+      { url: 'https://live.stream4k.xyz:80', username: 'demo', password: 'demo', source: 'Curated' },
     ];
   }
 }

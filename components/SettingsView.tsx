@@ -476,7 +476,7 @@ const SettingsView: React.FC<{
                 {!isAndroidApp() && <p>On the web, configure secure DNS in your browser or device settings instead.</p>}
                 {dnsOpenError && <p role="alert">Could not open settings. Open Android Settings and search for Private DNS.</p>}
               </div>
-              {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => setDnsOpenError(!openPrivateDnsSettings())}>Open Android settings <ExternalLink size={15} /></button>}
+              {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => { void openPrivateDnsSettings().then((ok) => setDnsOpenError(!ok)); }}>Open Android settings <ExternalLink size={15} /></button>}
             </div>
           </section>
 

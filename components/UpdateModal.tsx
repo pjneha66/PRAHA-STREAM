@@ -32,18 +32,21 @@ const UpdateModal: React.FC<UpdateModalProps> = ({ update, onClose }) => {
     setDownloading(true);
     setStarted(true);
 
-    try {
-      downloadAndInstallUpdate(update.apkUrl, update.latestVersion);
-      // Let the indicator show for 3 seconds, then inform user it's downloading
-      if (indicatorTimerRef.current !== null) window.clearTimeout(indicatorTimerRef.current);
-      indicatorTimerRef.current = window.setTimeout(() => {
-        indicatorTimerRef.current = null;
+    void (async () => {
+      try {
+        const accepted = await downloadAndInstallUpdate(update.apkUrl, update.latestVersion);
+        if (!accepted) throw new Error('Update download rejected.');
+        // Let the indicator show for 3 seconds, then inform user it's downloading
+        if (indicatorTimerRef.current !== null) window.clearTimeout(indicatorTimerRef.current);
+        indicatorTimerRef.current = window.setTimeout(() => {
+          indicatorTimerRef.current = null;
+          setDownloading(false);
+        }, 3500);
+      } catch {
+        await openSafeExternalUrl(update.apkUrl);
         setDownloading(false);
-      }, 3500);
-    } catch {
-      openSafeExternalUrl(update.apkUrl);
-      setDownloading(false);
-    }
+      }
+    })();
   };
 
   return (

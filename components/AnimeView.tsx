@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, BookOpen, Check, ChevronDown, CircleAlert, ExternalLink, LoaderCircle, MessageSquare,
   Play, Plus, RefreshCw, RotateCcw, Sparkles, Star, Tv,
@@ -122,7 +122,12 @@ const AnimeView: React.FC<{
 
   useEffect(() => { void loadRows(); }, [loadRows]);
 
+  // Monotonic token so a slow browse for an older sort/filter combination can
+  // never overwrite the grid after the user changes filters (race fix).
+  const gridSeqRef = useRef(0);
+
   const loadGrid = useCallback(async (page: number, append: boolean) => {
+    const seq = ++gridSeqRef.current;
     if (append) setGridLoadingMore(true);
     else {
       setGridLoading(true);
@@ -136,16 +141,20 @@ const AnimeView: React.FC<{
         format: format === 'ALL' ? undefined : format,
         minScore: minScore || undefined,
       });
+      if (seq !== gridSeqRef.current) return;
       setGrid((current) => (append ? [...current, ...result.items] : result.items));
       setGridPage(page);
       setGridHasMore(result.hasMore);
     } catch (error) {
+      if (seq !== gridSeqRef.current) return;
       if (!append) setGrid([]);
       setGridHasMore(false);
       setGridError(error instanceof Error ? error.message : 'AniCore did not answer.');
     } finally {
-      setGridLoading(false);
-      setGridLoadingMore(false);
+      if (seq === gridSeqRef.current) {
+        setGridLoading(false);
+        setGridLoadingMore(false);
+      }
     }
   }, [sort, format, minScore]);
 

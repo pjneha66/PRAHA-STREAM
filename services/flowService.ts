@@ -16,6 +16,7 @@ import {
   searchMirror, searchMirrorMusic, withMirrorFallback,
 } from './youtubeMirror';
 import type { FlowSource } from './youtubeMirror';
+import { evictOldest } from './cacheCaps';
 import type { MediaItem, StreamResult } from '../types';
 
 /** Minimal video shape the Flow cards and player mapping need. */
@@ -129,6 +130,7 @@ function cached<T>(store: Map<string, { at: number; value: Promise<T> }>, key: s
   if (hit && Date.now() - hit.at < ttl) return hit.value;
   const value = run();
   store.set(key, { at: Date.now(), value });
+  evictOldest(store, 120);
   // A failed request must not poison the cache.
   value.catch(() => { if (store.get(key)?.value === value) store.delete(key); });
   return value;

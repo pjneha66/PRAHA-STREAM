@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, Heart, LoaderCircle, MessageSquare, RefreshCw } from 'lucide-react';
 import { anikuraIds, anikuraService, animeService } from '../services/animeService';
 import type { AnikuraComment } from '../services/animeService';
@@ -61,21 +61,28 @@ const AnimeDiscussion: React.FC<{
     return () => { active = false; };
   }, [item, ids]);
 
+  // Monotonic request token: only the newest load may touch state, so a slow
+  // response for episode N can never overwrite episode N+1 (race fix).
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!resolvedIds) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError('');
     try {
       const result = await anikuraService.getComments(resolvedIds, episode, { sort: 'top', limit: 12 });
+      if (seq !== loadSeqRef.current) return;
       setComments(result.comments);
       setTotal(result.total);
       setSeriesUrl(result.series?.watch_url || result.series?.url);
       if (!result.comments.length) setError('Anikura has no discussion for this episode yet.');
     } catch (caught) {
+      if (seq !== loadSeqRef.current) return;
       setComments([]);
       setError(caught instanceof Error ? caught.message : 'Anikura did not answer.');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [resolvedIds, episode]);
 

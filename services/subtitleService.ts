@@ -1,5 +1,6 @@
 import type { StreamSubtitle } from '../types';
 import { nativeFetchText } from './androidBridge';
+import { evictOldest } from './cacheCaps';
 
 function parseTimestampToMs(raw: string): number | null {
   const cleaned = raw.trim().replace(',', '.');
@@ -79,6 +80,13 @@ export function convertToWebVtt(rawContent: string, offsetSeconds = 0): string {
 
 const rawSubtitleCache = new Map<string, string>();
 
+function rememberRawSubtitle(url: string, raw: string): void {
+  rawSubtitleCache.set(url, raw);
+  // Subtitle payloads are full text documents; cap the cache so a binge
+  // session cannot accumulate hundreds of them (audit M-open).
+  evictOldest(rawSubtitleCache, 40);
+}
+
 /**
  * Prepares a subtitle track so `<video><track>` can always render it:
  * converts `.srt` / `.ass` into `WEBVTT`, bypasses CORS on Android, and
@@ -95,7 +103,7 @@ export async function prepareSubtitleUrl(subtitle: StreamSubtitle, offsetSeconds
         const res = await nativeFetchText(subtitle.url, { headers: subtitle.headers, timeoutMs: 10000 });
         if (res.ok && res.data) {
           raw = res.data;
-          rawSubtitleCache.set(subtitle.url, raw);
+          rememberRawSubtitle(subtitle.url, raw);
         }
       }
       if (raw) {
@@ -118,7 +126,7 @@ export async function prepareSubtitleUrl(subtitle: StreamSubtitle, offsetSeconds
       if (!resp.ok) throw new Error(`Subtitle HTTP ${resp.status}`);
       raw = resp.data;
     }
-    rawSubtitleCache.set(subtitle.url, raw);
+    rememberRawSubtitle(subtitle.url, raw);
   }
 
   const vtt = convertToWebVtt(raw, offsetSeconds);
@@ -225,7 +233,7 @@ export async function parseLocalSubtitleFile(file: File): Promise<StreamSubtitle
   const content = await file.text();
   const vtt = convertToWebVtt(content, 0);
   const blobUrl = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
-  rawSubtitleCache.set(blobUrl, content);
+  rememberRawSubtitle(blobUrl, content);
   const baseName = file.name.replace(/\.(srt|vtt|ass|ssa)$/i, '');
   return {
     id: `local:${Date.now()}:${file.name}`,

@@ -74,6 +74,20 @@ export async function fetchNuvioRepository(rawUrl: string, previous?: NuvioRepos
   };
 }
 
+const TMDB_KEY_PLACEHOLDER = '__PRAHA_TMDB__';
+
+/**
+ * The worker realm never holds the real TMDB key: scraper code receives a
+ * placeholder global and proxy requests are rewritten here, in the app frame,
+ * right before they hit the network (audit H-open).
+ */
+function restoreTmdbKey(value: unknown): string {
+  const raw = typeof value === 'string' ? value : '';
+  if (!raw.includes(TMDB_KEY_PLACEHOLDER)) return raw;
+  const realKey = getTmdbApiKey() || '';
+  return raw.split(TMDB_KEY_PLACEHOLDER).join(realKey);
+}
+
 function runWorker(
   scraper: NuvioScraper,
   args: Record<string, unknown>,
@@ -90,10 +104,16 @@ function runWorker(
       const msg = event.data;
       if (msg?.type === 'fetch-proxy') {
         try {
-          const res = await nativeFetchText(msg.url, {
+          const headers: Record<string, string> = {};
+          if (msg.headers && typeof msg.headers === 'object') {
+            Object.entries(msg.headers as Record<string, unknown>).forEach(([key, value]) => {
+              headers[key] = restoreTmdbKey(value);
+            });
+          }
+          const res = await nativeFetchText(restoreTmdbKey(msg.url), {
             method: msg.method,
-            headers: msg.headers,
-            body: msg.body,
+            headers,
+            body: restoreTmdbKey(msg.body),
             timeoutMs: 18000,
           });
           worker.postMessage({
@@ -112,6 +132,9 @@ function runWorker(
         return;
       }
 
+      // Scrapers may postMessage arbitrary interim payloads; only a structured
+      // result terminates the worker. Anything else is noise.
+      if (typeof msg?.ok !== 'boolean') return;
       window.clearTimeout(timer);
       worker.terminate();
       if (msg.ok) resolve(msg.result);
@@ -127,7 +150,6 @@ function runWorker(
       args,
       scraperId: scraper.id,
       settings: scraperSettings,
-      tmdbApiKey: getTmdbApiKey(),
       mode,
     });
   });
