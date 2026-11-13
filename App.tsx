@@ -753,10 +753,101 @@ const App: React.FC = () => {
     });
   }, [player, playerIdentity, upsertHistory]);
 
+  // Next-episode preload cache (port of Nuvio's PlayerNextEpisodeAutoPlay):
+  // sources for the next episode are fetched before the card is tapped so the
+  // switch is instant.
+  const nextEpisodePreloadRef = useRef<{
+    key: string;
+    nextSeason: number;
+    nextEp: number;
+    nextTitle?: string;
+    streams: StreamResult[];
+  } | null>(null);
+
+  const prepareNextEpisode = useCallback(async () => {
+    if (!player || player.media.type !== 'series' || !player.season || !player.episode) return null;
+    const key = `${player.media.id}:${player.season}:${player.episode}`;
+    let nextSeason = player.season;
+    let nextEp = player.episode + 1;
+    let nextTitle: string | undefined;
+
+    const animeSlug = player.media.anime?.slug
+      || (player.media.source === 'anicore' ? player.media.id.slice('anicore:'.length) : '');
+
+    if (tmdbReady && player.media.tmdbId) {
+      const seasonEps = await tmdbService.getSeason(player.media.tmdbId, player.season).catch(() => []);
+      if (seasonEps.length && nextEp > seasonEps.length) {
+        nextSeason = player.season + 1;
+        nextEp = 1;
+      }
+      const targetList = nextSeason === player.season
+        ? seasonEps
+        : await tmdbService.getSeason(player.media.tmdbId, nextSeason).catch(() => []);
+      nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
+    } else if (animeSlug) {
+      const animeEpisodes = await animeService.getEpisodes(animeSlug).catch(() => []);
+      const seasonEps = animeEpisodes.filter((entry) => entry.season === player.season);
+      if (seasonEps.length && nextEp > seasonEps.length) {
+        nextSeason = player.season + 1;
+        nextEp = 1;
+      }
+      const targetList = nextSeason === player.season
+        ? seasonEps
+        : animeEpisodes.filter((entry) => entry.season === nextSeason);
+      nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
+    }
+
+    const ids = await tmdbService.resolveIds(player.media).catch(() => ({
+      tmdbId: player.media.tmdbId ? String(player.media.tmdbId) : undefined,
+      imdbId: player.media.imdbId,
+    }));
+    const resolved = { ...player.media, imdbId: ids.imdbId || player.media.imdbId };
+    const [stremio, nuvio] = await Promise.all([
+      findStremioStreams(addons, resolved, nextSeason, nextEp),
+      ids.tmdbId
+        ? findNuvioStreams(repositories, ids.tmdbId, 'series', nextSeason, nextEp, nuvioSettings)
+        : Promise.resolve({ streams: [], errors: [] }),
+    ]);
+    return { key, nextSeason, nextEp, nextTitle, streams: [...stremio.streams, ...nuvio.streams] };
+  }, [player, tmdbReady, addons, repositories, nuvioSettings]);
+
+  const preloadNextEpisode = useCallback(() => {
+    if (!player || player.media.type !== 'series') return;
+    const key = `${player.media.id}:${player.season || 0}:${player.episode || 0}`;
+    if (nextEpisodePreloadRef.current?.key === key) return;
+    void prepareNextEpisode().then((payload) => {
+      if (payload && payload.streams.length) nextEpisodePreloadRef.current = payload;
+    }).catch(() => undefined);
+  }, [player, prepareNextEpisode]);
+
   const handleNextEpisode = useCallback(async () => {
     if (!player || player.media.type !== 'series' || !player.season || !player.episode) return;
     setNextEpisodeLoading(true);
     try {
+      const preloadKey = `${player.media.id}:${player.season}:${player.episode}`;
+      const preloaded = nextEpisodePreloadRef.current?.key === preloadKey ? nextEpisodePreloadRef.current : null;
+      if (preloaded) {
+        const preferred = preloaded.streams.find((s) => s.sourceName === player.stream.sourceName && !s.url.startsWith('magnet:'))
+          || preloaded.streams.find((s) => !s.url.startsWith('magnet:'))
+          || preloaded.streams[0];
+        if (preferred) {
+          nextEpisodePreloadRef.current = null;
+          upsertHistory({ media: player.media, stream: preferred, season: preloaded.nextSeason, episode: preloaded.nextEp, episodeTitle: preloaded.nextTitle, currentTime: 0 });
+          playbackPositionRef.current = 0;
+          setPlayer({
+            media: player.media,
+            stream: preferred,
+            season: preloaded.nextSeason,
+            episode: preloaded.nextEp,
+            episodeTitle: preloaded.nextTitle,
+            initialTime: 0,
+          });
+          notify(`Playing S${preloaded.nextSeason} E${preloaded.nextEp}${preloaded.nextTitle ? ` — ${preloaded.nextTitle}` : ''}`, 'success');
+          setNextEpisodeLoading(false);
+          return;
+        }
+      }
+
       let nextSeason = player.season;
       let nextEp = player.episode + 1;
       let nextTitle: string | undefined;
@@ -1251,6 +1342,7 @@ const App: React.FC = () => {
             }}
             onProgress={handlePlayerProgress}
             onNextEpisode={player.media.type === 'series' && player.season && player.episode ? handleNextEpisode : undefined}
+            onPreloadNextEpisode={player.media.type === 'series' ? preloadNextEpisode : undefined}
             nextEpisodeLoading={nextEpisodeLoading}
             onOpenSettings={() => navigate('settings')}
             onClose={closePlayer}

@@ -423,22 +423,43 @@ export class IptvScraper {
 
   private static readonly URL_PARAM_REGEX = /(https?:\/\/[^?\s"'<]+)\?(?:[^\s"'<]*?&)?(?:username|user)=([^&\s"'<]+)\s*&(?:password|pass)=([^&\s"'<]+)/gi;
   private static readonly LABEL_REGEX = /(?:Portal|Host(?:\s*URL)?|H[ᴏo]s[ᴛt]|Panel|Real|URL|🔗|🌍|🌐)[\s:.-]*?(https?:\/\/[^<\s"']+)[\s\S]{1,500}?(?:Username|Usu[áa]rio|Usuario|User|Us[ᴇe]r|Us[ᴜu][ᴀa]r[ɪi][ᴏo]|👤)[\s:.-]+([^\s|<"'\n]+)[\s\S]{1,200}?(?:Password|Senha|Contrase[ñn]a|Pass|P[ᴀa]ss|S[ᴇe]nh[ᴀa]|🔑)[\s:.-]+([^\s|<"'\n]+)/gi;
+  private static readonly URL_PARAM_PASS_FIRST = /(https?:\/\/[^?\s"'<]+)\?(?:[^\s"'<]*?&)?(?:password|pass|pwd)=([^&\s"'<]+)\s*&(?:[^\s"'<]*?&)?(?:username|user|usr|login|account)=([^&\s"'<]+)/gi;
+  private static readonly LABEL_WITH_PORT = /(?:Portal(?:-URL)?|Host(?:\s*URL)?|Panel|Server|Real-URL|URL|Link|Servidor|H[ôo]te|Сервер)\s*[:=➤\-•*|]?\s*(https?:\/\/[^\s<"'\n]+)[\s\S]{1,600}?(?:Username|User|Usr|Login|Account|Логин|👤)\s*[:=➤\-•*|]?\s*([^\s|<"'\n]+)[\s\S]{1,300}?(?:Password|Pass|Pwd|Senha|Clave|Пароль|🔑)\s*[:=➤\-•*|]?\s*([^\s|<"'\n]+)(?:[\s\S]{1,200}?(?:Port|Porta|Puerto|Порт)\s*[:=➤\-•*|]?\s*(\d+))?/gi;
+  private static readonly STREAM_URI_REGEX = /(https?:\/\/[^\s/]+(?::\d+)?)\/(?:live|movie|series)\/([^/\s]+)\/([^/\s]+)\/\d+/gi;
+  private static readonly COMBO_REGEX = /(https?:\/\/[a-zA-Z0-9.\-_]+(?::\d+)?(?:\/[^\s:|,\t\n]*)?)\s*[:|,\t ]\s*([a-zA-Z0-9_\-.@]+)\s*[:|,\t ]\s*([a-zA-Z0-9_\-.@!#$%^&*+=]+)/;
+  private static readonly PASTE_HOSTS = ['paste.sh', 'pastebin.com', 'justpaste.it', 'controlc.com', 'pastes.dev', 'text.is', 'rentry.co'];
 
   static extractPortals(text: string, source = 'Scraper'): IptvPortal[] {
     const out: Map<string, IptvPortal> = new Map();
     if (!text || text.length < 15) return [];
+    // Junk-code guard (port of PlayTorrio): JS bodies are not portal lists.
+    if (IptvScraper.isJunkCode(text)) return [];
 
-    const add = (rawUrl: string, rawUser: string, rawPass: string) => {
+    const normalized = text
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/<(?:p|br|div|li|h\d)[^>]*>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ');
+
+    const add = (rawUrl: string, rawUser: string, rawPass: string, rawPort?: string) => {
       let url = rawUrl.trim();
       const qIdx = url.indexOf('?');
       if (qIdx >= 0) url = url.substring(0, qIdx);
       url = url.replace(/\/(?:get|live|portal|c|index|playlist|player_api)\.php$/i, '').replace(/\/+$/, '');
       if (!url.startsWith('http')) url = `https://${url}`;
+      if (rawPort && !/:\d+$/.test(url)) {
+        const port = Number.parseInt(rawPort, 10);
+        if (Number.isFinite(port) && port > 0 && port <= 65535) url = `${url}:${port}`;
+      }
 
       const user = rawUser.replace(/^[=:]+/, '').trim();
       const pass = rawPass.replace(/^[=:]+/, '').trim();
       if (!url || user.length < 3 || pass.length < 3) return;
+      // Credential sanity guard: no URLs, no bare scheme words leaking in
+      // from adjacent labels (e.g. "User: http://x Pass: normal123").
       if (user.includes('://') || pass.includes('://')) return;
+      if (/^https?$/i.test(user) || /^https?$/i.test(pass)) return;
+      if (/^https?:/.test(user) || /^https?:/.test(pass)) return;
 
       const key = `${url}|${user}|${pass}`.toLowerCase();
       if (!out.has(key)) {
@@ -446,18 +467,155 @@ export class IptvScraper {
       }
     };
 
-    let match: RegExpExecArray | null;
-    const urlRegex = new RegExp(this.URL_PARAM_REGEX.source, 'gi');
-    while ((match = urlRegex.exec(text)) !== null) {
-      add(match[1], match[2], match[3]);
-    }
+    const run = (pattern: RegExp) => {
+      let m: RegExpExecArray | null;
+      while ((m = pattern.exec(normalized)) !== null) {
+        add(m[1], m[2], m[3], m[4]);
+      }
+    };
 
-    const labelRegex = new RegExp(this.LABEL_REGEX.source, 'gi');
-    while ((match = labelRegex.exec(text)) !== null) {
-      add(match[1], match[2], match[3]);
-    }
+    // 1. URL query params — user-first and pass-first orders.
+    run(new RegExp(IptvScraper.URL_PARAM_REGEX.source, 'gi'));
+    run(new RegExp(IptvScraper.URL_PARAM_PASS_FIRST.source, 'gi'));
+    // 2. Multi-line labeled blocks (multilingual, optional port).
+    run(new RegExp(IptvScraper.LABEL_REGEX.source, 'gi'));
+    run(new RegExp(IptvScraper.LABEL_WITH_PORT.source, 'gi'));
+    // 3. Stream URI path: http://host:port/live/user/pass/123.ts
+    run(new RegExp(IptvScraper.STREAM_URI_REGEX.source, 'gi'));
+    // 4. Line combo: host:port:user:pass | host|user|pass | host user pass
+    run(new RegExp(IptvScraper.COMBO_REGEX.source, 'gim'));
 
     return Array.from(out.values());
+  }
+
+  private static isJunkCode(text: string): boolean {
+    const markers = ['Array.isArray', 'prototype.', 'function(', 'var ', 'const ', 'let ', 'window.', 'document.'];
+    let hits = 0;
+    for (const marker of markers) {
+      if (text.includes(marker)) hits += 1;
+      if (hits >= 2) return true;
+    }
+    return false;
+  }
+
+  /**
+   * PasteSh decryptor (port of PlayTorrio's PasteShDecryptor): paste.sh
+   * stores `Salted__` + 8-byte salt + AES-256-CBC ciphertext as base64, keyed
+   * by `id + serverKey + clientKey + origin` via PBKDF2-HMAC-SHA512 (1 iter),
+   * with an EVP_BytesToKey(MD5) fallback for legacy pastes. `urlWithHash`
+   * must include the #clientkey fragment.
+   */
+  static async decryptPasteSh(urlWithHash: string): Promise<string> {
+    const hashIdx = urlWithHash.indexOf('#');
+    if (hashIdx <= 0) return '';
+    const baseUrl = urlWithHash.substring(0, hashIdx);
+    const clientKey = urlWithHash.substring(hashIdx + 1);
+    const id = baseUrl.substring(baseUrl.lastIndexOf('/') + 1);
+    try {
+      const raw = await IptvScraper.fetchPasteRaw(baseUrl);
+      if (!raw) return '';
+      const lines = raw.split('\n');
+      if (!lines.length) return '';
+      const serverKey = lines[0].trim();
+      const b64 = lines.slice(1).join('').trim();
+      if (!b64) return '';
+      const cipherWords = CryptoJS.enc.Base64.parse(b64);
+      const binary = cipherWords.toString(CryptoJS.enc.Latin1);
+      if (binary.length < 17 || binary.slice(0, 8) !== 'Salted__') return '';
+      const salt = CryptoJS.enc.Latin1.parse(binary.slice(8, 16));
+      const ciphertext = CryptoJS.enc.Latin1.parse(binary.slice(16));
+      const password = `${id}${serverKey}${clientKey}https://paste.sh`;
+      const params = { ciphertext, padding: CryptoJS.pad.Pkcs7 } as CryptoJS.lib.CipherParams;
+
+      // 1) PBKDF2-HMAC-SHA512, 1 iteration, 48 bytes (32 key + 16 IV).
+      try {
+        const derived = CryptoJS.PBKDF2(password, salt, {
+          keySize: 48 / 4,
+          iterations: 1,
+          hasher: CryptoJS.algo.SHA512,
+        });
+        const decrypted = CryptoJS.AES.decrypt(params, CryptoJS.lib.WordArray.create(derived.words.slice(0, 8)), {
+          iv: CryptoJS.lib.WordArray.create(derived.words.slice(8, 12)),
+        });
+        const out = decrypted.toString(CryptoJS.enc.Utf8);
+        if (out) return out;
+      } catch {
+        // fall through to the EVP path
+      }
+
+      // 2) EVP_BytesToKey(MD5) fallback (legacy pastes): D_i = MD5(D_{i-1} || pass || salt).
+      try {
+        const words: number[] = [];
+        let prev = CryptoJS.lib.WordArray.create([]);
+        while (words.length < 12) {
+          prev = CryptoJS.MD5(prev.clone().concat(CryptoJS.enc.Utf8.parse(password)).concat(salt));
+          for (const w of prev.words) words.push(w);
+        }
+        const decrypted = CryptoJS.AES.decrypt(params, CryptoJS.lib.WordArray.create(words.slice(0, 8)), {
+          iv: CryptoJS.lib.WordArray.create(words.slice(8, 12)),
+        });
+        return decrypted.toString(CryptoJS.enc.Utf8);
+      } catch {
+        return '';
+      }
+    } catch {
+      return '';
+    }
+  }
+
+  /** Raw-text fetchers for the paste sites PlayTorrio supports. */
+  private static async fetchPasteRaw(url: string): Promise<string | null> {
+    try {
+      if (url.includes('pastebin.com/') && !url.includes('/raw/')) {
+        const id = url.split('/').pop() || '';
+        const resp = await fetchWithTimeout(`https://pastebin.com/raw/${id}`, undefined, 6000);
+        return resp.ok ? await resp.text() : null;
+      }
+      if (url.includes('pastes.dev/')) {
+        const id = url.split('/').pop() || '';
+        const resp = await fetchWithTimeout(`https://api.pastes.dev/${id}`, undefined, 6000);
+        return resp.ok ? await resp.text() : null;
+      }
+      if (url.includes('rentry.co/') && !url.includes('/raw')) {
+        const resp = await fetchWithTimeout(`${url.replace(/\/$/, '')}/raw`, undefined, 6000);
+        return resp.ok ? await resp.text() : null;
+      }
+      const resp = await fetchWithTimeout(url, undefined, 6000);
+      return resp.ok ? await resp.text() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Chase paste-site deep links inside a post body (port of PlayTorrio, bounded). */
+  static async chaseDeepLinks(body: string, out: IptvPortal[], maxResults: number, source: string): Promise<void> {
+    const deepLinks = new Set<string>();
+    for (const match of body.matchAll(/[A-Za-z0-9+/=]{24,}/g)) {
+      try {
+        const decoded = atob(match[0]);
+        if (decoded.startsWith('http') && IptvScraper.PASTE_HOSTS.some((host) => decoded.includes(host))) {
+          deepLinks.add(decoded);
+        } else if (!decoded.startsWith('http') && decoded.includes(':')) {
+          out.push(...IptvScraper.extractPortals(decoded, `${source} (decoded)`));
+        }
+      } catch {
+        // not base64
+      }
+    }
+    for (const match of body.matchAll(/https?:\/\/(?:paste\.sh|pastebin\.com|justpaste\.it|controlc\.com|pastes\.dev|text\.is|rentry\.co)\/[a-zA-Z0-9#_=-]+/g)) {
+      deepLinks.add(match[0]);
+    }
+    for (const link of Array.from(deepLinks).slice(0, 4)) {
+      if (out.length >= maxResults) return;
+      let text: string | null = null;
+      if (link.includes('paste.sh') && link.includes('#')) {
+        text = await IptvScraper.decryptPasteSh(link);
+      } else {
+        text = await IptvScraper.fetchPasteRaw(link);
+      }
+      if (!text) continue;
+      out.push(...IptvScraper.extractPortals(text, `${source} (deep)`));
+    }
   }
 
   static async scrapeRedditPortals(limit = 25): Promise<IptvPortal[]> {
@@ -502,12 +660,15 @@ export class IptvScraper {
       const data = JSON.parse(jsonText)?.data?.children || [];
       const portals: IptvPortal[] = [];
       for (const child of data) {
+        if (portals.length >= limit) break;
         const post = child.data;
         const text = `${post.title || ''} ${post.selftext || ''}`;
-        const found = this.extractPortals(text, 'Reddit');
-        portals.push(...found);
+        portals.push(...this.extractPortals(text, 'Reddit'));
+        // Chase paste-site deep links (port of PlayTorrio) — many portal
+        // lists live behind paste.sh/pastebin links inside the posts.
+        await this.chaseDeepLinks(text, portals, limit + 20, 'Reddit');
       }
-      return portals;
+      return portals.slice(0, limit);
     } catch {
       return [];
     }

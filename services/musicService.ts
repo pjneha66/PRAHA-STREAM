@@ -186,12 +186,77 @@ export class OctaveMusicService {
           }
         }
 
+        // Deezer as a second source (port of PlayTorrio's Deezer client) —
+        // merges more catalog coverage, deduped by artist+title.
+        const deezer = await this.searchDeezer(trimmed).catch(() => null);
+        if (deezer) {
+          const seen = new Set(tracks.map((track) => `${track.artist.toLowerCase()}|${track.title.toLowerCase()}`));
+          for (const track of deezer.tracks) {
+            const key = `${track.artist.toLowerCase()}|${track.title.toLowerCase()}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              tracks.push(track);
+            }
+          }
+          for (const album of deezer.albums) {
+            if (!albums.some((existing) => existing.title.toLowerCase() === album.title.toLowerCase())) albums.push(album);
+          }
+        }
         return { tracks, artists, albums };
       }
     } catch {
       // Ignored
     }
     return { tracks: [], artists: [], albums: [] };
+  }
+
+  /** Deezer public API search — tracks + albums, no key required. */
+  private static async searchDeezer(query: string): Promise<{ tracks: MusicTrack[]; albums: OctaveSearchData['albums'] } | null> {
+    try {
+      const res = await nativeFetchText(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=25`, {
+        headers: { Accept: 'application/json' },
+        timeoutMs: 8000,
+      });
+      if (!res.ok || !res.data) return null;
+      const data = JSON.parse(res.data) as {
+        data?: Array<{
+          id?: number | string;
+          title?: string;
+          artist?: { name?: string; picture_medium?: string };
+          album?: { title?: string; cover_medium?: string; cover_big?: string; id?: number | string };
+          preview?: string;
+          duration?: number;
+        }>;
+      };
+      if (!Array.isArray(data.data)) return null;
+      const tracks: MusicTrack[] = [];
+      const albums: OctaveSearchData['albums'] = [];
+      const seenAlbums = new Set<string>();
+      for (const entry of data.data) {
+        if (!entry.title || !entry.artist?.name) continue;
+        tracks.push({
+          id: `deezer-${entry.id ?? `${entry.artist.name}-${entry.title}`}`,
+          title: String(entry.title),
+          artist: String(entry.artist.name),
+          album: entry.album?.title ? String(entry.album.title) : undefined,
+          duration: Number(entry.duration || 30),
+          coverUrl: String(entry.album?.cover_medium || entry.artist.picture_medium || ''),
+          previewUrl: String(entry.preview || ''),
+        });
+        if (entry.album?.title && !seenAlbums.has(entry.album.title.toLowerCase())) {
+          seenAlbums.add(entry.album.title.toLowerCase());
+          albums.push({
+            id: String(entry.album.id || entry.album.title),
+            title: String(entry.album.title),
+            artist: String(entry.artist.name),
+            coverUrl: String(entry.album.cover_big || entry.album.cover_medium || ''),
+          });
+        }
+      }
+      return { tracks, albums };
+    } catch {
+      return null;
+    }
   }
 
   /**

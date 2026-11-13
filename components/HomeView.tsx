@@ -69,7 +69,18 @@ const HomeView: React.FC<HomeViewProps> = ({
   const featured = spotlight[Math.min(featuredIndex, Math.max(spotlight.length - 1, 0))];
   const saved = featured ? watchlist.some((item) => item.id === featured.id) : false;
   const activeSources = addons.filter((addon) => addon.enabled).length + repositories.filter((repo) => repo.enabled).length;
-  const moveFeatured = (direction: number) => setFeaturedIndex((current) => (current + direction + spotlight.length) % spotlight.length);
+  const moveFeatured = (direction: number) => { setFeaturedIndex((current) => (current + direction + spotlight.length) % spotlight.length); setAutoRotateTick((t) => t + 1); };
+
+  // Hero auto-rotation (port of Nuvio's HomeHeroSection): advances the
+  // spotlight every 9s; any manual move resets the timer.
+  const [autoRotateTick, setAutoRotateTick] = useState(0);
+  useEffect(() => {
+    if (spotlight.length < 2) return;
+    const timer = window.setInterval(() => {
+      setFeaturedIndex((current) => (current + 1) % spotlight.length);
+    }, 9000);
+    return () => window.clearInterval(timer);
+  }, [spotlight.length, autoRotateTick]);
 
   const jellyfinRow = <JellyfinHome snapshot={jellyfinSnapshot} onOpenSettings={onOpenSettings} />;
   const addonRows = <AddonHomeRows addons={addons} watchlist={watchlist} compact={compact} onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} />;

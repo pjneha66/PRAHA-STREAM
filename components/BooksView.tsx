@@ -9,9 +9,10 @@ import { openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
+import { BookracyService } from '../services/bookracyService';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 
-type SourceMode = 'openlibrary' | 'archive';
+type SourceMode = 'openlibrary' | 'archive' | 'bookracy';
 
 /** Open Library quick subjects (openlibrary.org/subjects/...). */
 const OPEN_LIBRARY_SUBJECTS = [
@@ -99,7 +100,9 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     try {
       const result = mode === 'archive'
         ? await BooksService.searchArchive(submitted, collection, nextPage)
-        : await BooksService.searchOpenLibrary(submitted || 'classics', nextPage);
+        : mode === 'bookracy'
+          ? await BookracyService.search(submitted || 'fantasy', nextPage, 24)
+          : await BooksService.searchOpenLibrary(submitted || 'classics', nextPage);
       if (seq !== requestSeq.current) return;
       setItems((current) => (append ? [...current, ...result] : result));
       setPage(nextPage);
@@ -220,6 +223,17 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
           }}
         >
           Open Library
+        </button>
+        <button
+          onClick={() => setMode('bookracy')}
+          style={{
+            padding: '7px 14px', borderRadius: '999px', border: '1px solid',
+            borderColor: mode === 'bookracy' ? '#d6f77a' : '#30363d',
+            background: mode === 'bookracy' ? 'rgba(214, 247, 122, 0.14)' : '#161b22',
+            color: mode === 'bookracy' ? '#d6f77a' : '#8b949e', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          Bookracy
         </button>
         {mode === 'archive' && (
           <select

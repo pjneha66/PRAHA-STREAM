@@ -67,6 +67,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   nextEpisodeLabel,
   onNextEpisode,
   nextEpisodeLoading = false,
+  onPreloadNextEpisode,
   onProgress,
   autoplay,
   settings,
@@ -582,6 +583,17 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     duration - currentTime <= 28 &&
     duration - currentTime > 0,
   );
+
+  // Preload the next episode's sources as soon as the up-next window opens
+  // (port of Nuvio's preload lead) so tapping Play Next is instant.
+  const preloadFiredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!showUpNext || !onPreloadNextEpisode) return;
+    const key = `${media?.id || ''}:${duration.toFixed(0)}`;
+    if (preloadFiredRef.current === key) return;
+    preloadFiredRef.current = key;
+    onPreloadNextEpisode();
+  }, [showUpNext, onPreloadNextEpisode, media?.id, duration]);
 
   const progressRatio = duration ? currentTime / duration : 0;
   const bufferedRatio = duration ? buffered / duration : 0;

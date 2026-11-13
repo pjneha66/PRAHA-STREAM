@@ -5,7 +5,15 @@ import type {
 import { nativeFetchText } from './androidBridge';
 import { sortByRelevance } from './searchRelevance';
 
+// Response TTL cache (port of Nuvio's addon HTTP disk cache, memory tier):
+// catalogs and metadata change slowly; repeat navigations answer instantly.
+const JSON_CACHE_TTL_MS = 10 * 60 * 1000;
+const jsonCache = new Map<string, { ts: number; payload: unknown }>();
+const JSON_CACHE_MAX = 120;
+
 async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T> {
+  const cached = jsonCache.get(url);
+  if (cached && Date.now() - cached.ts < JSON_CACHE_TTL_MS) return cached.payload as T;
   const response = await nativeFetchText(url, {
     headers: { Accept: 'application/json' },
     timeoutMs,
@@ -19,7 +27,13 @@ async function fetchJson<T = any>(url: string, timeoutMs = 15000): Promise<T> {
     throw new Error('This addon returned an HTML page instead of JSON. The addon URL is wrong, the repository moved, or the server is erroring.');
   }
   try {
-    return JSON.parse(text) as T;
+    const parsed = JSON.parse(text) as T;
+    jsonCache.set(url, { ts: Date.now(), payload: parsed });
+    if (jsonCache.size > 120) {
+      const oldest = jsonCache.keys().next();
+      if (!oldest.done) jsonCache.delete(oldest.value);
+    }
+    return parsed;
   } catch {
     throw new Error('This addon returned a malformed JSON response.');
   }

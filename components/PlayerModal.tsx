@@ -46,6 +46,7 @@ const PlayerModal: React.FC<{
   onFindSources?: () => void;
   onNextEpisode?: () => void;
   nextEpisodeLoading?: boolean;
+  onPreloadNextEpisode?: () => void;
   onOpenSettings?: () => void;
   onZapChannel?: (direction: 1 | -1) => void;
   onClose: () => void;
@@ -67,6 +68,7 @@ const PlayerModal: React.FC<{
   onFindSources,
   onNextEpisode,
   nextEpisodeLoading = false,
+  onPreloadNextEpisode,
   onOpenSettings,
   onZapChannel,
   onClose,
@@ -333,6 +335,7 @@ const PlayerModal: React.FC<{
           nextEpisodeLabel={nextEpisodeLabel}
           onNextEpisode={onNextEpisode}
           nextEpisodeLoading={nextEpisodeLoading}
+          onPreloadNextEpisode={onPreloadNextEpisode}
           onProgress={onProgress}
           autoplay={autoplay}
           settings={playerSettings}
