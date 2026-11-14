@@ -64,12 +64,65 @@ const ACTIVE_SOURCES = [
   "writers'-scans", 'yaksha-comics', 'yaksha-scans',
 ];
 
+/** Display names for the Comick source dropdown (id → label). */
+export const COMICK_SOURCE_OPTIONS: Array<{ id: string; name: string }> = [
+  { id: 'arven-comics', name: 'Arven Comics' },
+  { id: 'asmodeus-scans', name: 'Asmodeus Scans' },
+  { id: 'asurascan', name: 'AsuraScan' },
+  { id: 'athrea-scans', name: 'Athrea Scans' },
+  { id: 'demonicscans', name: 'DemonicScans' },
+  { id: 'elf-toon', name: 'Elf Toon' },
+  { id: 'eva-scans', name: 'Eva Scans' },
+  { id: 'flamecomics', name: 'FlameComics' },
+  { id: 'galaxy-degen-scans', name: 'Galaxy Degen Scans' },
+  { id: 'hades-scans', name: 'Hades Scans' },
+  { id: 'kappabeast', name: 'KappaBeast' },
+  { id: 'kdt-scans', name: 'KDT Scans' },
+  { id: 'kenscans', name: 'Kenscans' },
+  { id: 'ks-group', name: 'KS Group' },
+  { id: 'kuramanga', name: 'KuraManga' },
+  { id: 'lagoonscans', name: 'LagoonScans' },
+  { id: 'lhtranslation', name: 'LHTranslation' },
+  { id: 'lua-comic', name: 'Lua Comic' },
+  { id: 'madarascans', name: 'Madarascans' },
+  { id: 'magus-manga', name: 'Magus Manga' },
+  { id: 'mangago', name: 'Mangago' },
+  { id: 'mangakatana', name: 'MangaKatana' },
+  { id: 'mangaread', name: 'MangaRead' },
+  { id: 'mangasushi', name: 'Mangasushi' },
+  { id: 'mangataro', name: 'Mangataro' },
+  { id: 'manhuaplus', name: 'Manhuaplus' },
+  { id: 'mgeko', name: 'Mgeko' },
+  { id: 'novelcool', name: 'NovelCool' },
+  { id: 'project-suki', name: 'Project Suki' },
+  { id: 'rd-scans', name: 'RD Scans' },
+  { id: 'ritharscans', name: 'Ritharscans' },
+  { id: 'rizz-fables', name: 'Rizz Fables' },
+  { id: 'rokari-comics', name: 'Rokari Comics' },
+  { id: 'scythe-scans', name: 'Scythe Scans' },
+  { id: 'spider-scans', name: 'Spider Scans' },
+  { id: 'stonescape', name: 'Stonescape' },
+  { id: 'thunderscans', name: 'Thunderscans' },
+  { id: 'topmanhua', name: 'TopManhua' },
+  { id: 'utoon', name: 'UTOON' },
+  { id: 'violetscans', name: 'Violetscans' },
+  { id: 'vortex-scans', name: 'Vortex Scans' },
+  { id: 'webtoon', name: 'WEBTOON' },
+  { id: 'weebcentral', name: 'WeebCentral' },
+  { id: "writers'-scans", name: "Writers' Scans" },
+  { id: 'yaksha-comics', name: 'Yaksha Comics' },
+  { id: 'yaksha-scans', name: 'Yaksha Scans' },
+];
+
 /** Per-source search (NDJSON response — one batch line per call). */
 async function searchComickSource(query: string, source: string): Promise<ComickSeries[]> {
+  // The search endpoint validates source ids with SPACES ("vortex scans"),
+  // unlike /api/sources which uses dashes ("vortex-scans").
+  const searchSource = source.replaceAll('-', ' ');
   const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_SEARCH : API_SEARCH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, source }),
+    body: JSON.stringify({ query, source: searchSource }),
     timeoutMs: 25000,
   });
   if (!res.ok || !res.data) return [];
@@ -100,12 +153,16 @@ async function searchComickSource(query: string, source: string): Promise<Comick
   return series;
 }
 
-/** Search across every active aggregator concurrently; results deduped by title. */
-export async function searchComick(query: string): Promise<ComickSeries[]> {
+/**
+ * Search Comick: across every active aggregator concurrently by default, or
+ * a single chosen aggregator when `subSource` is given.
+ */
+export async function searchComick(query: string, subSource?: string): Promise<ComickSeries[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
+  const targets = subSource ? [subSource] : ACTIVE_SOURCES;
   const settled = await Promise.allSettled(
-    ACTIVE_SOURCES.map((source) => searchComickSource(trimmed, source)),
+    targets.map((source) => searchComickSource(trimmed, source)),
   );
   const series: ComickSeries[] = [];
   for (const result of settled) {

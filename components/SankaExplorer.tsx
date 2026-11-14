@@ -8,6 +8,7 @@ import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
+import { COMICK_SOURCE_OPTIONS as COMICK_ACTIVE_SOURCE_OPTIONS } from '../services/comickService';
 import ArchiveReader from './ArchiveReader';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
@@ -131,11 +132,12 @@ function mergeUniqueTitles(existing: SankaTitle[], incoming: SankaTitle[]): { me
   return { merged, addedCount };
 }
 
-// Web sources plus the Comick aggregator gateway and the Internet Archive
-// folkscanomy collections.
+// Web sources plus the Comick aggregator gateway, WEBTOON (locked to the
+// webtoon aggregator), and the Internet Archive folkscanomy collections.
 const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
   ...SANKA_COMIC_SOURCES.map((option) => ({ id: option.id as string, label: option.label })),
   { id: 'comick', label: 'Comick (aggregator search)' },
+  { id: 'webtoon', label: 'WEBTOON' },
   { id: 'archive', label: 'Internet Archive (folkscanomy)' },
 ];
 
@@ -144,6 +146,7 @@ const COMIC_SOURCE_SHORT: Record<string, string> = {
   weebcentral: 'WeebCentral',
   archive: 'Archive.org',
   comick: 'Comick',
+  webtoon: 'WEBTOON',
 };
 
 const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
@@ -163,6 +166,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
   const [fallbackNotice, setFallbackNotice] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [manualSource, setManualSource] = useState(false);
+  /** Comick: restrict the aggregator search to one source ('all' = all 46). */
+  const [comickSubSource, setComickSubSource] = useState('all');
 
   const [selected, setSelected] = useState<SankaTitle | null>(null);
   const [detail, setDetail] = useState<SankaMangaDetail | null>(null);
@@ -307,6 +312,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           page: 1,
           signal: controller.signal,
           bypassCache,
+          subSource: source === 'comick' ? comickSubSource : undefined,
         });
         if (!current) return;
         if (primary.items.length > 0 || submittedQuery || manualSource) {
@@ -370,7 +376,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       current = false;
       controller.abort();
     };
-  }, [source, feed, submittedQuery, attempt, manualSource]);
+  }, [source, feed, submittedQuery, attempt, manualSource, comickSubSource]);
 
   const handleLoadMore = async () => {
     if (loading || loadingMore || !hasMore) return;
@@ -653,6 +659,21 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
             <Flame size={14} /> Popular
           </button>
         </div>
+        {source === 'comick' && (
+          <label className="source-select">
+            <span className="sanka-sr-only">Comick aggregator</span>
+            <select
+              aria-label="Comick aggregator"
+              value={comickSubSource}
+              onChange={(event) => setComickSubSource(event.target.value)}
+            >
+              <option value="all">All sources ({COMICK_ACTIVE_SOURCE_OPTIONS.length})</option>
+              {COMICK_ACTIVE_SOURCE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <form className="sanka-search" onSubmit={search}>
           <Search size={16} />
           <input

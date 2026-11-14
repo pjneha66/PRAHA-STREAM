@@ -24,7 +24,6 @@ export const SANKA_COMIC_SOURCES = [
   { id: 'komikindo', label: 'Komikindo' },
   { id: 'shinigami', label: 'Shinigami' },
   { id: 'kiryuu', label: 'Kiryuu' },
-  { id: 'westmanga', label: 'WestManga' },
 ] as const;
 
 export const SANKA_ANIME_SOURCES = [
@@ -664,12 +663,37 @@ export async function fetchSankaTitlesPage(
     page?: number;
     signal?: AbortSignal;
     bypassCache?: boolean;
+    /** Comick: restrict the search to one aggregator ('webtoon', etc.). */
+    subSource?: string;
   } = {},
 ): Promise<SankaTitlesPage> {
   const normalizedQuery = (options.query || '').trim();
   const source = options.source || (kind === 'comic' ? 'bacakomik' : 'otakudesu');
   const feed = options.feed || 'latest';
   const page = Math.max(1, Math.floor(options.page || 1));
+
+  // WEBTOON chip: Comick gateway locked to the webtoon aggregator.
+  if (source === 'webtoon') {
+    try {
+      const series = await searchComick(normalizedQuery || 'manga', 'webtoon');
+      const items: SankaTitle[] = series.map((entry) => ({
+        id: 'comick:' + entry.url,
+        slug: entry.url,
+        detailPath: entry.url,
+        title: entry.title,
+        poster: entry.cover,
+        kind: 'comic' as const,
+        source: 'comick',
+        sourceUrl: entry.url,
+        comicType: 'WEBTOON',
+        genres: [],
+      }));
+      return { items, hasMore: false, page };
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') throw e;
+      return { items: [], hasMore: false, page };
+    }
+  }
 
   if (source === 'weebcentral') {
     try {
@@ -702,7 +726,7 @@ export async function fetchSankaTitlesPage(
   // Comick aggregator gateway (search-driven; see comickService).
   if (source === 'comick') {
     try {
-      const series = await searchComick(normalizedQuery || 'manga');
+      const series = await searchComick(normalizedQuery || 'manga', options.subSource);
       const items: SankaTitle[] = series.map((entry) => ({
         id: 'comick:' + entry.url,
         slug: entry.url,
