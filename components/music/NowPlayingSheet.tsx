@@ -3,7 +3,7 @@ import {
   ChevronDown, Disc3, ListMusic, LoaderCircle, Mic2, Music2, Pause, Play,
   Repeat, Repeat1, ScrollText, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X,
 } from 'lucide-react';
-import { useMusicPlayer, formatTime, type MusicPlaylist } from './MusicPlayerProvider';
+import { useMusicPlayer, useMusicPosition, formatTime, type MusicPlaylist } from './MusicPlayerProvider';
 
 /**
  * Full-screen Now Playing sheet (SimpMusic-style): big artwork, seek bar,
@@ -12,6 +12,7 @@ import { useMusicPlayer, formatTime, type MusicPlaylist } from './MusicPlayerPro
  */
 const NowPlayingSheet: React.FC = () => {
   const player = useMusicPlayer();
+  const { currentTime, duration, activeLyric } = useMusicPosition();
   const [tab, setTab] = useState<'player' | 'lyrics' | 'queue'>('player');
   const [playlistName, setPlaylistName] = useState('');
   const { currentTrack } = player;
@@ -62,17 +63,17 @@ const NowPlayingSheet: React.FC = () => {
             {player.streamError && <p className="music-sheet-error" role="alert">{player.streamError}</p>}
 
             <div className="music-sheet-seek">
-              <span>{formatTime(player.currentTime)}</span>
+              <span>{formatTime(currentTime)}</span>
               <input
                 type="range"
                 min={0}
-                max={player.duration || 100}
+                max={duration || 100}
                 step={0.5}
-                value={Math.min(player.currentTime, player.duration || 100)}
+                value={Math.min(currentTime, duration || 100)}
                 onChange={(event) => player.seek(Number(event.target.value))}
                 aria-label="Seek"
               />
-              <span>{formatTime(player.duration)}</span>
+              <span>{formatTime(duration)}</span>
             </div>
 
             <div className="music-sheet-controls">
@@ -121,7 +122,7 @@ const NowPlayingSheet: React.FC = () => {
               <button
                 key={`${line.time}-${index}`}
                 type="button"
-                className={`music-lyric-line ${index === player.activeLyric ? 'active' : ''}`}
+                className={`music-lyric-line ${index === activeLyric ? 'active' : ''}`}
                 onClick={() => player.seek(line.time)}
               >
                 {line.text || '♪'}

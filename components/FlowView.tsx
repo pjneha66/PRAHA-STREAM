@@ -186,6 +186,17 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   /* browse data */
   const [home, setHome] = useState<YtHome | null>(null);
+  // Home rails should feel like YouTube — regular videos, not endless 24/7
+  // live streams that dominate the default InnerTube/mirror shelves.
+  const withoutLives = useCallback((value: YtHome | null): YtHome | null =>
+    value
+      ? {
+          ...value,
+          shelves: value.shelves
+            .map((shelf) => ({ ...shelf, videos: shelf.videos.filter((video) => !video.live) }))
+            .filter((shelf) => shelf.videos.length > 0),
+        }
+      : value, []);
   const [homeState, setHomeState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [homeError, setHomeError] = useState('');
   const [musicHome, setMusicHome] = useState<YtHome | null>(null);
@@ -276,7 +287,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     (backend === 'mirror' ? flowHomeViaMirror : flowHome)()
       .then(({ data, backend: source }) => {
         if (!active) return;
-        setHome(data);
+        setHome(withoutLives(data));
         setBackend(source);
         setHomeState('ready');
       })
@@ -296,7 +307,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     (backend === 'mirror' ? flowMusicViaMirror : flowMusicHome)()
       .then(({ data, backend: source }) => {
         if (!active) return;
-        setMusicHome(data);
+        setMusicHome(withoutLives(data));
         setBackend(source);
         setMusicState('ready');
       })
@@ -316,7 +327,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     (mode === 'music' ? flowMusicSearch(submitted) : flowSearch(submitted))
       .then(({ data, backend: source }) => {
         if (!active) return;
-        setResults(mode === 'music' ? { ...data, videos: data.videos.filter(isMusicVideo) } : data);
+        setResults(mode === 'music' ? { ...data, videos: data.videos.filter(isMusicVideo) } : { ...data, videos: data.videos.filter((video) => !video.live) });
         setBackend(source);
       })
       .catch((error: unknown) => {

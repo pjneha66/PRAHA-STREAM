@@ -50,8 +50,6 @@ export interface MusicPlayerValue {
   queue: MusicTrack[];
   queueIndex: number;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   volume: number;
   muted: boolean;
   repeat: RepeatMode;
@@ -60,7 +58,6 @@ export interface MusicPlayerValue {
   streamError: string;
   isFullAudio: boolean;
   lyrics: LyricLine[] | null;
-  activeLyric: number;
   playlists: MusicPlaylist[];
   favorites: MusicTrack[];
   /** Opens Now Playing expanded state. */
@@ -93,6 +90,24 @@ export function useMusicPlayer(): MusicPlayerValue {
   const value = useContext(MusicPlayerContext);
   if (!value) throw new Error('useMusicPlayer must be used inside <MusicPlayerProvider>');
   return value;
+}
+
+/**
+ * Playback position lives in its own context: the audio element emits ~5
+ * timeupdate events per second, and if those flowed through the main value,
+ * every screen subscribed to the player (Music tab grids, shelf cards) would
+ * re-render 5×/s. Only the seek bars / progress / lyrics consume this.
+ */
+export interface MusicPositionValue {
+  currentTime: number;
+  duration: number;
+  activeLyric: number;
+}
+
+const MusicPositionContext = createContext<MusicPositionValue>({ currentTime: 0, duration: 0, activeLyric: -1 });
+
+export function useMusicPosition(): MusicPositionValue {
+  return useContext(MusicPositionContext);
 }
 
 export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -153,6 +168,13 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setStreamLoading(true);
     setStreamError('');
     setIsFullAudio(false);
+    const startAudio = (url: string) => {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.src = url;
+        audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      }
+    };
     try {
       const full = await OctaveMusicService.resolveFullTrackAudio(track.title, track.artist, track.id);
       if (seq !== streamSeqRef.current) return;
@@ -160,19 +182,31 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setCurrentTime(0);
         setDuration(track.duration || 0);
         setIsFullAudio(true);
-        const audio = audioRef.current;
-        if (audio) {
-          audio.src = full;
-          audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-        }
+        startAudio(full);
+        return;
+      }
+      // Full stream unresolvable — degrade to the 30s preview instead of a
+      // dead player (mirrors the v2.9 behavior).
+      if (track.previewUrl) {
+        setCurrentTime(0);
+        setDuration(30);
+        startAudio(track.previewUrl);
+        setStreamError('Full stream unavailable — playing the 30-second preview.');
         return;
       }
       setStreamError(`Audio stream unavailable for "${track.title}".`);
       setIsPlaying(false);
     } catch {
       if (seq === streamSeqRef.current) {
-        setStreamError(`Audio stream unavailable for "${track.title}".`);
-        setIsPlaying(false);
+        if (track.previewUrl) {
+          setCurrentTime(0);
+          setDuration(30);
+          startAudio(track.previewUrl);
+          setStreamError('Full stream unavailable — playing the 30-second preview.');
+        } else {
+          setStreamError(`Audio stream unavailable for "${track.title}".`);
+          setIsPlaying(false);
+        }
       }
     } finally {
       if (seq === streamSeqRef.current) setStreamLoading(false);
@@ -396,8 +430,6 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     queue,
     queueIndex,
     isPlaying,
-    currentTime,
-    duration,
     volume,
     muted,
     repeat,
@@ -406,7 +438,6 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     streamError,
     isFullAudio,
     lyrics,
-    activeLyric,
     playlists,
     favorites,
     sheetOpen,
@@ -431,22 +462,40 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     deletePlaylist,
     playPlaylist,
   }), [
-    currentTrack, queue, queueIndex, isPlaying, currentTime, duration, volume, muted, repeat, shuffle,
-    streamLoading, streamError, isFullAudio, lyrics, activeLyric, playlists, favorites, sheetOpen,
+    currentTrack, queue, queueIndex, isPlaying, volume, muted, repeat, shuffle,
+    streamLoading, streamError, isFullAudio, lyrics, playlists, favorites, sheetOpen,
     playTrack, togglePlay, next, prev, seek, setVolume, toggleMute, cycleRepeat, toggleShuffle,
     addToQueue, removeFromQueue, playQueueIndex, clearPlayer, toggleFavorite, isFavorite,
     createPlaylist, addToPlaylist, deletePlaylist, playPlaylist,
   ]);
 
+  const positionValue = useMemo<MusicPositionValue>(
+    () => ({ currentTime, duration, activeLyric }),
+    [currentTime, duration, activeLyric],
+  );
+
   return (
     <MusicPlayerContext.Provider value={value}>
-      {children}
-      <audio
-        ref={audioRef}
-        onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
-        onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
-        onEnded={() => advance(1)}
-      />
+      <MusicPositionContext.Provider value={positionValue}>
+        {children}
+        <audio
+          ref={audioRef}
+          onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
+          onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
+          onEnded={() => advance(1)}
+          onError={() => {
+            // Stream URL died mid-play (expired signature, 403) — fall back to
+            // the 30-second preview when one exists.
+            const track = currentTrack;
+            const audio = audioRef.current;
+            if (track?.previewUrl && audio && audio.src && audio.src !== track.previewUrl) {
+              setIsFullAudio(false);
+              audio.src = track.previewUrl;
+              audio.play().then(() => setIsPlaying(true)).catch(() => undefined);
+            }
+          }}
+        />
+      </MusicPositionContext.Provider>
     </MusicPlayerContext.Provider>
   );
 };

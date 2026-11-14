@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BookHeart, CircleAlert, Disc3, Heart, ListMusic, LoaderCircle, Mic2,
+  BookHeart, CircleAlert, Disc3, Heart, ListMusic, ListPlus, LoaderCircle, Mic2,
   Music2, Pause, Play, Plus, Search, Sparkles, X,
 } from 'lucide-react';
 import SkeletonGrid from './SkeletonGrid';
@@ -26,6 +26,8 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   const [sectionsLoading, setSectionsLoading] = useState(true);
   const [searchResults, setSearchResults] = useState<OctaveSearchData | null>(null);
   const [error, setError] = useState('');
+  const [playlistMenuFor, setPlaylistMenuFor] = useState<MusicTrack | null>(null);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
   const searchIdRef = useRef(0);
 
   // Home shelves, fetched once.
@@ -106,7 +108,55 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
         <button type="button" className="music-row-queue" onClick={() => player.addToQueue(track)} aria-label={`Add ${track.title} to queue`}>
           <Plus size={15} />
         </button>
+        <button
+          type="button"
+          className="music-row-queue"
+          onClick={() => setPlaylistMenuFor(playlistMenuFor?.id === track.id ? null : track)}
+          aria-label={`Save ${track.title} to playlist`}
+        >
+          <ListPlus size={15} />
+        </button>
         <span className="music-row-duration">{track.duration ? formatTime(track.duration) : ''}</span>
+        {/* Inline save-to-playlist popover */}
+        {playlistMenuFor?.id === track.id && (
+          <div className="music-row-menu" onClick={(event) => event.stopPropagation()}>
+            <span className="music-row-menu-label">Save to playlist</span>
+            {player.playlists.length === 0 && <span className="music-playlists-empty">No playlists yet — create one below.</span>}
+            {player.playlists.map((playlist) => (
+              <button
+                key={playlist.id}
+                type="button"
+                className="music-row-menu-item"
+                onClick={() => {
+                  player.addToPlaylist(playlist.id, track);
+                  setPlaylistMenuFor(null);
+                }}
+              >
+                <ListMusic size={13} /> {playlist.name}
+              </button>
+            ))}
+            <div className="music-row-menu-new">
+              <input
+                value={newPlaylistName}
+                onChange={(event) => setNewPlaylistName(event.target.value)}
+                placeholder="New playlist name…"
+                aria-label="New playlist name"
+              />
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                disabled={!newPlaylistName.trim()}
+                onClick={() => {
+                  player.createPlaylist(newPlaylistName, [track]);
+                  setNewPlaylistName('');
+                  setPlaylistMenuFor(null);
+                }}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };

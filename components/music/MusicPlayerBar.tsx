@@ -2,7 +2,7 @@ import React from 'react';
 import {
   ChevronUp, Disc3, LoaderCircle, Pause, Play, SkipBack, SkipForward, X,
 } from 'lucide-react';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer, useMusicPosition } from './MusicPlayerProvider';
 
 /**
  * Persistent mini player bar (SimpMusic-style): floats above the bottom nav on
@@ -10,6 +10,7 @@ import { useMusicPlayer } from './MusicPlayerProvider';
  */
 const MusicPlayerBar: React.FC<{ hidden?: boolean }> = ({ hidden }) => {
   const player = useMusicPlayer();
+  const { currentTime, duration } = useMusicPosition();
   const { currentTrack } = player;
   if (hidden || !currentTrack) return null;
 
@@ -52,7 +53,7 @@ const MusicPlayerBar: React.FC<{ hidden?: boolean }> = ({ hidden }) => {
         <ChevronUp size={14} />
       </button>
       <div className="music-bar-progress" aria-hidden="true">
-        <span style={{ width: `${player.duration ? Math.min(100, (player.currentTime / player.duration) * 100) : 0}%` }} />
+        <span style={{ width: `${duration ? Math.min(100, (currentTime / duration) * 100) : 0}%` }} />
       </div>
     </div>
   );

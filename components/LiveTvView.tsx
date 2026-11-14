@@ -72,6 +72,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const [matches, setMatches] = useState<LiveMatchEvent[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [matchesError, setMatchesError] = useState('');
+  const [resolvingMatchId, setResolvingMatchId] = useState<string | null>(null);
 
   // ── M3U Playlists State ──
   const [activePreset, setActivePreset] = useState<string>('Sports');
@@ -255,21 +256,39 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     setMatchesLoading(true);
     setMatchesError('');
     try {
-      const [dami, ppv] = await Promise.all([
+      // Nuvio Live Sports first (real matches, real per-match streams); the
+      // Dami-TV / PPV.to scrapers are secondary coverage. No fake fallback —
+      // an empty state beats five identical placeholder streams.
+      const [nuvio, dami, ppv] = await Promise.all([
+        LiveMatchesScraper.fetchNuvioSportsMatches().catch(() => []),
         LiveMatchesScraper.fetchDamiTvMatches().catch(() => []),
         LiveMatchesScraper.fetchPpvMatches().catch(() => []),
       ]);
-      const combined = [...dami, ...ppv];
-      if (combined.length > 0) {
-        setMatches(combined);
-      } else {
-        setMatches(LiveMatchesScraper.getFallbackMatches());
-      }
+      const combined = [...nuvio, ...dami, ...ppv];
+      setMatches(combined);
+      if (!combined.length) setMatchesError('No live sports are listed right now.');
     } catch {
-      setMatches(LiveMatchesScraper.getFallbackMatches());
+      setMatches([]);
+      setMatchesError('Could not load the live sports schedule.');
     } finally {
       setMatchesLoading(false);
     }
+  };
+
+  // Nuvio matches resolve their stream URL on demand (per-match manifest).
+  const playMatch = async (match: LiveMatchEvent) => {
+    if (match.nuvio) {
+      setResolvingMatchId(match.id);
+      try {
+        const url = await LiveMatchesScraper.resolveNuvioStream(match.id);
+        if (url) playStreamNow(match.title, url, match.league, match.poster);
+        else setMatchesError(`No stream available for "${match.title}" right now — try another match.`);
+      } finally {
+        setResolvingMatchId(null);
+      }
+      return;
+    }
+    playStreamNow(match.title, match.streamUrl, match.league, match.poster);
   };
 
   // ── Portal Scraper ──
@@ -753,83 +772,96 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
           ════════════════════════════════════════════════════════════════════════ */}
       {activeTab === 'matches' && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <span style={{ fontSize: '13px', color: '#8b949e' }}>
-              Real-time Sports Schedule (Dami-TV & PPV.to)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+            <span style={{ fontSize: '13px', color: 'var(--muted)' }}>
+              Live matches powered by <strong style={{ color: 'var(--text)' }}>Nuvio Live Sports</strong> + Dami-TV / PPV.to
             </span>
             <button
               onClick={loadLiveMatches}
               disabled={matchesLoading}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '6px 12px', borderRadius: '6px', border: '1px solid #30363d',
-                background: '#161b22', color: '#c9d1d9', fontSize: '12px', cursor: 'pointer',
-              }}
+              className="button button-secondary button-small"
             >
               <RefreshCw size={13} className={matchesLoading ? 'animate-spin' : ''} />
               Refresh
             </button>
           </div>
 
+          {matchesError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.3)', color: '#f87171', fontSize: '12px' }}>
+              <CircleAlert size={14} /> {matchesError}
+            </div>
+          )}
+
           {matchesLoading ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0' }}>
-              <LoaderCircle size={36} color="#ef4444" className="animate-spin" />
-              <p style={{ marginTop: '16px', color: '#8b949e', fontSize: '14px' }}>Querying live sports and PPV schedule...</p>
+              <LoaderCircle size={36} color="var(--accent)" className="animate-spin" />
+              <p style={{ marginTop: '16px', color: 'var(--muted)', fontSize: '14px' }}>Querying live sports and PPV schedule...</p>
             </div>
           ) : matches.length === 0 ? (
-            <div style={{ padding: '60px 20px', textAlign: 'center', background: '#161b22', borderRadius: '12px', border: '1px solid #30363d' }}>
-              <Radio size={40} color="#8b949e" style={{ margin: '0 auto 12px' }} />
-              <p style={{ fontSize: '15px', color: '#f0f6fc', margin: '0 0 6px' }}>{matchesError || 'No live sports currently listed'}</p>
-              <p style={{ fontSize: '13px', color: '#8b949e', margin: 0 }}>
+            <div style={{ padding: '60px 20px', textAlign: 'center', background: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--line)' }}>
+              <Radio size={40} color="var(--muted)" style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontSize: '15px', color: 'var(--text)', margin: '0 0 6px' }}>{matchesError || 'No live sports currently listed'}</p>
+              <p style={{ fontSize: '13px', color: 'var(--muted)', margin: 0 }}>
                 Check back shortly before match kickoff times or explore 24/7 channels in Channels Hub.
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '14px' }}>
               {matches.map((m) => (
                 <div
                   key={m.id}
                   style={{
-                    background: '#161b22', borderRadius: '12px', border: '1px solid #30363d',
-                    padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                    overflow: 'hidden', background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--line)',
+                    display: 'flex', flexDirection: 'column',
                   }}
                 >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#f87171', background: 'rgba(239, 68, 68, 0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                        {m.league}
-                      </span>
-                      <span style={{
-                        fontSize: '12px', fontWeight: 600,
-                        color: m.isLive ? '#7ee787' : '#8b949e',
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                      }}>
-                        {m.isLive && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#7ee787' }} />}
-                        {m.timeLabel}
-                      </span>
-                    </div>
+                  {/* Poster banner with league + LIVE chips */}
+                  <div style={{ position: 'relative', aspectRatio: '16 / 9', background: 'var(--surface-2)', flexShrink: 0 }}>
+                    {m.poster ? (
+                      <img src={m.poster} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--muted-2)' }}>
+                        <Radio size={34} />
+                      </div>
+                    )}
+                    <div style={{ position: 'absolute', inset: 'auto 0 0', height: '55%', background: 'linear-gradient(0deg, rgba(5,6,8,.85), rgba(5,6,8,0))' }} />
+                    <span style={{ position: 'absolute', left: '9px', top: '9px', padding: '3px 9px', borderRadius: '999px', background: 'rgba(5,6,8,.82)', color: '#f87171', fontSize: '10px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      {m.isLive && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#7ee787' }} />}
+                      {m.timeLabel}
+                    </span>
+                    <span style={{ position: 'absolute', right: '9px', top: '9px', padding: '3px 9px', borderRadius: '999px', background: 'rgba(5,6,8,.82)', color: 'var(--text)', fontSize: '10px', fontWeight: 700 }}>{m.league}</span>
+                  </div>
 
-                    <h4 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 8px 0', color: '#f0f6fc' }}>{m.title}</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, padding: '12px 14px 14px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 650, margin: 0, color: 'var(--text)', lineHeight: 1.35 }}>{m.title}</h4>
                     {m.viewers !== undefined && m.viewers > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#8b949e' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--muted)' }}>
                         <Users size={12} />
                         <span>{m.viewers.toLocaleString()} watching</span>
                       </div>
                     )}
+                    <button
+                      onClick={() => void playMatch(m)}
+                      disabled={resolvingMatchId === m.id}
+                      style={{
+                        marginTop: 'auto',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                        width: '100%', minHeight: '38px', padding: '8px 0', borderRadius: '9px', border: 'none',
+                        background: 'var(--accent)', color: 'var(--accent-ink)', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      {resolvingMatchId === m.id ? (
+                        <>
+                          <LoaderCircle size={14} className="animate-spin" /> Finding stream…
+                        </>
+                      ) : (
+                        <>
+                          <Play size={14} fill="currentColor" />
+                          Watch Stream
+                        </>
+                      )}
+                    </button>
                   </div>
-
-                  <button
-                    onClick={() => playStreamNow(m.title, m.streamUrl, m.league, m.poster)}
-                    style={{
-                      marginTop: '14px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                      width: '100%', padding: '9px 0', borderRadius: '8px', border: 'none',
-                      background: '#ef4444', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-                    }}
-                  >
-                    <Play size={14} fill="#ffffff" />
-                    Watch Stream
-                  </button>
                 </div>
               ))}
             </div>

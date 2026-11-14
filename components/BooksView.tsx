@@ -39,9 +39,12 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
 
   const candidates = React.useMemo(() => {
     const list: string[] = [];
-    if (item.coverUrl) list.push(item.coverUrl);
-    if (item.coverUrl && item.coverUrl.includes('covers.openlibrary.org')) {
-      list.push(`https://wsrv.nl/?url=${encodeURIComponent(item.coverUrl)}`);
+    if (item.coverUrl) {
+      // default=false makes covers.openlibrary.org 404 instead of serving a
+      // blank 1×1 — lets onError actually advance the fallback chain.
+      list.push(item.coverUrl.includes('covers.openlibrary.org') ? `${item.coverUrl}?default=false` : item.coverUrl);
+      // wsrv.nl survives covers.openlibrary.org rate limits and DNS blocks.
+      list.push(`https://wsrv.nl/?url=${encodeURIComponent(item.coverUrl.replace('?default=false', ''))}`);
     }
     if (item.identifier) list.push(`https://archive.org/services/img/${item.identifier}`);
     return list;
@@ -55,6 +58,7 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
           src={url}
           alt=""
           loading="lazy"
+          referrerPolicy="no-referrer"
           onError={() => setCandidateIdx((idx) => idx + 1)}
         />
       ) : (
@@ -65,7 +69,11 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
 };
 
 const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> = ({ item, onOpen }) => {
-  const sourceBadge = item.source === 'openlibrary' ? 'OL' : item.id.startsWith('bookracy-') ? 'Bookracy' : 'IA';
+  const sourceBadge = item.source === 'openlibrary'
+    ? 'OL'
+    : item.id.startsWith('bookracy-')
+      ? 'Bookracy'
+      : item.restricted ? 'IA · 🔒' : 'IA';
   return (
     <article className="book-card">
       <button
@@ -403,7 +411,28 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 <h2>{selected.title}</h2>
                 {selected.authors.length > 0 && <p className="books-sheet-authors">{selected.authors.join(', ')}</p>}
                 {selected.year && <span className="books-sheet-year">First published {selected.year}</span>}
+                {selected.restricted && <span className="books-sheet-year">🔒 Lending-locked on archive.org — download the PDF instead of reading online.</span>}
               </div>
+            </div>
+
+            {/* Actions first — on a phone the file list pushed "Read online"
+                below the fold and it looked unreachable. */}
+            <div className="books-sheet-actions">
+              {selected.identifier && (
+                <>
+                  <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
+                    <BookOpen size={14} /> Read online
+                  </button>
+                  <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
+                    <ExternalLink size={13} /> archive.org page
+                  </button>
+                </>
+              )}
+              {selected.openLibraryKey && (
+                <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
+                  <ExternalLink size={13} /> Open Library page
+                </button>
+              )}
             </div>
 
             {filesLoading && <p className="sanka-inline-status"><LoaderCircle size={15} className="spin" /> Loading files…</p>}
@@ -424,24 +453,6 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 ))}
               </div>
             )}
-
-            <div className="books-sheet-actions">
-              {selected.identifier && (
-                <>
-                  <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
-                    <BookOpen size={14} /> Read online
-                  </button>
-                  <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
-                    <ExternalLink size={13} /> archive.org page
-                  </button>
-                </>
-              )}
-              {selected.openLibraryKey && (
-                <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
-                  <ExternalLink size={13} /> Open Library page
-                </button>
-              )}
-            </div>
           </section>
         </div>
       )}

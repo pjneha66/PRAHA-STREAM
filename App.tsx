@@ -29,7 +29,7 @@ import {
   CINEMETA_ADDON, DEFAULT_DISCOVER_FILTERS, DEFAULT_PROFILE, DEFAULT_SETTINGS,
   EMPTY_HOME_CATALOG, normalizeSettings,
 } from './data/defaults';
-import { fetchStremioCatalog, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
+import { fetchStremioCatalog, fetchStremioManifest, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
 import { tmdbService } from './services/tmdbService';
 import type { JellyfinSnapshot } from './services/jellyfinService';
@@ -175,6 +175,35 @@ const App: React.FC = () => {
 
   const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
   const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
+
+  // Pre-installed addons: added once on startup if missing (existing installs
+  // get them too). NoTorrent ships big series/movie catalogs out of the box.
+  const PREINSTALLED_ADDONS = useMemo(() => [
+    { url: 'https://addon.notorrent2.workers.dev/manifest.json', manifestId: 'com.notorrent.addon' },
+  ], []);
+  const preinstallRef = useRef(false);
+  useEffect(() => {
+    if (preinstallRef.current) return;
+    preinstallRef.current = true;
+    let alive = true;
+    void (async () => {
+      for (const preset of PREINSTALLED_ADDONS) {
+        if (addons.some((addon) => addon.manifestUrl === preset.url || addon.manifest?.id === preset.manifestId)) continue;
+        try {
+          const installed = await fetchStremioManifest(preset.url);
+          if (!alive) return;
+          setAddons((existing) => (
+            existing.some((addon) => addon.manifest?.id === installed.manifest?.id) ? existing : [...existing, installed]
+          ));
+          notify(`${installed.manifest?.name || 'Addon'} pre-installed.`);
+        } catch {
+          // Addon unreachable right now — the user can install it manually.
+        }
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [nuvioSettings, setNuvioSettings] = usePersistentState<Record<string, Record<string, unknown>>>('praha.v2.nuvio-settings', {});
   const [rawSettings, setSettings] = usePersistentState<AppSettings>('praha.v2.settings', DEFAULT_SETTINGS);
   const settings = useMemo(() => normalizeSettings(rawSettings), [rawSettings]);

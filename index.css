@@ -1185,14 +1185,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .comic-source-chip:hover { color: var(--text); background: var(--surface); }
 .comic-source-chip.active { border-color: rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .12); color: var(--accent); }
 .comic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px 12px; }
-.comic-card { min-width: 0; }
+/* Long grids: skip offscreen card rendering entirely on the phone WebView. */
+.comic-card { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .comic-card-open { display: block; width: 100%; text-align: left; background: transparent; }
 .comic-poster { position: relative; overflow: hidden; aspect-ratio: 2 / 3; border-radius: 13px; background: var(--surface-2); }
 .comic-poster img { width: 100%; height: 100%; object-fit: cover; transition: transform .25s ease; }
 .comic-card-open:hover .comic-poster img { transform: scale(1.04); }
 .comic-poster::after { content: ''; position: absolute; inset: auto 0 0; height: 58%; background: linear-gradient(0deg, rgba(5, 6, 8, .82), rgba(5, 6, 8, 0)); pointer-events: none; }
 .comic-poster-fallback { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--muted-2); }
-.comic-kind { position: absolute; left: 7px; top: 7px; z-index: 2; padding: 3px 7px; border-radius: 6px; background: rgba(5, 6, 8, .78); color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .7px; backdrop-filter: blur(4px); }
+.comic-kind { position: absolute; left: 7px; top: 7px; z-index: 2; padding: 3px 7px; border-radius: 6px; background: rgba(5, 6, 8, .82); color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .7px; }
 .comic-chapter-badge { position: absolute; right: 7px; bottom: 8px; z-index: 2; max-width: 62%; overflow: hidden; padding: 3px 8px; border-radius: 999px; background: rgba(var(--accent-rgb), .92); color: var(--accent-ink); font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .comic-resume { position: absolute; left: 7px; bottom: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(5, 6, 8, .8); color: var(--text); font-size: 9px; font-weight: 700; }
 .comic-card-reading .comic-poster { border: 1px solid rgba(var(--accent-rgb), .5); }
@@ -1239,7 +1240,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .music-section h2, .music-section-head h2 { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; color: var(--text); font-size: 14px; font-weight: 680; }
 .music-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .music-rows { display: flex; flex-direction: column; gap: 4px; }
-.music-row { display: flex; align-items: center; gap: 6px; border-radius: 11px; padding: 4px 6px 4px 4px; }
+.music-row { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 11px; padding: 4px 6px 4px 4px; }
 .music-row:hover { background: var(--surface); }
 .music-row.active { background: rgba(var(--accent-rgb), .08); }
 .music-row-main { display: flex; align-items: center; gap: 11px; flex: 1; min-width: 0; background: transparent; text-align: left; padding: 0; }
@@ -1256,6 +1257,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .music-row-fav:hover, .music-row-queue:hover { color: var(--text); background: var(--surface-2); }
 .music-row-fav.active { color: var(--accent); }
 .music-row-duration { flex: 0 0 auto; color: var(--muted-2); font-size: 10.5px; min-width: 34px; text-align: right; }
+/* Inline save-to-playlist popover on track rows */
+.music-row-menu { position: absolute; right: 8px; top: calc(100% - 4px); z-index: 40; display: flex; flex-direction: column; gap: 4px; min-width: 230px; max-height: 260px; overflow-y: auto; padding: 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 44px rgba(0, 0, 0, .55); }
+.music-row-menu-label { color: var(--muted-2); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.music-row-menu-item { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); color: var(--text); font-size: 12px; text-align: left; }
+.music-row-menu-item:hover { border-color: rgba(var(--accent-rgb), .4); color: var(--accent); }
+.music-row-menu-new { display: flex; gap: 6px; margin-top: 2px; }
+.music-row-menu-new input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); font-size: 11.5px; outline: 0; }
 .music-artist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
 .music-artist-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 10px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); text-align: center; }
 .music-artist-card:hover { border-color: rgba(var(--accent-rgb), .35); }
@@ -1365,6 +1373,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* Native archive.org leaf reader (ArchiveReader.tsx) */
+/* Double-class specificity: .modal-backdrop's align-items:center would shrink
+   the full-screen shell to its content width (broke the error/panels). */
+.archive-reader-shell.archive-reader-shell { align-items: stretch; justify-content: flex-start; padding: 0; }
+.archive-reader-shell > div { width: 100%; }
 .archive-reader-bar { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; min-height: 52px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg-soft); }
 .archive-reader-bar strong { color: var(--text); font-size: 13px; font-weight: 640; }
 .archive-reader-bar .icon-button { width: 34px; height: 34px; }
@@ -1494,7 +1506,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .spin { animation: spin 1s linear infinite; }
 .pulse { animation: pulse 1.4s ease infinite; }
-.page-enter { animation: page-in .35s ease both; }
+/* `backwards` (not `both`): a filling animation keeps a transform on the page
+   forever, which traps position:fixed overlays (readers, players) opened from
+   a scrolled page inside the scrolled container. */
+.page-enter { animation: page-in .35s ease backwards; }
 
 /* ---------- Explore source browser ---------- */
 .explore-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 22px; padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: #0c0e11; }

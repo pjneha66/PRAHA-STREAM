@@ -1,14 +1,15 @@
-import { flowDetail, flowMusicHome, flowMusicSearch, flowSearch } from './flowService';
-import { fetchMirrorDetail, fetchMirrorMusic, searchMirrorMusic } from './youtubeMirror';
-import type { YtVideo } from './youtubeService';
+import { nativeFetchText } from './androidBridge';
+import { flowDetail, flowMusicSearch, flowSearch } from './flowService';
+import { fetchMirrorDetail, searchMirrorMusic } from './youtubeMirror';
 
 /**
- * SimpMusic-style music data layer (v2, replaces the iTunes/Deezer 30s-preview
- * service). Everything streams full-length from YouTube using the existing
- * extraction pipeline: metadata via the Piped/Invidious mirror tier (with the
- * direct InnerTube tier underneath), audio via `flowDetail().audioTracks`
- * (audio-only stream URLs, best bitrate first). Synced lyrics stay in
- * lyricsService (lrclib LRC).
+ * Music data layer (v3, hybrid). v2 went all-in on the YouTube mirror tier
+ * for metadata and starved the Music tab on devices where mirrors are slow or
+ * blocked — metadata is now back on the fast key-free public APIs (iTunes +
+ * Deezer, as in v2.9) merged with best-effort YouTube results, while playback
+ * streams FULL-LENGTH audio through the YouTube pipeline (Flow InnerTube tier
+ * → Piped/Invidious mirrors). 30-second previews are the last-resort fallback,
+ * not the feature. Synced lyrics stay in lyricsService (lrclib LRC).
  */
 
 export interface MusicTrack {
@@ -20,7 +21,7 @@ export interface MusicTrack {
   albumId?: string;
   duration: number; // in seconds
   coverUrl: string;
-  /** Kept for interface compatibility; YT tracks stream full-length. */
+  /** 30-second fallback when the YouTube full stream cannot be resolved. */
   previewUrl?: string;
 }
 
@@ -61,6 +62,63 @@ export interface OctavePlaylistDetails {
   tracks: MusicTrack[];
 }
 
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/** Offline-safe emergency sections so the home view is never blank. */
+export const FALLBACK_FEATURED_SECTIONS: Record<string, MusicTrack[]> = {
+  'Top Hits & Chart Toppers': [
+    {
+      id: 'itunes-blinding-lights',
+      title: 'Blinding Lights',
+      artist: 'The Weeknd',
+      album: 'After Hours',
+      duration: 200,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/03/2d/c1/032dc13a-dce4-672a-b501-d16d3b31be07/23UMGIM20988.rgb.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/97/37/18/97371865-a05c-3e72-3085-6ec952214c6b/mzaf_6605689750628043254.plus.aac.p.m4a',
+    },
+    {
+      id: 'itunes-levitating',
+      title: 'Levitating',
+      artist: 'Dua Lipa',
+      album: 'Future Nostalgia',
+      duration: 203,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/6c/11/d6/6c11d681-aa3a-d59e-4c2e-f77e181026ab/190295092665.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/59/dc/4d/59dc4dda-93ff-8f1c-c536-f005f6ea6af5/mzaf_3066686759813252385.plus.aac.p.m4a',
+    },
+    {
+      id: 'itunes-humble',
+      title: 'HUMBLE.',
+      artist: 'Kendrick Lamar',
+      album: 'DAMN.',
+      duration: 177,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ab/16/ef/ab16efe9-e7f1-66ec-021c-5592a23f0f9e/17UMGIM88793.rgb.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/1f/2e/37/1f2e37be-bdd0-d770-6ea4-091011a6aade/mzaf_2360827885900940865.plus.aac.p.m4a',
+    },
+  ],
+  'Electronic & Synthwave': [
+    {
+      id: 'itunes-get-lucky',
+      title: 'Get Lucky',
+      artist: 'Daft Punk feat. Pharrell Williams',
+      album: 'Random Access Memories',
+      duration: 248,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e8/43/5f/e8435ffa-b6b9-b171-40ab-4ff3959ab661/886443919266.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/57/a5/85/57a585aa-f5bc-881b-f8a4-5591d5f90b9f/mzaf_6906185601163199035.plus.aac.p.m4a',
+    },
+  ],
+  'Anime & Film Soundtracks': [
+    {
+      id: 'itunes-interstellar',
+      title: 'Interstellar (Main Theme)',
+      artist: 'Hans Zimmer',
+      album: 'Interstellar (Original Soundtrack)',
+      duration: 240,
+      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/7e/c5/5e/7ec55ee2-ebf8-d988-8f9a-431af1047747/artwork.jpg/600x600bb.jpg',
+      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/37/65/ac/3765ac6b-efce-a438-4482-5592a23f0f9e/mzaf_1706106932918369360.plus.aac.p.m4a',
+    },
+  ],
+};
+
 /** Human duration ("3:45", "1:02:10") → seconds. */
 function durationToSeconds(value?: string): number {
   if (!value) return 0;
@@ -69,14 +127,10 @@ function durationToSeconds(value?: string): number {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-const trackFromVideo = (video: YtVideo, artistId?: string): MusicTrack => ({
-  id: video.id,
-  title: video.title,
-  artist: video.channel || 'Unknown Artist',
-  artistId: video.channelId || artistId,
-  duration: durationToSeconds(video.duration),
-  coverUrl: video.thumbnail || '',
-});
+/** YT videoId-shaped ids resolve directly; catalog ids go through search. */
+function isVideoId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{11}$/.test(id);
+}
 
 const pickAudioUrl = (detail: { audioTracks?: Array<{ url: string; bitrate?: number; hasAudio?: boolean }>; playbackUrl?: string } | null | undefined): string | null => {
   if (!detail?.audioTracks && !detail?.playbackUrl) return null;
@@ -89,65 +143,140 @@ const pickAudioUrl = (detail: { audioTracks?: Array<{ url: string; bitrate?: num
 
 export class OctaveMusicService {
   /**
-   * YouTube search (music-filtered): tracks + artists. Direct InnerTube tier
-   * with the Piped/Invidious mirror tier as fallback, same as the Flow tab.
+   * Track search: iTunes + Deezer (fast, reliable metadata) merged with
+   * best-effort YouTube music results deduped by artist+title. The YT tier
+   * adds a slow mirror sweep, so `opts.yt: false` skips it for callers that
+   * need results fast (home genre rows) or already have YT coverage.
    */
-  static async searchFull(query: string): Promise<OctaveSearchData> {
+  static async searchFull(query: string, opts?: { yt?: boolean }): Promise<OctaveSearchData> {
     const trimmed = query.trim();
     if (!trimmed) {
       return { tracks: [], artists: [], albums: [] };
     }
 
-    let videos: YtVideo[] = [];
+    const tracks: MusicTrack[] = [];
+    const artists: MusicArtist[] = [];
+    const albums: MusicAlbum[] = [];
+    const seenArtists = new Set<string>();
+    const seenAlbums = new Set<string>();
+    const seenTracks = new Set<string>();
+    const pushTrack = (track: MusicTrack) => {
+      const key = `${track.artist.toLowerCase()}|${track.title.toLowerCase()}`;
+      if (seenTracks.has(key)) return;
+      seenTracks.add(key);
+      tracks.push(track);
+      if (!seenArtists.has(track.artist.toLowerCase())) {
+        seenArtists.add(track.artist.toLowerCase());
+        artists.push({ id: track.artistId || track.artist.toLowerCase(), name: track.artist, pictureUrl: track.coverUrl });
+      }
+      if (track.album && !seenAlbums.has(track.album.toLowerCase())) {
+        seenAlbums.add(track.album.toLowerCase());
+        albums.push({ id: track.albumId || track.album.toLowerCase(), title: track.album, artist: track.artist, coverUrl: track.coverUrl });
+      }
+    };
+
+    // 1. iTunes (primary metadata source — fast, key-free).
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(trimmed)}&entity=song&limit=40`;
+      const res = await nativeFetchText(url, {
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+        timeoutMs: 9000,
+      });
+      if (res.ok && res.data) {
+        const data = JSON.parse(res.data) as Record<string, unknown>;
+        const results = Array.isArray(data.results) ? (data.results as Array<Record<string, any>>) : [];
+        for (const t of results) {
+          if (!t.trackId || !t.trackName) continue;
+          pushTrack({
+            id: String(t.trackId),
+            title: String(t.trackName),
+            artist: String(t.artistName || 'Unknown Artist'),
+            artistId: t.artistId ? String(t.artistId) : undefined,
+            album: String(t.collectionName || ''),
+            albumId: t.collectionId ? String(t.collectionId) : undefined,
+            duration: Math.round((Number(t.trackTimeMillis) || 0) / 1000),
+            coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+            previewUrl: String(t.previewUrl || ''),
+          });
+        }
+      }
+    } catch { /* fall through to other sources */ }
+
+    // 2. Deezer second source — wider catalog coverage.
+    try {
+      const res = await nativeFetchText(`https://api.deezer.com/search?q=${encodeURIComponent(trimmed)}&limit=25`, {
+        headers: { Accept: 'application/json' },
+        timeoutMs: 8000,
+      });
+      if (res.ok && res.data) {
+        const data = JSON.parse(res.data) as {
+          data?: Array<{
+            id?: number | string;
+            title?: string;
+            artist?: { name?: string; picture_medium?: string };
+            album?: { title?: string; cover_medium?: string; cover_big?: string; id?: number | string };
+            preview?: string;
+            duration?: number;
+          }>;
+        };
+        for (const entry of data.data || []) {
+          if (!entry.title || !entry.artist?.name) continue;
+          pushTrack({
+            id: `deezer-${entry.id ?? `${entry.artist.name}-${entry.title}`}`,
+            title: String(entry.title),
+            artist: String(entry.artist.name),
+            album: entry.album?.title ? String(entry.album.title) : undefined,
+            duration: Number(entry.duration || 30),
+            coverUrl: String(entry.album?.cover_medium || entry.artist.picture_medium || ''),
+            previewUrl: String(entry.preview || ''),
+          });
+        }
+      }
+    } catch { /* fall through */ }
+
+    // 3. YouTube music search — best-effort merge (real durations/channels).
+    if (opts?.yt === false) {
+      return { tracks: tracks.slice(0, 40), artists: artists.slice(0, 16), albums: albums.slice(0, 16) };
+    }
     try {
       const viaMirror = await searchMirrorMusic(trimmed);
-      videos = viaMirror.videos;
-    } catch {
-      videos = [];
-    }
-    if (!videos.length) {
-      try {
-        const direct = await flowMusicSearch(trimmed);
-        videos = direct.data.videos;
-      } catch {
-        videos = [];
-      }
-    }
-    if (!videos.length) {
-      try {
-        const generic = await flowSearch(trimmed);
-        videos = generic.data.videos;
-      } catch {
-        videos = [];
-      }
-    }
-
-    const tracks = videos
-      .filter((video) => !video.live)
-      .slice(0, 40)
-      .map((video) => trackFromVideo(video));
-
-    // Artists: dedupe by channel name (YT has no album facet in search).
-    const seenArtists = new Map<string, MusicArtist>();
-    for (const track of tracks) {
-      const key = track.artist.toLowerCase();
-      if (!seenArtists.has(key)) {
-        seenArtists.set(key, {
-          id: track.artistId || key,
-          name: track.artist,
-          pictureUrl: track.coverUrl,
+      for (const video of viaMirror.videos.filter((video) => !video.live).slice(0, 25)) {
+        pushTrack({
+          id: video.id,
+          title: video.title,
+          artist: video.channel || 'Unknown Artist',
+          artistId: video.channelId,
+          duration: durationToSeconds(video.duration),
+          coverUrl: video.thumbnail || '',
         });
       }
+    } catch {
+      try {
+        const direct = await flowMusicSearch(trimmed);
+        for (const video of direct.data.videos.filter((video) => !video.live).slice(0, 25)) {
+          const key = `${(video.channel || '').toLowerCase()}|${video.title.toLowerCase()}`;
+          if (seenTracks.has(key)) continue;
+          seenTracks.add(key);
+          tracks.push({
+            id: video.id,
+            title: video.title,
+            artist: video.channel || 'Unknown Artist',
+            artistId: video.channelId,
+            duration: durationToSeconds(video.duration),
+            coverUrl: video.thumbnail || '',
+          });
+        }
+      } catch { /* metadata sources exhausted */ }
     }
 
-    // Albums: YouTube doesn't expose a real album facet — keep the section empty
-    // so the UI can hide it entirely.
-    return { tracks, artists: [...seenArtists.values()].slice(0, 16), albums: [] };
+    return { tracks: tracks.slice(0, 40), artists: artists.slice(0, 16), albums: albums.slice(0, 16) };
   }
 
-  /** Resolves the stream URL for a track by its YouTube id (full-length). */
+  /** Resolves the stream URL for a track by its id (full-length). */
   static async getAudioStreamUrl(trackId: string, _quality: 'lossless' | 'high' | 'standard' = 'lossless'): Promise<string | null> {
     if (!trackId) return null;
+    // Catalog ids (iTunes/Deezer) have no YouTube detail endpoint.
+    if (!isVideoId(trackId)) return null;
     try {
       const detail = await flowDetail(trackId);
       const audio = pickAudioUrl(detail.data);
@@ -162,11 +291,11 @@ export class OctaveMusicService {
   }
 
   /**
-   * Full-length playback for a track: resolves audio by id first, then by a
-   * metadata search when the track came from a non-YT surface (queue imports).
+   * Full-length playback for a track: resolve by video id when the track came
+   * from YouTube, otherwise resolve via a YouTube search of title+artist.
    */
   static async resolveFullTrackAudio(title: string, artist: string, trackId?: string): Promise<string | null> {
-    if (trackId) {
+    if (trackId && isVideoId(trackId)) {
       const byId = await this.getAudioStreamUrl(trackId);
       if (byId) return byId;
     }
@@ -195,7 +324,7 @@ export class OctaveMusicService {
     }
   }
 
-  /** Artist "page": top tracks from a channel-name search (SimpMusic-style). */
+  /** Artist "page": top tracks from a name search. */
   static async fetchArtistDetails(artist: { name: string; id?: string }): Promise<OctaveArtistDetails | null> {
     if (!artist.name) return null;
     const search = await this.searchFull(artist.name);
@@ -213,43 +342,55 @@ export class OctaveMusicService {
   }
 
   /**
-   * Curated home shelves (SimpMusic-style rails) from the YouTube music
-   * surface: trending + genre rows via the mirror tier, InnerTube fallback.
+   * Curated home shelves: YouTube music surface first (real music rails),
+   * iTunes genre searches as the reliable fallback, static rows offline.
    */
   static async fetchFeaturedSections(): Promise<Record<string, MusicTrack[]>> {
     const results: Record<string, MusicTrack[]> = {};
-    let home;
-    try {
-      home = await fetchMirrorMusic();
-    } catch {
+
+    // YouTube trending rail and the iTunes genre rows run CONCURRENTLY —
+    // the mirror sweep takes 10s+ on flaky networks and must not block the
+    // fast key-free metadata rows behind it.
+    const genres: Record<string, string> = {
+      'Top Hits & Chart Toppers': 'Top Hits',
+      'Electronic & Synthwave': 'Synthwave',
+      'Pop & Vocal Essentials': 'Pop Hits',
+      'Anime & Film Soundtracks': 'Anime Soundtrack',
+      'Hip-Hop & R&B': 'Hip-Hop Hits',
+    };
+
+    const trendingPromise = searchMirrorMusic('trending songs 2026')
+      .then((mirror) => {
+        const trending = mirror.videos.filter((video) => !video.live).slice(0, 12);
+        if (trending.length >= 6) {
+          results['Trending Music'] = trending.map((video) => ({
+            id: video.id,
+            title: video.title,
+            artist: video.channel || 'Unknown Artist',
+            artistId: video.channelId,
+            duration: durationToSeconds(video.duration),
+            coverUrl: video.thumbnail || '',
+          }));
+        }
+      })
+      .catch(() => undefined);
+
+    const genrePromises = Object.entries(genres).map(async ([section, query]) => {
       try {
-        home = (await flowMusicHome()).data;
-      } catch {
-        home = null;
-      }
+        // iTunes+Deezer only — no mirror sweep on the home rails.
+        const search = await this.searchFull(query, { yt: false });
+        const rows = search.tracks.filter((track) => track.previewUrl || isVideoId(track.id)).slice(0, 10);
+        if (rows.length) results[section] = rows;
+      } catch { /* genre row skipped */ }
+    });
+
+    await Promise.all([trendingPromise.catch(() => undefined), ...genrePromises]);
+
+    // Static offline rows — the home view is never blank.
+    for (const [key, fallbackTracks] of Object.entries(FALLBACK_FEATURED_SECTIONS)) {
+      if (!results[key]?.length) results[key] = fallbackTracks;
     }
-    if (home?.shelves?.length) {
-      for (const shelf of home.shelves.slice(0, 6)) {
-        const tracks = shelf.videos.filter((video) => !video.live).slice(0, 12).map((video) => trackFromVideo(video));
-        if (tracks.length) results[shelf.title] = tracks;
-      }
-    }
-    if (Object.keys(results).length === 0) {
-      // Last resort: genre searches so the home view is never empty.
-      const genres: Array<[string, string]> = [
-        ['Trending Music', 'trending songs 2026'],
-        ['Electronic & Synthwave', 'synthwave essentials'],
-        ['Hip-Hop & R&B', 'hip hop hits'],
-        ['Anime & Film Soundtracks', 'anime soundtrack'],
-        ['Lofi & Chill', 'lofi chill beats'],
-      ];
-      await Promise.all(genres.map(async ([section, query]) => {
-        try {
-          const search = await this.searchFull(query);
-          if (search.tracks.length) results[section] = search.tracks.slice(0, 10);
-        } catch {}
-      }));
-    }
+
     return results;
   }
 }

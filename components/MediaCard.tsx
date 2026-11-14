@@ -1,14 +1,29 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Play, Plus, Star, X } from 'lucide-react';
 import type { MediaItem, WatchProgress } from '../types';
 import { formatTime } from './player/format';
+import { buildImageCandidates } from '../services/androidBridge';
 
 export const Artwork: React.FC<{ src?: string; alt: string; className?: string }> = ({ src, alt, className = '' }) => {
-  const [failedSrc, setFailedSrc] = useState<string | undefined>();
-  if (!src || failedSrc === src) {
+  // Multi-candidate chain (proxy mirrors for hotlink-protected / blocked CDNs)
+  // instead of a single URL — a failed poster falls through to a proxy before
+  // giving up on the placeholder.
+  const candidates = useMemo(() => buildImageCandidates(src), [src]);
+  const [failedCount, setFailedCount] = useState(0);
+  useEffect(() => setFailedCount(0), [candidates]);
+  if (!src || !candidates[failedCount]) {
     return <div className={`artwork-fallback ${className}`} role="img" aria-label={alt}><span>{alt}</span></div>;
   }
-  return <img src={src} alt={alt} className={className} onError={() => setFailedSrc(src)} loading={className.includes('hero-art') ? 'eager' : 'lazy'} />;
+  return (
+    <img
+      src={candidates[failedCount]}
+      alt={alt}
+      className={className}
+      onError={() => setFailedCount((count) => count + 1)}
+      loading={className.includes('hero-art') ? 'eager' : 'lazy'}
+      referrerPolicy="no-referrer"
+    />
+  );
 };
 
 interface MediaCardProps {

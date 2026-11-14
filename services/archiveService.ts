@@ -23,6 +23,8 @@ export interface BookItem {
   openLibraryKey?: string;
   source: 'openlibrary' | 'archive';
   note?: string;
+  /** Lending-locked on archive.org — page images are 403 without a loan. */
+  restricted?: boolean;
 }
 
 export interface BookFile {
@@ -97,7 +99,7 @@ const firstOf = (value: string | string[] | number | undefined): string | undefi
 export class BooksService {
   private static readonly searchCache = new Map<string, BookItem[]>();
   private static readonly filesCache = new Map<string, BookFile[]>();
-  private static readonly leavesCache = new Map<string, { title: string; leafCount: number }>();
+  private static readonly leavesCache = new Map<string, { title: string; leafCount: number; restricted: boolean }>();
 
   /** Open Library search; items that have an archive.org copy come first. */
   static async searchOpenLibrary(query: string, page = 1): Promise<BookItem[]> {
@@ -150,10 +152,11 @@ export class BooksService {
       ? `(${collection.query}) AND mediatype:texts AND title:(${trimmed})`
       : `(${collection.query}) AND mediatype:texts`;
     const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}` +
-      `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&rows=${rows}&page=${page}&output=json`;
+      `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&fl%5B%5D=access-restricted-item` +
+      `&rows=${rows}&page=${page}&output=json`;
     const res = await nativeFetchText(url, { timeoutMs: 15000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('archive.org did not answer.');
-    const data = JSON.parse(res.data) as { response?: { docs?: ArchiveDoc[] } };
+    const data = JSON.parse(res.data) as { response?: { docs?: Array<ArchiveDoc & { 'access-restricted-item'?: string | boolean }> } };
     const docs = data.response?.docs || [];
     const items: BookItem[] = docs
       .filter((doc) => doc.identifier)
@@ -165,7 +168,10 @@ export class BooksService {
         coverUrl: `https://archive.org/services/img/${doc.identifier}`,
         identifier: doc.identifier,
         source: 'archive' as const,
+        restricted: doc['access-restricted-item'] === true || doc['access-restricted-item'] === 'true',
       }));
+    // Readable (non-lending) items surface first — restricted ones 403 in-app.
+    items.sort((a, b) => Number(Boolean(a.restricted)) - Number(Boolean(b.restricted)));
     this.searchCache.set(cacheKey, items);
     evictOldest(this.searchCache, 24);
     return items;
@@ -196,8 +202,8 @@ export class BooksService {
     return `https://archive.org/details/${encodeURIComponent(identifier)}`;
   }
 
-  /** Scanned leaf count + display title for the in-app ArchiveReader (imagecount field). */
-  static async itemLeaves(identifier: string): Promise<{ title: string; leafCount: number }> {
+  /** Scanned leaf count + lending status for the in-app ArchiveReader. */
+  static async itemLeaves(identifier: string): Promise<{ title: string; leafCount: number; restricted: boolean }> {
     const cached = this.leavesCache.get(identifier);
     if (cached) return cached;
     const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
@@ -206,7 +212,8 @@ export class BooksService {
     const meta = data.metadata || {};
     const leafCount = Number(meta.imagecount) || 0;
     if (leafCount <= 0) throw new Error('This item has no scanned pages to read.');
-    const info = { title: firstOf(meta.title as string | string[] | undefined) || identifier, leafCount };
+    const restricted = meta['access-restricted-item'] === true || meta['access-restricted-item'] === 'true';
+    const info = { title: firstOf(meta.title as string | string[] | undefined) || identifier, leafCount, restricted };
     this.leavesCache.set(identifier, info);
     evictOldest(this.leavesCache, 40);
     return info;

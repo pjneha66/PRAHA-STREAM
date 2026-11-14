@@ -129,6 +129,8 @@ export interface LiveMatchEvent {
   viewers?: number;
   streamUrl: string;
   poster?: string;
+  /** Nuvio Sports match — resolve the stream on demand via resolveNuvioStream. */
+  nuvio?: boolean;
 }
 
 // ── PasteShDecryptor (AES-256-CBC, PBKDF2-HMAC-SHA512) ────────────────────────
@@ -1216,9 +1218,70 @@ export class M3uParser {
   ];
 }
 
-// ── Live Sports Matches Scraper (Dami-TV & PPV.to) ─────────────────────────────
+// ── Live Sports Matches Scraper (Nuvio Sports addon, Dami-TV & PPV.to) ────────
+
+/** Nuvio Live Sports Stremio addon origin — real live matches with per-match streams. */
+const NUVIO_SPORTS_ORIGIN = 'https://nuviosports.xyz/eyJ0aW1lem9uZSI6IkFzaWEvQ2FsY3V0dGEifQ';
+const NUVIO_CATALOG_PATH = NUVIO_SPORTS_ORIGIN + '/catalog/tv/nuvio_sports_live.json';
 
 export class LiveMatchesScraper {
+  /** Real live matches from the Nuvio Live Sports catalog (posters included). */
+  static async fetchNuvioSportsMatches(): Promise<LiveMatchEvent[]> {
+    try {
+      const resp = await fetchWithTimeout(NUVIO_CATALOG_PATH, undefined, 9000);
+      if (!resp.ok) return [];
+      const body = await resp.json();
+      const metas = Array.isArray(body?.metas) ? body.metas : [];
+      const results: LiveMatchEvent[] = [];
+      for (const meta of metas) {
+        const rawId = String(meta.id || '');
+        const name = String(meta.name || '');
+        if (!rawId || /subscription expired|donation/i.test(name)) continue;
+        const desc = String(meta.description || '');
+        // description looks like "🏆 League: X\n📅 Category: Y\n⏰ Status: 🔴 LIVE NOW"
+        const league = /League:\s*(.+)/.exec(desc)?.[1]?.trim() || 'Live Sports';
+        const category = /Category:\s*(.+)/.exec(desc)?.[1]?.trim() || 'Sports';
+        results.push({
+          id: 'nuvio-' + rawId,
+          title: name.replace(/^🔴?\s*LIVE:?\s*/i, '').trim() || 'Live event',
+          league,
+          category,
+          timeLabel: /LIVE/i.test(desc) ? 'LIVE NOW' : 'Live',
+          isLive: true,
+          // Streams resolve per-match on demand via /stream/tv/{id}.json
+          streamUrl: '',
+          poster: typeof meta.poster === 'string' ? meta.poster : undefined,
+          nuvio: true,
+        });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  /** Resolves the best playable stream URL for a Nuvio match (http/https only). */
+  static async resolveNuvioStream(matchId: string): Promise<string | null> {
+    const prefix = 'nuvio-';
+    const raw = matchId.startsWith(prefix) ? matchId.slice(prefix.length) : matchId;
+    if (!raw) return null;
+    try {
+      const streamPath = NUVIO_SPORTS_ORIGIN + '/stream/tv/' + encodeURIComponent(raw) + '.json';
+      const resp = await fetchWithTimeout(streamPath, undefined, 9000);
+      if (!resp.ok) return null;
+      const body = await resp.json();
+      const streams = Array.isArray(body?.streams) ? body.streams : [];
+      for (const stream of streams) {
+        const url = typeof stream?.url === 'string' ? stream.url : '';
+        if (/^https?:\/\//i.test(url)) return url;
+        // Donation/link-only entries carry externalUrl instead of a stream — skipped.
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   static async fetchDamiTvMatches(): Promise<LiveMatchEvent[]> {
     try {
       const resp = await fetchWithTimeout('https://dami-tv.pro/papi/api/streams', {
@@ -1319,84 +1382,7 @@ export class LiveMatchesScraper {
   }
 
   static getFallbackMatches(): LiveMatchEvent[] {
-    const now = Math.floor(Date.now() / 1000);
-    return [
-      {
-        id: 'fallback-uefa-cl',
-        title: 'UEFA Champions League · Real Madrid vs Manchester City',
-        league: 'Champions League',
-        category: 'Football',
-        startsAt: now - 1800,
-        endsAt: now + 5400,
-        timeLabel: 'LIVE NOW',
-        isLive: true,
-        homeTeam: { name: 'Real Madrid', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/56/Real_Madrid_CF.svg/1200px-Real_Madrid_CF.svg.png' },
-        awayTeam: { name: 'Manchester City', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/e/eb/Manchester_City_FC_badge.svg/1200px-Manchester_City_FC_badge.svg.png' },
-        viewers: 42800,
-        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        poster: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80',
-      },
-      {
-        id: 'fallback-premier-league',
-        title: 'Premier League · Arsenal vs Liverpool',
-        league: 'Premier League',
-        category: 'Football',
-        startsAt: now - 900,
-        endsAt: now + 6300,
-        timeLabel: 'LIVE NOW',
-        isLive: true,
-        homeTeam: { name: 'Arsenal', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/53/Arsenal_FC.svg/1200px-Arsenal_FC.svg.png' },
-        awayTeam: { name: 'Liverpool', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/0/0c/Liverpool_FC.svg/1200px-Liverpool_FC.svg.png' },
-        viewers: 38500,
-        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        poster: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=800&q=80',
-      },
-      {
-        id: 'fallback-f1-grand-prix',
-        title: 'Formula 1 · Monaco Grand Prix Main Race',
-        league: 'Formula 1',
-        category: 'Motorsport',
-        startsAt: now - 3600,
-        endsAt: now + 3600,
-        timeLabel: 'LIVE NOW',
-        isLive: true,
-        homeTeam: { name: 'Monaco GP', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png' },
-        awayTeam: { name: 'Round 8', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png' },
-        viewers: 55400,
-        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        poster: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?auto=format&fit=crop&w=800&q=80',
-      },
-      {
-        id: 'fallback-ufc-300',
-        title: 'UFC 300 · Pereira vs Hill — World Championship',
-        league: 'UFC',
-        category: 'Combat',
-        startsAt: now - 1200,
-        endsAt: now + 6000,
-        timeLabel: 'LIVE NOW',
-        isLive: true,
-        homeTeam: { name: 'Alex Pereira', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/UFC_logo.svg/1200px-UFC_logo.svg.png' },
-        awayTeam: { name: 'Jamahal Hill', badge: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/UFC_logo.svg/1200px-UFC_logo.svg.png' },
-        viewers: 68100,
-        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        poster: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80',
-      },
-      {
-        id: 'fallback-nba-finals',
-        title: 'NBA Finals · Boston Celtics vs Dallas Mavericks',
-        league: 'NBA',
-        category: 'Basketball',
-        startsAt: now - 2400,
-        endsAt: now + 4800,
-        timeLabel: 'LIVE NOW',
-        isLive: true,
-        homeTeam: { name: 'Celtics', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/8/8f/Boston_Celtics.svg/1200px-Boston_Celtics.svg.png' },
-        awayTeam: { name: 'Mavericks', badge: 'https://upload.wikimedia.org/wikipedia/en/thumb/9/97/Dallas_Mavericks_logo.svg/1200px-Dallas_Mavericks_logo.svg.png' },
-        viewers: 34900,
-        streamUrl: 'https://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master.m3u8',
-        poster: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=800&q=80',
-      },
-    ];
+    return [];
   }
 }
 
