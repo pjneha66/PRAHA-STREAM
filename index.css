@@ -1371,10 +1371,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .archive-mode-pills { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .archive-mode-pills button { padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 10px; font-weight: 650; background: transparent; }
 .archive-mode-pills button.active { background: rgba(var(--accent-rgb), .12); color: var(--accent); }
-.archive-scroll-body { width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
-.archive-paged-body { width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
+.archive-scroll-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
+.archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
 .archive-leaf { min-height: 40px; }
 .archive-leaf img { display: block; width: min(100%, 820px); height: auto; margin: 0 auto; background: #0c0e11; }
+/* Placeholder for out-of-window leaves — sized from the first loaded page so
+   scroll height and offsets stay stable while only ~8 pages are mounted. */
+.archive-leaf-ph { width: min(100%, 820px); margin: 0 auto; border-radius: 3px; background: #101216; }
 .archive-leaf-fallback { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(100%, 620px); margin: 14px auto; padding: 22px 14px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--muted); font-size: 12px; }
 .archive-paged-zone { position: fixed; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; align-items: center; justify-content: center; width: 46px; height: 74px; border-radius: 12px; background: rgba(12, 14, 17, .72); color: var(--text); backdrop-filter: blur(6px); }
 .archive-paged-prev { left: 10px; }

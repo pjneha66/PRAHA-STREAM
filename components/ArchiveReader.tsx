@@ -9,19 +9,29 @@ import { BooksService } from '../services/archiveService';
  * the archive.org BookReader — the sandboxed iframe embed breaks inside the
  * Capacitor WebView (blank cream leaves, dead page counter).
  *
- * Two reading modes: continuous scroll (default) and paged tap-through. If the
- * metadata or the image service fails (e.g. access-restricted scans), the old
- * iframe embed (now unsandboxed) stays available as an explicit fallback.
+ * Performance: a scan can have hundreds of leaves. Only a small window of
+ * pages around the current position mounts a real <img>; the rest are
+ * aspect-ratio placeholders (sized from the first loaded page), so opening a
+ * big book never blocks the WebView main thread. The scroll tracker reads a
+ * cached offsets array (no per-frame layout reads). If the metadata or the
+ * image service fails (e.g. access-restricted scans), the old iframe embed
+ * (now unsandboxed) stays available as an explicit fallback.
  */
 
 const LEAF_WIDTHS = [760, 500, 1200] as const;
+/** How many real pages stay mounted around the current position (scroll mode). */
+const WINDOW_BEFORE = 2;
+const WINDOW_AFTER = 6;
 
-const ReaderLeaf: React.FC<{ identifier: string; leaf: number; eager: boolean; onFail?: () => void }> = ({
-  identifier,
-  leaf,
-  eager,
-  onFail,
-}) => {
+interface LeafDims { w: number; h: number }
+
+const ReaderLeaf: React.FC<{
+  identifier: string;
+  leaf: number;
+  eager: boolean;
+  onLoaded?: (dims: LeafDims) => void;
+  onFail?: () => void;
+}> = ({ identifier, leaf, eager, onLoaded, onFail }) => {
   const [widthIndex, setWidthIndex] = useState(0);
   const [retryTick, setRetryTick] = useState(0);
   const url = BooksService.leafImageUrl(identifier, leaf, LEAF_WIDTHS[widthIndex] ?? 760);
@@ -33,7 +43,6 @@ const ReaderLeaf: React.FC<{ identifier: string; leaf: number; eager: boolean; o
   // Every leaf width failed — count it so the shell can surface the fallback.
   useEffect(() => {
     if (widthIndex >= LEAF_WIDTHS.length && onFail) onFail();
-    // onFail is a stable setState-based callback; width changes reset it.
   }, [widthIndex, onFail]);
 
   if (widthIndex >= LEAF_WIDTHS.length) {
@@ -62,6 +71,12 @@ const ReaderLeaf: React.FC<{ identifier: string; leaf: number; eager: boolean; o
       referrerPolicy="no-referrer"
       src={url}
       alt={`Page ${leaf + 1}`}
+      onLoad={(event) => {
+        const img = event.currentTarget;
+        if (img.naturalWidth && img.naturalHeight && onLoaded) {
+          onLoaded({ w: img.naturalWidth, h: img.naturalHeight });
+        }
+      }}
       onError={() => setWidthIndex((prev) => prev + 1)}
     />
   );
@@ -80,16 +95,23 @@ const ArchiveReader: React.FC<{
   const [chromeVisible, setChromeVisible] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  /** Aspect (w/h) taken from the first loaded page — placeholder pages use it. */
+  const [pageAspect, setPageAspect] = useState<LeafDims | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const leafRefs = useRef<Array<HTMLDivElement | null>>([]);
+  /** Cached offsetTop per leaf (leaf container is the offsetParent). */
+  const offsetsRef = useRef<number[]>([]);
+  const rafRef = useRef(0);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let alive = true;
     setLeafCount(null);
     setError(null);
     setUseEmbed(false);
     setCurrentPage(0);
     setFailedCount(0);
+    setPageAspect(null);
+    offsetsRef.current = [];
     BooksService.itemLeaves(identifier)
       .then((info) => {
         if (alive) setLeafCount(info.leafCount);
@@ -104,32 +126,52 @@ const ArchiveReader: React.FC<{
 
   const handleLeafFail = useCallback(() => setFailedCount((v) => v + 1), []);
 
+  const handleLeafLoaded = useCallback((dims: LeafDims) => {
+    setPageAspect((existing) => (existing || !dims.w || !dims.h ? existing : dims));
+  }, []);
+
+  // Scroll container is position:relative, so each leaf's offsetTop is already
+  // relative to it — a plain array scan, zero layout reads in the scroll path.
+  const recomputeOffsets = useCallback(() => {
+    offsetsRef.current = leafRefs.current.map((node) => (node ? node.offsetTop : 0));
+  }, []);
+
+  useEffect(() => {
+    recomputeOffsets();
+  }, [recomputeOffsets, mode, leafCount, pageAspect, error]);
+
+  const handleScroll = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = 0;
+      const root = scrollRef.current;
+      if (!root || !leafCount) return;
+      const scrollTop = root.scrollTop;
+      const offsets = offsetsRef.current;
+      let current = 0;
+      for (let i = 0; i < offsets.length; i += 1) {
+        if (offsets[i] <= scrollTop + 80) current = i;
+        else break;
+      }
+      setCurrentPage(current);
+    });
+  }, [leafCount]);
+
   const scrollToLeaf = useCallback((leaf: number) => {
+    setCurrentPage(leaf);
     const node = leafRefs.current[leaf];
     if (node) node.scrollIntoView({ block: 'start' });
   }, []);
 
-  // Track the leaf currently nearest the top of the viewport (scroll mode).
-  useEffect(() => {
-    if (mode !== 'scroll' || !scrollRef.current) return;
+  const switchMode = useCallback((next: 'scroll' | 'paged') => {
+    setMode(next);
+    setCurrentPage(0);
     const root = scrollRef.current;
-    const onScroll = () => {
-      const rootTop = root.getBoundingClientRect().top;
-      let current = 0;
-      for (let i = 0; i < leafRefs.current.length; i += 1) {
-        const node = leafRefs.current[i];
-        if (!node) continue;
-        if (node.getBoundingClientRect().top <= rootTop + 40) current = i;
-        else break;
-      }
-      setCurrentPage(current);
-    };
-    root.addEventListener('scroll', onScroll, { passive: true });
-    return () => root.removeEventListener('scroll', onScroll);
-  }, [mode, leafCount]);
+    if (root) root.scrollTop = 0;
+  }, []);
 
   const displayTitle = title || identifier;
-  const showFailedBanner = failedCount >= 2 && !error;
+  const showFailedBanner = failedCount >= 3 && !error;
 
   const embedFallback = useEmbed && (
     <>
@@ -148,6 +190,20 @@ const ArchiveReader: React.FC<{
     </>
   );
 
+  const renderLeafContent = (leaf: number, eager: boolean) => (
+    <ReaderLeaf
+      identifier={identifier}
+      leaf={leaf}
+      eager={eager}
+      onLoaded={handleLeafLoaded}
+      onFail={handleLeafFail}
+    />
+  );
+
+  const placeholderStyle: React.CSSProperties = pageAspect
+    ? { aspectRatio: `${pageAspect.w} / ${pageAspect.h}` }
+    : { aspectRatio: '3 / 4' };
+
   return (
     <div
       className="modal-backdrop archive-reader-shell"
@@ -157,8 +213,8 @@ const ArchiveReader: React.FC<{
       <div className="archive-reader-bar" style={{ display: chromeVisible ? 'flex' : 'none' }}>
         <strong style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayTitle}</strong>
         <div className="archive-mode-pills" role="tablist">
-          <button type="button" className={mode === 'scroll' ? 'active' : ''} onClick={() => setMode('scroll')}>Scroll</button>
-          <button type="button" className={mode === 'paged' ? 'active' : ''} onClick={() => setMode('paged')}>Paged</button>
+          <button type="button" className={mode === 'scroll' ? 'active' : ''} onClick={() => switchMode('scroll')}>Scroll</button>
+          <button type="button" className={mode === 'paged' ? 'active' : ''} onClick={() => switchMode('paged')}>Paged</button>
         </div>
         <button
           type="button"
@@ -179,15 +235,19 @@ const ArchiveReader: React.FC<{
           <div
             ref={scrollRef}
             className={mode === 'scroll' ? 'archive-scroll-body' : 'archive-paged-body'}
+            onScroll={mode === 'scroll' ? handleScroll : undefined}
             onClick={mode === 'paged' ? () => setChromeVisible((v) => !v) : undefined}
           >
-            {mode === 'paged' && (
+            {mode === 'paged' ? (
               <>
                 <button
                   type="button"
                   aria-label="Previous page"
                   className="archive-paged-zone archive-paged-prev"
-                  onClick={() => scrollToLeaf(Math.max(0, currentPage - 1))}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    scrollToLeaf(Math.max(0, currentPage - 1));
+                  }}
                 >
                   <ChevronLeft size={20} />
                 </button>
@@ -195,23 +255,34 @@ const ArchiveReader: React.FC<{
                   type="button"
                   aria-label="Next page"
                   className="archive-paged-zone archive-paged-next"
-                  onClick={() => scrollToLeaf(Math.min(leafCount - 1, currentPage + 1))}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    scrollToLeaf(Math.min(leafCount - 1, currentPage + 1));
+                  }}
                 >
                   <ChevronRight size={20} />
                 </button>
+                {/* Paged mode mounts exactly one page. */}
+                <div className="archive-leaf">{renderLeafContent(currentPage, true)}</div>
               </>
+            ) : (
+              Array.from({ length: leafCount }, (_, leaf) => {
+                const inWindow = leaf >= currentPage - WINDOW_BEFORE && leaf <= currentPage + WINDOW_AFTER;
+                return (
+                  <div
+                    key={leaf}
+                    ref={(node) => {
+                      leafRefs.current[leaf] = node;
+                    }}
+                    className="archive-leaf"
+                  >
+                    {inWindow
+                      ? renderLeafContent(leaf, Math.abs(leaf - currentPage) <= 1)
+                      : <div className="archive-leaf-ph" style={placeholderStyle} />}
+                  </div>
+                );
+              })
             )}
-            {Array.from({ length: leafCount }, (_, leaf) => (
-              <div
-                key={leaf}
-                ref={(node) => {
-                  leafRefs.current[leaf] = node;
-                }}
-                className="archive-leaf"
-              >
-                <ReaderLeaf identifier={identifier} leaf={leaf} eager={leaf <= 1} onFail={handleLeafFail} />
-              </div>
-            ))}
           </div>
         )}
 
@@ -220,6 +291,13 @@ const ArchiveReader: React.FC<{
             <span>Scanned pages are not loading — this scan may be access-restricted.</span>
             <button type="button" className="button button-secondary button-small" onClick={() => setUseEmbed(true)}>
               Try archive.org embed
+            </button>
+            <button
+              type="button"
+              className="button button-secondary button-small"
+              onClick={() => openSafeExternalUrl(BooksService.detailsUrl(identifier))}
+            >
+              Open on archive.org
             </button>
           </div>
         )}
@@ -270,7 +348,6 @@ const ArchiveReader: React.FC<{
               value={currentPage + 1}
               onChange={(event) => {
                 const next = Number(event.target.value) - 1;
-                setCurrentPage(next);
                 scrollToLeaf(next);
               }}
               aria-label="Jump to page"
