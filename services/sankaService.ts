@@ -12,15 +12,18 @@ const isDevBrowser = Boolean(env.DEV) && !isTestEnv && !isAndroidApp();
 export type SankaKind = 'anime' | 'comic';
 export type ComicFeed = 'latest' | 'popular';
 
+/**
+ * Comic sources — every entry below was live-verified (HTTP 200 on
+ * /comic/{source}/latest). The Sanka API now 403s komiku, komikstation,
+ * komikcast and maidcomic, and weebcentral.com itself blocks non-browser
+ * scraping (403) — those were removed after users hit "No comics found".
+ */
 export const SANKA_COMIC_SOURCES = [
-  { id: 'weebcentral', label: 'WeebCentral (English Manga)' },
   { id: 'bacakomik', label: 'BacaKomik' },
-  { id: 'komiku', label: 'Komiku' },
-  { id: 'komikstation', label: 'Komikstation' },
   { id: 'komikindo', label: 'Komikindo' },
-  { id: 'komikcast', label: 'Komikcast' },
   { id: 'shinigami', label: 'Shinigami' },
   { id: 'kiryuu', label: 'Kiryuu' },
+  { id: 'westmanga', label: 'WestManga' },
 ] as const;
 
 export const SANKA_ANIME_SOURCES = [

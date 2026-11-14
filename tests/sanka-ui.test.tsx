@@ -75,20 +75,17 @@ describe('Sanka comic reader & pagination flow', () => {
     expect(pageImg.getAttribute('referrerpolicy')).toBe('no-referrer');
   });
 
-  it('automatically falls back to Komiku when the default comic source is unavailable', async () => {
+  it('automatically falls back to Komikindo when the default comic source is unavailable', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/comic/bacakomik/')) return json({ error: 'down' }, 502);
-      if (url.endsWith('/comic/homepage')) return json({}, 404);
-      if (url.endsWith('/comic/terbaru')) {
+      if (url.includes('/comic/komikindo/latest')) {
         return json({ comics: [{ title: 'Blue Period', link: '/manga/blue-period/', image: 'https://images.example/cover.jpg', chapter: 'Ch. 68' }] });
       }
-      if (url.endsWith('/comic/komiku/manga/blue-period')) return json({}, 404);
-      if (url.endsWith('/comic/comic/blue-period')) {
+      if (url.includes('/comic/komikindo/manga/blue-period')) {
         return json({ title: 'Blue Period', synopsis: 'A young artist.', chapters: [{ chapter: 'Chapter 1', link: '/ch/blue-period-chapter-1/' }] });
       }
-      if (url.endsWith('/comic/komiku/chapter/blue-period-chapter-1')) return json({}, 404);
-      if (url.endsWith('/comic/chapter/ch/blue-period-chapter-1')) {
+      if (url.includes('/comic/komikindo/chapter/blue-period-chapter-1') || url.includes('/comic/chapter/ch/blue-period-chapter-1')) {
         return json({ images: ['https://images.example/page-1.jpg'] });
       }
       return json({ data: [] });
@@ -96,7 +93,7 @@ describe('Sanka comic reader & pagination flow', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<SankaExplorer />);
-    expect(await screen.findByText('Loaded comics from Komiku.')).toBeTruthy();
+    expect(await screen.findByText('Loaded comics from Komikindo.')).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Open Blue Period chapters' }));
 
     const chapter = await screen.findByRole('button', { name: /^Chapter 1$/ });

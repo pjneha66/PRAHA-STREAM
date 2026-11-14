@@ -55,14 +55,20 @@ export class BookracyService {
     });
     if (lang && lang.toLowerCase() !== 'all') params.set('lang', lang.toLowerCase());
 
+    let response: Awaited<ReturnType<typeof nativeFetchText>>;
     try {
-      const response = await nativeFetchText(`${BASE_URL}?${params.toString()}`, {
+      // Native fetch throws on network failure (DNS dead, refused) — surface
+      // that as an honest offline error instead of a quiet "no books".
+      response = await nativeFetchText(`${BASE_URL}?${params.toString()}`, {
         headers: HEADERS,
         timeoutMs: 15000,
       });
+    } catch {
+      throw new Error('Bookracy is offline right now — the API did not answer.');
+    }
+    try {
       if (!response.ok || !response.data) {
-        resultCache.set(cacheKey, []);
-        return [];
+        throw new Error('Bookracy is offline right now — the API did not answer.');
       }
       const decoded = JSON.parse(response.data) as { results?: BookracyResult[] };
       if (!Array.isArray(decoded.results)) return [];
@@ -96,8 +102,9 @@ export class BookracyService {
       resultCache.set(cacheKey, items);
       evictOldest(resultCache, 40);
       return items;
-    } catch {
-      resultCache.set(cacheKey, []);
+    } catch (err) {
+      // Surface the offline error to the UI; parse hiccups stay a quiet empty.
+      if (err instanceof Error && err.message.includes('offline')) throw err;
       return [];
     }
   }

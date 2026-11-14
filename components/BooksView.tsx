@@ -39,17 +39,26 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
 
   const candidates = React.useMemo(() => {
     const list: string[] = [];
+    const title = item.title.trim();
+    // Direct covers.openlibrary.org URLs HANG (no error event) on constrained
+    // networks, so every OL candidate goes through the wsrv.nl image proxy —
+    // it fetches the upstream server-side and 404s quickly when a cover is
+    // missing (default=false), letting the chain advance.
     if (item.coverUrl) {
-      // default=false makes covers.openlibrary.org 404 instead of serving a
-      // blank 1×1 — lets onError actually advance the fallback chain.
-      list.push(item.coverUrl.includes('covers.openlibrary.org') ? `${item.coverUrl}?default=false` : item.coverUrl);
-      // wsrv.nl survives covers.openlibrary.org rate limits and DNS blocks.
-      list.push(`https://wsrv.nl/?url=${encodeURIComponent(item.coverUrl.replace('?default=false', ''))}`);
+      const olCover = item.coverUrl.replace('?default=false', '');
+      list.push(`https://wsrv.nl/?url=${encodeURIComponent(`${olCover}?default=false`)}`);
+    }
+    // OL editions frequently have no scan of their own — the title-based cover
+    // API almost always has one (verified: The Secret Garden cover_i 404s but
+    // /b/title/ serves a real 291×400 JPEG).
+    if (title) {
+      list.push(`https://wsrv.nl/?url=${encodeURIComponent(`https://covers.openlibrary.org/b/title/${encodeURIComponent(title)}-L.jpg?default=false`)}`);
     }
     if (item.identifier) list.push(`https://archive.org/services/img/${item.identifier}`);
     return list;
-  }, [item.coverUrl, item.identifier]);
+  }, [item.coverUrl, item.identifier, item.title]);
 
+  const advance = () => setCandidateIdx((idx) => idx + 1);
   const url = candidates[candidateIdx];
   return (
     <div className="book-cover">
@@ -59,7 +68,12 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
           alt=""
           loading="lazy"
           referrerPolicy="no-referrer"
-          onError={() => setCandidateIdx((idx) => idx + 1)}
+          // wsrv.nl happily proxies OL's blank cover as a 1×1 without an error
+          // event — treat tiny images as failures and keep walking the chain.
+          onLoad={(event) => {
+            if (event.currentTarget.naturalWidth <= 2) advance();
+          }}
+          onError={advance}
         />
       ) : (
         <BookOpen size={30} />

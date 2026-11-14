@@ -5,9 +5,12 @@ import { OctaveMusicService } from '../services/musicService';
 import { SANKA_COMIC_SOURCES, fetchSankaTitles } from '../services/sankaService';
 
 describe('Manga, Torrent & Music Services', () => {
-  it('registers WeebCentral English Manga as the first Comic source in Sanka', () => {
-    expect(SANKA_COMIC_SOURCES[0].id).toBe('weebcentral');
-    expect(SANKA_COMIC_SOURCES[0].label).toContain('WeebCentral');
+  it('registers BacaKomik as the first live-verified Comic source in Sanka', () => {
+    expect(SANKA_COMIC_SOURCES[0].id).toBe('bacakomik');
+    expect(SANKA_COMIC_SOURCES[0].label).toContain('BacaKomik');
+    // Dead upstream sources (Sanka 403 / weebcentral CF-block) must stay out.
+    expect(SANKA_COMIC_SOURCES.map((source) => source.id)).not.toContain('weebcentral');
+    expect(SANKA_COMIC_SOURCES.map((source) => source.id)).not.toContain('komikcast');
   });
 
   it('TorrentStreamingEngine parses magnet link and resolves stream parameters', async () => {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  BookHeadphones, CircleAlert, Headphones, LoaderCircle, Pause, Play,
+  BookHeadphones, Bookmark, CircleAlert, Headphones, LoaderCircle, Pause, Play,
   RotateCcw, RotateCw, Search, Volume2, X, Sparkles,
 } from 'lucide-react';
 import {
@@ -459,7 +459,7 @@ const AudiobooksView: React.FC = () => {
       {/* Book Detail & Chapter Selector Modal */}
       {selectedBook && (
         <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelectedBook(null)}>
-          <div className="source-modal" style={{ maxWidth: '650px', padding: '1.5rem' }}>
+          <div className="source-modal" style={{ maxWidth: '650px', padding: '1.5rem', paddingBottom: activeChapter ? '9rem' : '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
               <div>
                 <span style={{ fontSize: '0.75rem', color: '#e50914', fontWeight: 700, letterSpacing: '1px' }}>AUDIOBOOK DETAILS</span>
@@ -512,23 +512,9 @@ const AudiobooksView: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Audio Player Bar */}
+      {/* Floating Audio Player Bar — two stacked rows so nothing overlaps on phones */}
       {selectedBook && activeChapter && (
-        <div style={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          background: 'rgba(20,20,22,0.96)',
-          backdropFilter: 'blur(16px)',
-          borderTop: '1px solid rgba(255,255,255,0.12)',
-          padding: '0.75rem 1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          zIndex: 999,
-          boxShadow: '0 -8px 32px rgba(0,0,0,0.6)',
-        }}>
+        <div className="audiobook-bar">
           <audio
             ref={audioRef}
             src={streamAudioUrl}
@@ -553,15 +539,14 @@ const AudiobooksView: React.FC = () => {
             onPause={() => setIsPlaying(false)}
           />
 
-          {/* Bookmarks (port of PlayTorrio) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', position: 'relative' }}>
-            <button
-              onClick={addBookmark}
-              title="Bookmark this spot"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '7px 11px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#f5c518', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-            >
-              ⚑ Bookmark
-            </button>
+          <div className="audiobook-bar-top">
+            {selectedBook.coverImage && (
+              <img src={selectedBook.coverImage} alt="" className="audiobook-bar-art" />
+            )}
+            <div className="audiobook-bar-copy">
+              <strong>{activeChapter.title}</strong>
+              <small>{selectedBook.title}</small>
+            </div>
             {bookmarks.length > 0 && (
               <select
                 onChange={(event) => {
@@ -570,100 +555,48 @@ const AudiobooksView: React.FC = () => {
                   event.currentTarget.selectedIndex = 0;
                 }}
                 aria-label="Jump to bookmark"
-                style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '12px', maxWidth: '180px' }}
+                className="audiobook-bar-bookmarks"
               >
-                <option value="">⚑ {bookmarks.length} bookmark{bookmarks.length === 1 ? '' : 's'}</option>
+                <option value="">⚑ {bookmarks.length}</option>
                 {bookmarks.map((entry, index) => (
                   <option key={`${entry.chapter}-${entry.time}-${index}`} value={index}>{entry.label}</option>
                 ))}
               </select>
             )}
-          </div>
-
-          {/* Book Info */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: '220px', maxWidth: '30%' }}>
-            {selectedBook.coverImage && (
-              <img
-                src={selectedBook.coverImage}
-                alt=""
-                style={{ width: '45px', height: '45px', borderRadius: '6px', objectFit: 'cover' }}
-              />
-            )}
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: '0.88rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {activeChapter.title}
-              </div>
-              <div style={{ fontSize: '0.78rem', color: '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {selectedBook.title}
-              </div>
-            </div>
-          </div>
-
-          {/* Controls & Scrubber */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem', flex: 1, maxWidth: '550px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-              <button onClick={() => seekRelative(-15)} style={{ background: 'none', border: 'none', color: '#ccc', cursor: 'pointer' }} title="Rewind 15s">
-                <RotateCcw size={18} />
-              </button>
-              <button
-                onClick={togglePlay}
-                style={{
-                  background: '#e50914',
-                  border: 'none',
-                  color: '#fff',
-                  width: '38px',
-                  height: '38px',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                {isPlaying ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" style={{ marginLeft: '2px' }} />}
-              </button>
-              <button onClick={() => seekRelative(15)} style={{ background: 'none', border: 'none', color: '#ccc', cursor: 'pointer' }} title="Forward 15s">
-                <RotateCw size={18} />
-              </button>
-            </div>
-
-            {/* Scrubber */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%' }}>
-              <span style={{ fontSize: '0.72rem', color: '#888', minWidth: '35px', textAlign: 'right' }}>{formatTime(currentTime)}</span>
-              <input
-                type="range"
-                min={0}
-                max={duration || 100}
-                value={currentTime}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setCurrentTime(val);
-                  if (audioRef.current) audioRef.current.currentTime = val;
-                }}
-                style={{ flex: 1, accentColor: '#e50914', height: '4px' }}
-              />
-              <span style={{ fontSize: '0.72rem', color: '#888', minWidth: '35px' }}>{formatTime(duration)}</span>
-            </div>
-          </div>
-
-          {/* Speed & Close */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <button
-              onClick={changeRate}
-              style={{
-                background: 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff',
-                padding: '0.3rem 0.6rem',
-                borderRadius: '6px',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-              }}
-            >
+            <button onClick={changeRate} className="audiobook-bar-rate" aria-label="Change playback speed">
               {playbackRate}x
             </button>
-            <button onClick={() => { setIsPlaying(false); }} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer' }}>
-              <X size={18} />
+            <button onClick={() => { setIsPlaying(false); }} className="audiobook-bar-close" aria-label="Close player">
+              <X size={17} />
+            </button>
+          </div>
+
+          <div className="audiobook-bar-scrub">
+            <button onClick={() => seekRelative(-15)} aria-label="Rewind 15 seconds">
+              <RotateCcw size={17} />
+            </button>
+            <button onClick={togglePlay} className="audiobook-bar-play" aria-label={isPlaying ? 'Pause' : 'Play'}>
+              {isPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
+            </button>
+            <button onClick={() => seekRelative(15)} aria-label="Forward 15 seconds">
+              <RotateCw size={17} />
+            </button>
+            <span className="audiobook-bar-time">{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              value={currentTime}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setCurrentTime(val);
+                if (audioRef.current) audioRef.current.currentTime = val;
+              }}
+              aria-label="Seek"
+            />
+            <span className="audiobook-bar-time">{formatTime(duration)}</span>
+            <button onClick={addBookmark} className="audiobook-bar-bookmark" aria-label="Bookmark this spot">
+              <Bookmark size={15} />
             </button>
           </div>
         </div>

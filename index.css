@@ -1372,6 +1372,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .music-bar { bottom: max(78px, calc(68px + env(safe-area-inset-bottom, 0px))); }
 }
 
+/* Audiobook player bar — two stacked rows, nothing overlaps on phones */
+.audiobook-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 95; display: flex; flex-direction: column; gap: 9px; padding: 11px 14px calc(11px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: rgba(14, 16, 19, .97); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 -8px 32px rgba(0, 0, 0, .6); }
+.audiobook-bar-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.audiobook-bar-art { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 8px; object-fit: cover; }
+.audiobook-bar-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.audiobook-bar-copy strong { overflow: hidden; color: var(--text); font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.audiobook-bar-copy small { overflow: hidden; color: var(--muted-2); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.audiobook-bar-bookmarks { flex: 0 0 auto; max-width: 130px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 11px; }
+.audiobook-bar-rate { flex: 0 0 auto; min-width: 42px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 11.5px; font-weight: 650; }
+.audiobook-bar-close { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+.audiobook-bar-scrub { display: flex; align-items: center; gap: 8px; }
+.audiobook-bar-scrub > button { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 34px; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--text); }
+.audiobook-bar-scrub > button:hover { background: var(--surface); }
+.audiobook-bar-play { background: var(--accent) !important; color: var(--accent-ink) !important; border-radius: 50% !important; width: 40px !important; height: 40px !important; }
+.audiobook-bar-time { flex: 0 0 auto; min-width: 34px; color: var(--muted-2); font-size: 10.5px; text-align: center; }
+.audiobook-bar-scrub input[type='range'] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.audiobook-bar-bookmark { color: var(--accent) !important; }
+
 /* Native archive.org leaf reader (ArchiveReader.tsx) */
 /* Double-class specificity: .modal-backdrop's align-items:center would shrink
    the full-screen shell to its content width (broke the error/panels). */
