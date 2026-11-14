@@ -9,6 +9,7 @@ import ContinueShelf from './ContinueShelf';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
 import { COMICK_SOURCE_OPTIONS as COMICK_ACTIVE_SOURCE_OPTIONS } from '../services/comickService';
+import { resolveComickPoster } from '../services/sankaService';
 import ArchiveReader from './ArchiveReader';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
@@ -22,11 +23,15 @@ const SafeComicImg: React.FC<{
   alt: string;
   eager?: boolean;
   fallback: React.ReactNode;
-}> = ({ src, title, alt, eager = false, fallback }) => {
+  /** Last-resort poster resolver (e.g. Comick og:image from the series page). */
+  posterFallback?: () => Promise<string | undefined>;
+}> = ({ src, title, alt, eager = false, fallback, posterFallback }) => {
   const initialCandidates = useMemo(() => buildImageCandidates(src), [src]);
   const [candidates, setCandidates] = useState<string[]>(initialCandidates);
   const [index, setIndex] = useState(0);
   const [lookupDone, setLookupDone] = useState(false);
+  const posterFallbackRef = useRef(posterFallback);
+  posterFallbackRef.current = posterFallback;
 
   useEffect(() => {
     setCandidates(initialCandidates);
@@ -39,21 +44,30 @@ const SafeComicImg: React.FC<{
   useEffect(() => {
     if (!needFallbackLookup || !title) return;
     let alive = true;
-    resolveArtworkFallback(title, 'comic')
-      .then((resolved) => {
-        if (!alive) return;
-        setLookupDone(true);
-        if (resolved) {
-          const next = buildImageCandidates(resolved);
-          if (next.length > 0) {
-            setCandidates(next);
-            setIndex(0);
-          }
+    (async () => {
+      let resolved: string | null | undefined = null;
+      try {
+        resolved = await resolveArtworkFallback(title, 'comic');
+      } catch {
+        // Artwork lookup failed — try the page-based poster resolver next.
+      }
+      if (!resolved && posterFallbackRef.current) {
+        try {
+          resolved = await posterFallbackRef.current();
+        } catch {
+          // Poster resolver failed too — give up on the placeholder.
         }
-      })
-      .catch(() => {
-        if (alive) setLookupDone(true);
-      });
+      }
+      if (!alive) return;
+      setLookupDone(true);
+      if (resolved) {
+        const next = buildImageCandidates(resolved);
+        if (next.length > 0) {
+          setCandidates(next);
+          setIndex(0);
+        }
+      }
+    })();
     return () => {
       alive = false;
     };
@@ -789,6 +803,11 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                         src={item.poster}
                         title={item.title}
                         alt={`${item.title} cover`}
+                        posterFallback={
+                          (source === 'comick' || source === 'webtoon') && item.sourceUrl
+                            ? () => resolveComickPoster(item.sourceUrl!)
+                            : undefined
+                        }
                         fallback={<div className="comic-poster-fallback"><BookOpen size={26} /></div>}
                       />
                       <span className="comic-kind">{item.comicType ? item.comicType.toUpperCase() : 'MANGA'}</span>

@@ -1173,6 +1173,44 @@ function releaseArtworkSlot(): void {
  * Resolves a clean cover poster from Kitsu / Jikan public CORS APIs when an
  * upstream scraper omits its cover or its image domain is blocked on the user's network.
  */
+/**
+ * Resolves a Comick series poster from its aggregator page's og:image.
+ * The search API's coverImage often points at image CDNs (imgsrv4.com) that
+ * refuse our connections entirely — but the aggregator's own site hosts a
+ * working copy. Results are cached (empty string = negative cache).
+ * Browser fetches go through the /comick-page relay (aggregators send no
+ * CORS headers); the app fetches directly.
+ */
+const COMICK_POSTER_CACHE = new Map<string, string>();
+
+export async function resolveComickPoster(seriesUrl: string): Promise<string | undefined> {
+  const cached = COMICK_POSTER_CACHE.get(seriesUrl);
+  if (cached !== undefined) return cached || undefined;
+  try {
+    const fetchUrl = isAndroidApp() ? seriesUrl : '/comick-page?url=' + encodeURIComponent(seriesUrl);
+    const res = await nativeFetchText(fetchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0', Accept: 'text/html' },
+      timeoutMs: 20000,
+    });
+    let poster = '';
+    if (res.ok && res.data) {
+      const marker = 'property="og:image" content="';
+      const start = res.data.indexOf(marker);
+      if (start !== -1) {
+        const valueStart = start + marker.length;
+        const endQuote = res.data.indexOf('"', valueStart);
+        const candidate = res.data.slice(valueStart, endQuote === -1 ? undefined : endQuote);
+        if (candidate.startsWith('https://') || candidate.startsWith('http://')) poster = candidate;
+      }
+    }
+    COMICK_POSTER_CACHE.set(seriesUrl, poster);
+    evictOldest(COMICK_POSTER_CACHE, 120);
+    return poster || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function resolveArtworkFallback(title: string, kind: SankaKind): Promise<string | null> {
   if (isTestEnv) return null;
   const clean = title
