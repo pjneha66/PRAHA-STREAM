@@ -1,5 +1,15 @@
-import { nativeFetchText } from './androidBridge';
-import { flowDetail, flowMusicSearch, flowSearch } from './flowService';
+import { flowDetail, flowMusicHome, flowMusicSearch, flowSearch } from './flowService';
+import { fetchMirrorDetail, fetchMirrorMusic, searchMirrorMusic } from './youtubeMirror';
+import type { YtVideo } from './youtubeService';
+
+/**
+ * SimpMusic-style music data layer (v2, replaces the iTunes/Deezer 30s-preview
+ * service). Everything streams full-length from YouTube using the existing
+ * extraction pipeline: metadata via the Piped/Invidious mirror tier (with the
+ * direct InnerTube tier underneath), audio via `flowDetail().audioTracks`
+ * (audio-only stream URLs, best bitrate first). Synced lyrics stay in
+ * lyricsService (lrclib LRC).
+ */
 
 export interface MusicTrack {
   id: string;
@@ -10,6 +20,7 @@ export interface MusicTrack {
   albumId?: string;
   duration: number; // in seconds
   coverUrl: string;
+  /** Kept for interface compatibility; YT tracks stream full-length. */
   previewUrl?: string;
 }
 
@@ -50,83 +61,36 @@ export interface OctavePlaylistDetails {
   tracks: MusicTrack[];
 }
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+/** Human duration ("3:45", "1:02:10") → seconds. */
+function durationToSeconds(value?: string): number {
+  if (!value) return 0;
+  const parts = value.split(':').map((part) => Number(part) || 0);
+  if (!parts.length) return 0;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
 
-export const FALLBACK_FEATURED_SECTIONS: Record<string, MusicTrack[]> = {
-  'Top Hits & Chart Toppers': [
-    {
-      id: 'itunes-blinding-lights',
-      title: 'Blinding Lights',
-      artist: 'The Weeknd',
-      album: 'After Hours',
-      duration: 200,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/03/2d/c1/032dc13a-dce4-672a-b501-d16d3b31be07/23UMGIM20988.rgb.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/97/37/18/97371865-a05c-3e72-3085-6ec952214c6b/mzaf_6605689750628043254.plus.aac.p.m4a',
-    },
-    {
-      id: 'itunes-levitating',
-      title: 'Levitating',
-      artist: 'Dua Lipa',
-      album: 'Future Nostalgia',
-      duration: 203,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/6c/11/d6/6c11d681-aa3a-d59e-4c2e-f77e181026ab/190295092665.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/59/dc/4d/59dc4dda-93ff-8f1c-c536-f005f6ea6af5/mzaf_3066686759813252385.plus.aac.p.m4a',
-    },
-    {
-      id: 'itunes-humble',
-      title: 'HUMBLE.',
-      artist: 'Kendrick Lamar',
-      album: 'DAMN.',
-      duration: 177,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ab/16/ef/ab16efe9-e7f1-66ec-021c-5592a23f0f9e/17UMGIM88793.rgb.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/1f/2e/37/1f2e37be-bdd0-d770-6ea4-091011a6aade/mzaf_2360827885900940865.plus.aac.p.m4a',
-    },
-  ],
-  'Electronic & Synthwave': [
-    {
-      id: 'itunes-get-lucky',
-      title: 'Get Lucky',
-      artist: 'Daft Punk feat. Pharrell Williams',
-      album: 'Random Access Memories',
-      duration: 248,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e8/43/5f/e8435ffa-b6b9-b171-40ab-4ff3959ab661/886443919266.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/57/a5/85/57a585aa-f1bc-7619-881b-f8a04a5541d5/mzaf_6906185026678279401.plus.aac.p.m4a',
-    },
-    {
-      id: 'itunes-synthwave-durant',
-      title: 'Synthwave',
-      artist: 'A. Durant',
-      album: 'Synthwave Classics',
-      duration: 180,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music128/v4/0e/4e/60/0e4e604b-d28f-bf71-03e8-2ed4a096047b/artwork.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/ec/fe/75/ecfe75ec-af44-d6d9-3fa4-2be2543d1dbf/mzaf_7566416601163199035.plus.aac.p.m4a',
-    },
-  ],
-  'Anime & Film Soundtracks': [
-    {
-      id: 'itunes-interstellar',
-      title: 'Interstellar (Main Theme)',
-      artist: 'Hans Zimmer',
-      album: 'Interstellar (Original Soundtrack)',
-      duration: 240,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/7e/c5/5e/7ec55ee2-ebf8-d988-8f9a-431af1047747/artwork.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/37/65/ac/3765ac6b-efce-a438-4482-287ea711ee01/mzaf_17061069329183693603.plus.aac.p.m4a',
-    },
-    {
-      id: 'itunes-interstellar-score',
-      title: 'Interstellar (Original Score)',
-      artist: 'Imperial Orchestra',
-      album: 'Cinematic Soundtracks',
-      duration: 275,
-      coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/6e/e6/5a/6ee65a66-8501-50d0-9cf9-b0f8387266f8/859764605361_cover.jpg/600x600bb.jpg',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/dc/f4/b4/dcf4b474-5d9c-76fb-c361-36664f641011/mzaf_5472354911620501954.plus.aac.p.m4a',
-    },
-  ],
+const trackFromVideo = (video: YtVideo, artistId?: string): MusicTrack => ({
+  id: video.id,
+  title: video.title,
+  artist: video.channel || 'Unknown Artist',
+  artistId: video.channelId || artistId,
+  duration: durationToSeconds(video.duration),
+  coverUrl: video.thumbnail || '',
+});
+
+const pickAudioUrl = (detail: { audioTracks?: Array<{ url: string; bitrate?: number; hasAudio?: boolean }>; playbackUrl?: string } | null | undefined): string | null => {
+  if (!detail?.audioTracks && !detail?.playbackUrl) return null;
+  const usable = (detail.audioTracks || []).filter((track) => track.hasAudio !== false && track.url);
+  if (!usable.length) return detail.playbackUrl || null;
+  // Prefer the highest-bitrate audio-only stream (SimpMusic streams at best quality).
+  const best = usable.reduce((acc, track) => ((track.bitrate || 0) > (acc.bitrate || 0) ? track : acc), usable[0]);
+  return best.url || detail.playbackUrl || null;
 };
 
 export class OctaveMusicService {
   /**
-   * Searches tracks, artists, and albums from iTunes API.
+   * YouTube search (music-filtered): tracks + artists. Direct InnerTube tier
+   * with the Piped/Invidious mirror tier as fallback, same as the Flow tab.
    */
   static async searchFull(query: string): Promise<OctaveSearchData> {
     const trimmed = query.trim();
@@ -134,268 +98,158 @@ export class OctaveMusicService {
       return { tracks: [], artists: [], albums: [] };
     }
 
+    let videos: YtVideo[] = [];
     try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(trimmed)}&entity=song&limit=40`;
-      const res = await nativeFetchText(url, {
-        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 9000,
-      });
-
-      if (res.ok && res.data) {
-        const data = JSON.parse(res.data);
-        const results = Array.isArray(data.results) ? data.results : [];
-
-        const tracks: MusicTrack[] = results
-          .filter((t: any) => t.trackId && t.trackName)
-          .map((t: any) => ({
-            id: String(t.trackId),
-            title: String(t.trackName),
-            artist: String(t.artistName || 'Unknown Artist'),
-            artistId: t.artistId ? String(t.artistId) : undefined,
-            album: String(t.collectionName || ''),
-            albumId: t.collectionId ? String(t.collectionId) : undefined,
-            duration: Math.round((Number(t.trackTimeMillis) || 0) / 1000),
-            coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-            previewUrl: String(t.previewUrl || ''),
-          }));
-
-        const seenArtists = new Set<string>();
-        const artists: MusicArtist[] = [];
-        for (const t of results) {
-          if (t.artistId && t.artistName && !seenArtists.has(String(t.artistId))) {
-            seenArtists.add(String(t.artistId));
-            artists.push({
-              id: String(t.artistId),
-              name: String(t.artistName),
-              pictureUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-            });
-          }
-        }
-
-        const seenAlbums = new Set<string>();
-        const albums: MusicAlbum[] = [];
-        for (const t of results) {
-          if (t.collectionId && t.collectionName && !seenAlbums.has(String(t.collectionId))) {
-            seenAlbums.add(String(t.collectionId));
-            albums.push({
-              id: String(t.collectionId),
-              title: String(t.collectionName),
-              artist: String(t.artistName || ''),
-              coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-            });
-          }
-        }
-
-        // Deezer as a second source (port of PlayTorrio's Deezer client) —
-        // merges more catalog coverage, deduped by artist+title.
-        const deezer = await this.searchDeezer(trimmed).catch(() => null);
-        if (deezer) {
-          const seen = new Set(tracks.map((track) => `${track.artist.toLowerCase()}|${track.title.toLowerCase()}`));
-          for (const track of deezer.tracks) {
-            const key = `${track.artist.toLowerCase()}|${track.title.toLowerCase()}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              tracks.push(track);
-            }
-          }
-          for (const album of deezer.albums) {
-            if (!albums.some((existing) => existing.title.toLowerCase() === album.title.toLowerCase())) albums.push(album);
-          }
-        }
-        return { tracks, artists, albums };
-      }
+      const viaMirror = await searchMirrorMusic(trimmed);
+      videos = viaMirror.videos;
     } catch {
-      // Ignored
+      videos = [];
     }
-    return { tracks: [], artists: [], albums: [] };
-  }
+    if (!videos.length) {
+      try {
+        const direct = await flowMusicSearch(trimmed);
+        videos = direct.data.videos;
+      } catch {
+        videos = [];
+      }
+    }
+    if (!videos.length) {
+      try {
+        const generic = await flowSearch(trimmed);
+        videos = generic.data.videos;
+      } catch {
+        videos = [];
+      }
+    }
 
-  /** Deezer public API search — tracks + albums, no key required. */
-  private static async searchDeezer(query: string): Promise<{ tracks: MusicTrack[]; albums: OctaveSearchData['albums'] } | null> {
-    try {
-      const res = await nativeFetchText(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=25`, {
-        headers: { Accept: 'application/json' },
-        timeoutMs: 8000,
-      });
-      if (!res.ok || !res.data) return null;
-      const data = JSON.parse(res.data) as {
-        data?: Array<{
-          id?: number | string;
-          title?: string;
-          artist?: { name?: string; picture_medium?: string };
-          album?: { title?: string; cover_medium?: string; cover_big?: string; id?: number | string };
-          preview?: string;
-          duration?: number;
-        }>;
-      };
-      if (!Array.isArray(data.data)) return null;
-      const tracks: MusicTrack[] = [];
-      const albums: OctaveSearchData['albums'] = [];
-      const seenAlbums = new Set<string>();
-      for (const entry of data.data) {
-        if (!entry.title || !entry.artist?.name) continue;
-        tracks.push({
-          id: `deezer-${entry.id ?? `${entry.artist.name}-${entry.title}`}`,
-          title: String(entry.title),
-          artist: String(entry.artist.name),
-          album: entry.album?.title ? String(entry.album.title) : undefined,
-          duration: Number(entry.duration || 30),
-          coverUrl: String(entry.album?.cover_medium || entry.artist.picture_medium || ''),
-          previewUrl: String(entry.preview || ''),
+    const tracks = videos
+      .filter((video) => !video.live)
+      .slice(0, 40)
+      .map((video) => trackFromVideo(video));
+
+    // Artists: dedupe by channel name (YT has no album facet in search).
+    const seenArtists = new Map<string, MusicArtist>();
+    for (const track of tracks) {
+      const key = track.artist.toLowerCase();
+      if (!seenArtists.has(key)) {
+        seenArtists.set(key, {
+          id: track.artistId || key,
+          name: track.artist,
+          pictureUrl: track.coverUrl,
         });
-        if (entry.album?.title && !seenAlbums.has(entry.album.title.toLowerCase())) {
-          seenAlbums.add(entry.album.title.toLowerCase());
-          albums.push({
-            id: String(entry.album.id || entry.album.title),
-            title: String(entry.album.title),
-            artist: String(entry.artist.name),
-            coverUrl: String(entry.album.cover_big || entry.album.cover_medium || ''),
-          });
-        }
       }
-      return { tracks, albums };
-    } catch {
-      return null;
     }
+
+    // Albums: YouTube doesn't expose a real album facet — keep the section empty
+    // so the UI can hide it entirely.
+    return { tracks, artists: [...seenArtists.values()].slice(0, 16), albums: [] };
   }
 
-  /**
-   * Resolves direct high-fidelity audio stream URL for a track.
-   */
-  static async getAudioStreamUrl(trackId: string, quality: 'lossless' | 'high' | 'standard' = 'lossless'): Promise<string | null> {
+  /** Resolves the stream URL for a track by its YouTube id (full-length). */
+  static async getAudioStreamUrl(trackId: string, _quality: 'lossless' | 'high' | 'standard' = 'lossless'): Promise<string | null> {
+    if (!trackId) return null;
     try {
-      const res = await nativeFetchText(`https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}`, {
-        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 6000,
-      });
-      if (res.ok && res.data) {
-        const data = JSON.parse(res.data);
-        const item = data.results?.[0];
-        if (item?.previewUrl) return item.previewUrl;
-      }
+      const detail = await flowDetail(trackId);
+      const audio = pickAudioUrl(detail.data);
+      if (audio) return audio;
+    } catch {}
+    try {
+      const mirror = await fetchMirrorDetail(trackId);
+      const audio = pickAudioUrl(mirror);
+      if (audio) return audio;
     } catch {}
     return null;
   }
 
   /**
-   * Full-length playback: resolves the track through the YouTube pipeline
-   * (YouTube Music search → streamable audio-only URL via Piped/Invidious
-   * mirrors). iTunes previews are 30 seconds — this is what makes songs play
-   * end-to-end. Returns null when no mirror answers, so the caller can fall
-   * back to the 30-second preview.
+   * Full-length playback for a track: resolves audio by id first, then by a
+   * metadata search when the track came from a non-YT surface (queue imports).
    */
-  static async resolveFullTrackAudio(title: string, artist: string): Promise<string | null> {
-    const pickAudio = (detail: { audioTracks?: Array<{ url: string; hasAudio?: boolean }>; playbackUrl?: string } | null | undefined): string | null => {
-      if (!detail?.audioTracks && !detail?.playbackUrl) return null;
-      const audio = detail.audioTracks?.find((track) => track.hasAudio !== false && track.url);
-      return audio?.url || detail.playbackUrl || null;
-    };
+  static async resolveFullTrackAudio(title: string, artist: string, trackId?: string): Promise<string | null> {
+    if (trackId) {
+      const byId = await this.getAudioStreamUrl(trackId);
+      if (byId) return byId;
+    }
+    const query = `${title} ${artist}`.trim();
+    if (!query) return null;
     try {
-      const query = `${title} ${artist}`.trim();
-      // 1. YouTube Music-flavoured search, then detail from any tier.
       const music = await flowMusicSearch(query).catch(() => null);
       const song = music?.data.videos.find((video) => !video.live) || music?.data.videos[0];
       if (song) {
         const detail = await flowDetail(song.id).catch(() => null);
-        const audio = detail ? pickAudio(detail.data) : null;
+        const audio = detail ? pickAudioUrl(detail.data) : null;
         if (audio) return audio;
       }
-      // 2. Mirror-tier search fallback (survives YouTube InnerTube blocks).
       if (!song) {
         const search = await flowSearch(query).catch(() => null);
         const video = search?.data.videos.find((video) => !video.live) || search?.data.videos[0];
         if (video) {
           const detail = await flowDetail(video.id).catch(() => null);
-          const audio = detail ? pickAudio(detail.data) : null;
+          const audio = detail ? pickAudioUrl(detail.data) : null;
           if (audio) return audio;
         }
       }
-      // 3. Search succeeded but no audio tracks anywhere — nothing more to try.
       return null;
     } catch {
       return null;
     }
   }
 
-  /**
-   * Fetches artist details, top tracks, and albums.
-   */
-  static async fetchArtistDetails(artistId: string): Promise<OctaveArtistDetails | null> {
-    try {
-      const res = await nativeFetchText(`https://itunes.apple.com/lookup?id=${encodeURIComponent(artistId)}&entity=song&limit=25`, {
-        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-        timeoutMs: 9000,
-      });
-
-      if (res.ok && res.data) {
-        const data = JSON.parse(res.data);
-        const results = Array.isArray(data.results) ? data.results : [];
-        if (results.length === 0) return null;
-
-        const artistInfo = results[0];
-        const artist: MusicArtist = {
-          id: String(artistInfo.artistId || artistId),
-          name: String(artistInfo.artistName || 'Artist'),
-          pictureUrl: String(results[1]?.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-        };
-
-        const topTracks: MusicTrack[] = results
-          .filter((item: any) => item.wrapperType === 'track' && item.trackId)
-          .map((t: any) => ({
-            id: String(t.trackId),
-            title: String(t.trackName),
-            artist: artist.name,
-            duration: Math.round((Number(t.trackTimeMillis) || 0) / 1000),
-            coverUrl: String(t.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
-            previewUrl: String(t.previewUrl || ''),
-          }));
-
-        return { artist, topTracks, albums: [], relatedArtists: [] };
-      }
-    } catch {
-      // Ignored
-    }
-    return null;
+  /** Artist "page": top tracks from a channel-name search (SimpMusic-style). */
+  static async fetchArtistDetails(artist: { name: string; id?: string }): Promise<OctaveArtistDetails | null> {
+    if (!artist.name) return null;
+    const search = await this.searchFull(artist.name);
+    const topTracks = search.tracks
+      .filter((track) => track.artist.toLowerCase() === artist.name.toLowerCase())
+      .concat(search.tracks.filter((track) => track.artist.toLowerCase() !== artist.name.toLowerCase()))
+      .slice(0, 20);
+    const picture = search.artists.find((entry) => entry.name === artist.name)?.pictureUrl || '';
+    return {
+      artist: { id: artist.id || artist.name.toLowerCase(), name: artist.name, pictureUrl: picture },
+      topTracks: topTracks.length ? topTracks : search.tracks.slice(0, 20),
+      albums: [],
+      relatedArtists: search.artists.filter((entry) => entry.name !== artist.name).slice(0, 8),
+    };
   }
 
   /**
-   * Fetches curated trending tracks and genres for home views.
+   * Curated home shelves (SimpMusic-style rails) from the YouTube music
+   * surface: trending + genre rows via the mirror tier, InnerTube fallback.
    */
   static async fetchFeaturedSections(): Promise<Record<string, MusicTrack[]>> {
     const results: Record<string, MusicTrack[]> = {};
-    const categories: Record<string, string> = {
-      'Top Hits & Chart Toppers': 'Top Hits',
-      'Electronic & Synthwave': 'Synthwave',
-      'Pop & Vocal Essentials': 'Pop Hits',
-      'Anime & Film Soundtracks': 'Anime Soundtrack',
-      'Hip-Hop & R&B': 'Hip-Hop Hits',
-    };
-
+    let home;
     try {
-      await Promise.all(
-        Object.entries(categories).map(async ([section, query]) => {
-          try {
-            const search = await this.searchFull(query);
-            if (search.tracks.length > 0) {
-              results[section] = search.tracks.slice(0, 10);
-            }
-          } catch {}
-        })
-      );
-    } catch {}
-
-    // Fallback: Ensure featured sections are never empty even if offline
-    if (Object.keys(results).length === 0) {
-      return FALLBACK_FEATURED_SECTIONS;
-    }
-
-    for (const [key, fallbackTracks] of Object.entries(FALLBACK_FEATURED_SECTIONS)) {
-      if (!results[key] || results[key].length === 0) {
-        results[key] = fallbackTracks;
+      home = await fetchMirrorMusic();
+    } catch {
+      try {
+        home = (await flowMusicHome()).data;
+      } catch {
+        home = null;
       }
     }
-
+    if (home?.shelves?.length) {
+      for (const shelf of home.shelves.slice(0, 6)) {
+        const tracks = shelf.videos.filter((video) => !video.live).slice(0, 12).map((video) => trackFromVideo(video));
+        if (tracks.length) results[shelf.title] = tracks;
+      }
+    }
+    if (Object.keys(results).length === 0) {
+      // Last resort: genre searches so the home view is never empty.
+      const genres: Array<[string, string]> = [
+        ['Trending Music', 'trending songs 2026'],
+        ['Electronic & Synthwave', 'synthwave essentials'],
+        ['Hip-Hop & R&B', 'hip hop hits'],
+        ['Anime & Film Soundtracks', 'anime soundtrack'],
+        ['Lofi & Chill', 'lofi chill beats'],
+      ];
+      await Promise.all(genres.map(async ([section, query]) => {
+        try {
+          const search = await this.searchFull(query);
+          if (search.tracks.length) results[section] = search.tracks.slice(0, 10);
+        } catch {}
+      }));
+    }
     return results;
   }
 }
-

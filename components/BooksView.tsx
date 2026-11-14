@@ -11,6 +11,7 @@ import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { BookracyService } from '../services/bookracyService';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
+import './books-view.css';
 
 type SourceMode = 'openlibrary' | 'archive' | 'bookracy';
 
@@ -20,14 +21,11 @@ const OPEN_LIBRARY_SUBJECTS = [
   'History', 'Philosophy', 'Manga', 'Comics', 'Poetry', 'Biography',
 ];
 
-const cardStyle: React.CSSProperties = {
-  background: '#161b22',
-  border: '1px solid #30363d',
-  borderRadius: '12px',
-  overflow: 'hidden',
-  cursor: 'pointer',
-  display: 'flex',
-  flexDirection: 'column',
+/** Compact chip label per source mode (full names stay next to the search bar). */
+const SOURCE_LABEL: Record<SourceMode, string> = {
+  archive: 'Archive.org',
+  openlibrary: 'Open Library',
+  bookracy: 'Bookracy',
 };
 
 /**
@@ -51,26 +49,51 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
 
   const url = candidates[candidateIdx];
   return (
-    <div style={{ aspectRatio: '3 / 4', background: '#0d1117', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div className="book-cover">
       {url ? (
         <img
           src={url}
           alt=""
           loading="lazy"
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           onError={() => setCandidateIdx((idx) => idx + 1)}
         />
       ) : (
-        <BookOpen size={30} color="#30363d" />
+        <BookOpen size={30} />
       )}
     </div>
   );
 };
 
+const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> = ({ item, onOpen }) => {
+  const sourceBadge = item.source === 'openlibrary' ? 'OL' : item.id.startsWith('bookracy-') ? 'Bookracy' : 'IA';
+  return (
+    <article className="book-card">
+      <button
+        type="button"
+        className="book-card-open"
+        onClick={() => onOpen(item)}
+        onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
+        aria-label={`Open ${item.title}`}
+      >
+        <div className="book-poster">
+          <BookCover item={item} />
+          <span className="book-source-badge">{sourceBadge}</span>
+        </div>
+        <div className="book-copy">
+          <h3 title={item.title}>{item.title}</h3>
+          <p>{item.authors.join(', ') || (item.source === 'archive' ? 'archive.org' : 'Open Library')}</p>
+          {item.year && <span>{item.year}</span>}
+        </div>
+      </button>
+    </article>
+  );
+};
+
 /**
  * Books tab: Open Library + Internet Archive search, folkscanomy collections,
- * downloadable pdf/epub/cbz files. Anna's Archive is offered as an external
- * site link — PRAHA does not integrate its search or downloads.
+ * Bookracy catalog with curated shelves, downloadable pdf/epub/cbz files.
+ * Anna's Archive / OceanofPDF are offered as external site links only —
+ * PRAHA does not integrate shadow-library search or downloads.
  */
 const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery }) => {
   const [mode, setMode] = useState<SourceMode>('archive');
@@ -90,6 +113,29 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
   const [readerItem, setReaderItem] = useState<BookItem | null>(null);
   const requestSeq = useRef(0);
   const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('book'));
+
+  // Bookracy curated shelves (home rails before a search narrows things down).
+  const [shelves, setShelves] = useState<Array<{ label: string; items: BookItem[] }>>([]);
+  const [shelvesLoading, setShelvesLoading] = useState(false);
+  const loadShelves = useCallback(async () => {
+    if (mode !== 'bookracy') return;
+    setShelvesLoading(true);
+    try {
+      const rows = await BookracyService.featuredCategories();
+      // Empty rows mean the API answered but everything failed — still fine,
+      // the shelves just don't render.
+      setShelves(rows.filter((row) => row.items.length > 0));
+    } catch {
+      setShelves([]);
+    } finally {
+      setShelvesLoading(false);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'bookracy' && !submitted) void loadShelves();
+    else setShelves([]);
+  }, [mode, submitted, loadShelves]);
 
   const load = useCallback(async (nextPage: number, append: boolean) => {
     const seq = ++requestSeq.current;
@@ -185,150 +231,18 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
   };
 
   const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === collectionId) || ARCHIVE_COLLECTIONS[0];
+  const showShelves = mode === 'bookracy' && !submitted && shelves.length > 0;
 
   return (
-    <div style={{ padding: '20px 18px 40px', maxWidth: 1080, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
-        <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'linear-gradient(135deg, #d6f77a, #9ccc3d)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Library size={22} color="#1a1d13" />
-        </div>
-        <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontSize: '22px', color: '#f0f6fc' }}>Books</h1>
-          <span style={{ color: '#8b949e', fontSize: '13px' }}>
-            Open Library &amp; archive.org · folkscanomy comics, manga and texts · read or download pdf / epub / cbz
-          </span>
+    <div className="standard-page page-enter books-page">
+      <div className="books-hero">
+        <span className="books-hero-tile" aria-hidden="true"><Library size={22} /></span>
+        <div>
+          <span className="page-kicker">EBOOKS · COMICS · PAPERBACKS</span>
+          <h1>Books</h1>
+          <p>Millions of free texts from archive.org &amp; Open Library, plus Bookracy downloads — read online or save pdf / epub / cbz.</p>
         </div>
       </div>
-
-      {/* Source switches */}
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
-        <button
-          onClick={() => setMode('archive')}
-          style={{
-            padding: '7px 14px', borderRadius: '999px', border: '1px solid',
-            borderColor: mode === 'archive' ? '#d6f77a' : '#30363d',
-            background: mode === 'archive' ? 'rgba(214, 247, 122, 0.14)' : '#161b22',
-            color: mode === 'archive' ? '#d6f77a' : '#8b949e', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          Internet Archive · folkscanomy
-        </button>
-        <button
-          onClick={() => setMode('openlibrary')}
-          style={{
-            padding: '7px 14px', borderRadius: '999px', border: '1px solid',
-            borderColor: mode === 'openlibrary' ? '#d6f77a' : '#30363d',
-            background: mode === 'openlibrary' ? 'rgba(214, 247, 122, 0.14)' : '#161b22',
-            color: mode === 'openlibrary' ? '#d6f77a' : '#8b949e', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          Open Library
-        </button>
-        <button
-          onClick={() => setMode('bookracy')}
-          style={{
-            padding: '7px 14px', borderRadius: '999px', border: '1px solid',
-            borderColor: mode === 'bookracy' ? '#d6f77a' : '#30363d',
-            background: mode === 'bookracy' ? 'rgba(214, 247, 122, 0.14)' : '#161b22',
-            color: mode === 'bookracy' ? '#d6f77a' : '#8b949e', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          Bookracy
-        </button>
-        {mode === 'archive' && (
-          <select
-            value={collectionId}
-            onChange={(e) => setCollectionId(e.target.value)}
-            aria-label="archive.org collection"
-            style={{ padding: '7px 10px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '999px', color: '#c9d1d9', fontSize: '12.5px' }}
-          >
-            {ARCHIVE_COLLECTIONS.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        )}
-        <button
-          onClick={() => openSafeExternalUrl(mode === 'archive' ? 'https://archive.org' : 'https://openlibrary.org')}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 12px', borderRadius: '999px', border: '1px solid #30363d', background: '#161b22', color: '#8b949e', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-        >
-          <ExternalLink size={11} /> {mode === 'archive' ? 'archive.org' : 'openlibrary.org'}
-        </button>
-      </div>
-
-      {mode === 'openlibrary' && (
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          {OPEN_LIBRARY_SUBJECTS.map((subject) => (
-            <button
-              key={subject}
-              onClick={() => { setInput(subject); setSubmitted(subject); }}
-              style={{
-                padding: '5px 12px', borderRadius: '999px', border: '1px solid #30363d',
-                background: '#161b22', color: '#c9d1d9', fontSize: '12px', cursor: 'pointer',
-              }}
-            >
-              {subject}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Search */}
-      <form
-        onSubmit={(e) => { e.preventDefault(); setSubmitted(input.trim()); }}
-        style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}
-      >
-        <div style={{ position: 'relative', flex: 1 }}>
-          <Search size={16} color="#8b949e" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === 'archive' ? `Search ${collection.name}…` : 'Search Open Library (title, author)…'}
-            style={{ width: '100%', padding: '11px 12px 11px 36px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '10px', color: '#c9d1d9', fontSize: '13.5px', boxSizing: 'border-box' }}
-          />
-        </div>
-        <button type="submit" style={{ padding: '0 18px', borderRadius: '10px', border: 'none', background: '#d6f77a', color: '#1a1d13', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
-          Search
-        </button>
-      </form>
-
-      {/* External aggregator reference cards (not integrated — site links only) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px', marginBottom: '16px' }}>
-        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <BookOpen size={16} color="#8b949e" />
-          <span style={{ color: '#8b949e', fontSize: '12.5px', flex: 1, minWidth: 180 }}>
-            <strong style={{ color: '#c9d1d9' }}>Anna's Archive</strong> is a shadow-library aggregator, so PRAHA does not
-            integrate its search or downloads. The Internet Archive sources above cover folkscanomy and millions of public texts.
-          </span>
-          <button
-            onClick={() => openSafeExternalUrl('https://annas-archive.org')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-          >
-            <ExternalLink size={12} /> Open site
-          </button>
-        </div>
-        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '10px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <BookOpen size={16} color="#8b949e" />
-          <span style={{ color: '#8b949e', fontSize: '12.5px', flex: 1, minWidth: 180 }}>
-            <strong style={{ color: '#c9d1d9' }}>OceanofPDF</strong> distributes copyrighted ebooks without authorization,
-            so it is linked as an external site only — not scraped or downloaded through PRAHA.
-          </span>
-          <button
-            onClick={() => openSafeExternalUrl('https://theoceanofpdf.com/')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-          >
-            <ExternalLink size={12} /> Open site
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(248, 113, 113, 0.1)', border: '1px solid rgba(248, 113, 113, 0.3)', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', color: '#f87171', fontSize: '13px' }}>
-          <CircleAlert size={15} /> {error}
-          <button onClick={() => void load(1, false)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: '#c9d1d9', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <RefreshCw size={13} /> Retry
-          </button>
-        </div>
-      )}
 
       <ContinueShelf
         entries={continueEntries}
@@ -338,34 +252,134 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
           setContinueEntries(readContinue('book'));
         }}
       />
+
+      <div className="books-toolbar">
+        <div className="filter-pills" role="tablist" aria-label="Book source">
+          {(Object.keys(SOURCE_LABEL) as SourceMode[]).map((key) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={mode === key}
+              className={mode === key ? 'active' : ''}
+              onClick={() => setMode(key)}
+            >
+              {SOURCE_LABEL[key]}
+            </button>
+          ))}
+        </div>
+        {mode === 'archive' && (
+          <label className="source-select">
+            <span className="books-sr-only">archive.org collection</span>
+            <select
+              aria-label="archive.org collection"
+              value={collectionId}
+              onChange={(e) => setCollectionId(e.target.value)}
+            >
+              {ARCHIVE_COLLECTIONS.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          className="text-button books-external-link"
+          onClick={() => openSafeExternalUrl(mode === 'archive' ? 'https://archive.org' : mode === 'openlibrary' ? 'https://openlibrary.org' : 'https://bookracy.com')}
+        >
+          <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
+        </button>
+      </div>
+
+      {mode === 'openlibrary' && (
+        <div className="books-subject-rail">
+          {OPEN_LIBRARY_SUBJECTS.map((subject) => (
+            <button
+              key={subject}
+              type="button"
+              className={`books-subject-chip ${submitted === subject ? 'active' : ''}`}
+              onClick={() => { setInput(subject); setSubmitted(subject); }}
+            >
+              {subject}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form className="books-search" onSubmit={(e) => { e.preventDefault(); setSubmitted(input.trim()); }}>
+        <div className="books-search-field">
+          <Search size={15} />
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={mode === 'archive' ? `Search ${collection.name}…` : mode === 'bookracy' ? 'Search Bookracy (title, author)…' : 'Search Open Library (title, author)…'}
+            aria-label="Search books"
+          />
+          {input && (
+            <button type="button" className="search-clear" aria-label="Clear book search" onClick={() => { setInput(''); setSubmitted(''); }}>
+              ×
+            </button>
+          )}
+        </div>
+        <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+      </form>
+
+      {error && (
+        <div className="books-error" role="alert">
+          <CircleAlert size={15} /> {error}
+          <button onClick={() => void load(1, false)}>
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      )}
+
+      {/* Shadow-library notice: external sites only, never integrated */}
+      <div className="books-notice">
+        <BookOpen size={14} />
+        <span>
+          <strong>Anna's Archive</strong> is a shadow-library aggregator and <strong>OceanofPDF</strong> distributes
+          unauthorized ebook copies — both are linked as external sites only.
+        </span>
+        <button type="button" className="button button-secondary button-small" onClick={() => openSafeExternalUrl('https://annas-archive.org')}>
+          Anna's Archive
+        </button>
+        <button type="button" className="button button-secondary button-small" onClick={() => openSafeExternalUrl('https://theoceanofpdf.com/')}>
+          OceanofPDF
+        </button>
+      </div>
+
+      {showShelves && (
+        <div className="books-shelves">
+          {shelvesLoading && <p className="sanka-inline-status"><LoaderCircle size={15} className="spin" /> Loading curated shelves…</p>}
+          {shelves.map((shelf) => (
+            <section key={shelf.label} className="books-shelf">
+              <h2>{shelf.label}</h2>
+              <div className="books-shelf-row">
+                {shelf.items.map((item) => (
+                  <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <SkeletonGrid count={12} label="Loading books…" />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${compact ? '140px' : '170px'}, 1fr))`, gap: '12px' }}>
+        <div className={`books-grid ${compact ? 'books-grid-compact' : ''}`}>
           {items.map((item) => (
-            <div key={item.id} style={cardStyle} onClick={() => void openItem(item)} role="button" tabIndex={0}
-              onKeyDown={(e) => e.key === 'Enter' && void openItem(item)}>
-              <BookCover item={item} />
-              <div style={{ padding: '10px 12px 12px' }}>
-                <strong style={{ color: '#f0f6fc', fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as never }}>
-                  {item.title}
-                </strong>
-                <span style={{ color: '#8b949e', fontSize: '11.5px', display: 'block', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.authors.join(', ') || (item.source === 'archive' ? 'archive.org' : 'Open Library')}
-                </span>
-                {item.year && <span style={{ color: '#6e7681', fontSize: '11px' }}>{item.year}</span>}
-              </div>
-            </div>
+            <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} />
           ))}
         </div>
       )}
 
       {hasMore && !loading && (
-        <div style={{ textAlign: 'center', marginTop: '16px' }}>
+        <div className="books-load-more">
           <button
+            type="button"
+            className="button button-secondary"
             onClick={() => void load(page + 1, true)}
             disabled={loadingMore}
-            style={{ padding: '9px 22px', borderRadius: '10px', border: '1px solid #30363d', background: '#21262d', color: '#f0f6fc', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
           >
             {loadingMore ? <LoaderCircle size={15} className="spin" /> : 'Load more'}
           </button>
@@ -377,66 +391,62 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         <div
           className="modal-backdrop"
           onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(1, 4, 9, 0.8)', zIndex: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px' }}
         >
-          <div style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '14px', maxWidth: '520px', width: '100%', padding: '18px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px' }}>
-              <strong style={{ color: '#f0f6fc', fontSize: '16px' }}>{selected.title}</strong>
-              <button onClick={() => setSelected(null)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer' }}>
-                <X size={18} />
-              </button>
+          <section className="books-sheet" role="dialog" aria-modal="true" aria-label={selected.title}>
+            <button className="modal-close floating" onClick={() => setSelected(null)} aria-label="Close">
+              <X size={18} />
+            </button>
+            <div className="books-sheet-head">
+              <BookCover item={selected} />
+              <div>
+                <span className="page-kicker">{selected.source === 'openlibrary' ? 'OPEN LIBRARY' : selected.id.startsWith('bookracy-') ? 'BOOKRACY' : 'INTERNET ARCHIVE'}</span>
+                <h2>{selected.title}</h2>
+                {selected.authors.length > 0 && <p className="books-sheet-authors">{selected.authors.join(', ')}</p>}
+                {selected.year && <span className="books-sheet-year">First published {selected.year}</span>}
+              </div>
             </div>
-            {selected.authors.length > 0 && <p style={{ color: '#8b949e', fontSize: '13px', margin: '0 0 4px' }}>{selected.authors.join(', ')}</p>}
-            {selected.year && <p style={{ color: '#6e7681', fontSize: '12px', margin: '0 0 12px' }}>First published {selected.year}</p>}
 
-            {filesLoading && <p style={{ color: '#8b949e', fontSize: '13px', display: 'flex', gap: '8px', alignItems: 'center' }}><LoaderCircle size={14} className="spin" /> Loading files…</p>}
-            {filesError && <p style={{ color: '#f87171', fontSize: '13px' }}>{filesError}</p>}
+            {filesLoading && <p className="sanka-inline-status"><LoaderCircle size={15} className="spin" /> Loading files…</p>}
+            {filesError && <p className="sanka-inline-error" role="alert">{filesError}</p>}
 
             {files && files.length > 0 && (
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '12px 0' }}>
+              <div className="books-sheet-files">
                 {files.map((file) => (
                   <button
                     key={file.name}
+                    className="books-sheet-file"
                     onClick={() => openSafeExternalUrl(file.url)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', borderRadius: '10px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '13px', cursor: 'pointer', textAlign: 'left', flex: 1, minWidth: 220 }}
                   >
-                    <FileDown size={16} color="#d6f77a" />
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
-                    <span style={{ color: '#8b949e', fontSize: '11.5px' }}>{file.format}{BooksService.formatSize(file.sizeBytes) ? ` · ${BooksService.formatSize(file.sizeBytes)}` : ''}</span>
+                    <FileDown size={16} />
+                    <span>{file.name}</span>
+                    <small>{file.format}{BooksService.formatSize(file.sizeBytes) ? ` · ${BooksService.formatSize(file.sizeBytes)}` : ''}</small>
                   </button>
                 ))}
               </div>
             )}
 
-            {selected.identifier && (
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => setReaderItem(selected)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#d6f77a', color: '#1a1d13', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer' }}
-                >
-                  <BookOpen size={13} /> Read online
+            <div className="books-sheet-actions">
+              {selected.identifier && (
+                <>
+                  <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
+                    <BookOpen size={14} /> Read online
+                  </button>
+                  <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
+                    <ExternalLink size={13} /> archive.org page
+                  </button>
+                </>
+              )}
+              {selected.openLibraryKey && (
+                <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
+                  <ExternalLink size={13} /> Open Library page
                 </button>
-                <button
-                  onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}
-                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  <ExternalLink size={12} /> archive.org page
-                </button>
-              </div>
-            )}
-            {selected.openLibraryKey && (
-              <button
-                onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}
-                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', marginTop: '8px' }}
-              >
-                <ExternalLink size={12} /> Open Library page
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
-      {/* In-app Read Online (OMLE) — archive.org BookReader embed */}
+      {/* In-app Read Online — native archive.org leaf reader */}
       {readerItem?.identifier && (
         <ArchiveReader
           identifier={readerItem.identifier}

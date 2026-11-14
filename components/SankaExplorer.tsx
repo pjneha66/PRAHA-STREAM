@@ -137,6 +137,12 @@ const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
   { id: 'archive', label: 'Internet Archive (folkscanomy)' },
 ];
 
+// Compact labels for the source rail chips (full labels stay in tooltips).
+const COMIC_SOURCE_SHORT: Record<string, string> = {
+  weebcentral: 'WeebCentral',
+  archive: 'Archive.org',
+};
+
 const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   // 'archive' routes search + detail to the Internet Archive folkscanomy
   // collections instead of the Sanka web sources.
@@ -583,15 +589,13 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
 
   return (
     <div className="standard-page page-enter sanka-page">
-      <div className="page-heading sanka-heading">
+      <div className="comic-hero">
+        <span className="comic-hero-tile" aria-hidden="true"><BookOpen size={22} /></span>
         <div>
-          <span className="page-kicker"><Sparkles size={14} /> SANKA API · MANGA & COMICS</span>
-          <h1>Manga, Manhwa & Comics</h1>
-          <p>Read manga, manhwa, manhua, and comics across multiple sources with the built-in chapter reader.</p>
+          <span className="page-kicker"><Sparkles size={12} /> MANGA · MANHWA · COMICS</span>
+          <h1>Comics</h1>
+          <p>Read manga, manhwa, and comics from 9 sources with the built-in chapter reader.</p>
         </div>
-        <a className="text-button" href="https://github.com/SankaVollereii/Rest-Api-Anime-and-Comic" target="_blank" rel="noreferrer noopener">
-          API project <ExternalLink size={13} />
-        </a>
       </div>
       <ContinueShelf
         entries={continueEntries}
@@ -601,6 +605,27 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           setContinueEntries(readContinue('comic'));
         }}
       />
+
+      <div className="comic-source-rail" role="tablist" aria-label="Comic source">
+        {COMIC_SOURCE_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            role="tab"
+            aria-selected={source === option.id}
+            className={`comic-source-chip ${source === option.id ? 'active' : ''}`}
+            title={option.label}
+            onClick={() => {
+              if (option.id === source) return;
+              setManualSource(true);
+              setSource(option.id);
+              setSubmittedQuery('');
+              setQuery('');
+            }}
+          >
+            {COMIC_SOURCE_SHORT[option.id] || option.label}
+          </button>
+        ))}
+      </div>
 
       <div className="sanka-toolbar">
         <div className="filter-pills" role="tablist" aria-label="Comic feed">
@@ -621,45 +646,26 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
             <Flame size={14} /> Popular
           </button>
         </div>
-        <div className="sanka-catalog-controls">
-          <label className="source-select">
-            <span className="sanka-sr-only">Comic source</span>
-            <select
-              aria-label="Comic source"
-              value={source}
-              onChange={(event) => {
-                setManualSource(true);
-                setSource(event.target.value);
-                setSubmittedQuery('');
-                setQuery('');
-              }}
+        <form className="sanka-search" onSubmit={search}>
+          <Search size={16} />
+          <input
+            aria-label="Search manga and comics"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search manga and comics…"
+          />
+          {submittedQuery && (
+            <button
+              type="button"
+              className="search-clear"
+              onClick={() => { setQuery(''); setSubmittedQuery(''); }}
+              aria-label="Clear comic search"
             >
-              {COMIC_SOURCE_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <form className="sanka-search" onSubmit={search}>
-            <Search size={16} />
-            <input
-              aria-label="Search manga and comics"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search manga and comics…"
-            />
-            {submittedQuery && (
-              <button
-                type="button"
-                className="search-clear"
-                onClick={() => { setQuery(''); setSubmittedQuery(''); }}
-                aria-label="Clear comic search"
-              >
-                ×
-              </button>
-            )}
-            <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
-          </form>
-        </div>
+              ×
+            </button>
+          )}
+          <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+        </form>
       </div>
 
       {fallbackNotice && !loading && !error && (
@@ -689,19 +695,20 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           <span><CircleAlert size={25} /></span>
           <h2>Couldn’t reach {activeSourceLabel}</h2>
           <p>{error} Try switching to another comic source or retrying.</p>
-          <div className="sanka-source-pills">
+          <div className="comic-source-rail comic-source-rail-center">
             {COMIC_SOURCE_OPTIONS.map((option) => (
               <button
                 key={option.id}
                 type="button"
-                className={`button button-small ${option.id === source ? 'button-primary' : 'button-secondary'}`}
+                className={`comic-source-chip ${option.id === source ? 'active' : ''}`}
+                title={option.label}
                 onClick={() => {
                   setManualSource(true);
                   setSource(option.id);
                   setAttempt((v) => v + 1);
                 }}
               >
-                {option.label}
+                {COMIC_SOURCE_SHORT[option.id] || option.label}
               </button>
             ))}
           </div>
@@ -714,11 +721,10 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         </div>
       ) : items.length ? (
         <>
-          <div className="sanka-grid">
+          <div className="comic-grid">
             {items.map((item) => {
               const metaLine = [
                 item.comicType,
-                item.chapter,
                 item.year,
                 item.status,
                 item.rating ? `★ ${item.rating}` : undefined,
@@ -729,32 +735,27 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                 : undefined;
 
               return (
-                <article className={`sanka-card sanka-card-actionable ${readingEntry ? 'sanka-card-reading' : ''}`} key={`${item.id}-${item.title}`}>
+                <article className={`comic-card ${readingEntry ? 'comic-card-reading' : ''}`} key={`${item.id}-${item.title}`}>
                   <button
-                    className="sanka-card-open"
+                    className="comic-card-open"
                     type="button"
                     onClick={() => handleSelectTitle(item)}
                     aria-label={`Open ${item.title} chapters`}
                   >
-                    <div className="sanka-poster">
+                    <div className="comic-poster">
                       <SafeComicImg
                         src={item.poster}
                         title={item.title}
                         alt={`${item.title} cover`}
-                        fallback={<div className="sanka-poster-fallback"><BookOpen size={27} /><span>{item.title.slice(0, 18)}</span></div>}
+                        fallback={<div className="comic-poster-fallback"><BookOpen size={26} /></div>}
                       />
-                      <span className="sanka-kind">{item.comicType ? item.comicType.toUpperCase() : 'MANGA'}</span>
+                      <span className="comic-kind">{item.comicType ? item.comicType.toUpperCase() : 'MANGA'}</span>
+                      {item.chapter && <span className="comic-chapter-badge">{item.chapter}</span>}
+                      {readingEntry && <span className="comic-resume"><Play size={10} /> Resume</span>}
                     </div>
-                    <div className="sanka-card-copy">
+                    <div className="comic-copy">
                       <h3 title={item.title}>{item.title}</h3>
                       <p>{metaLine}</p>
-                      {readingEntry && <span className="sanka-reading-hint">Resume · {readingEntry.detail || 'in progress'}</span>}
-                      {item.genres.length > 0 && (
-                        <div className="sanka-genres">
-                          {item.genres.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
-                        </div>
-                      )}
-                      <span className="sanka-card-cta">Read chapters <ChevronRight size={13} /></span>
                     </div>
                   </button>
                 </article>
@@ -1019,56 +1020,46 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         <div
           className="modal-backdrop"
           onMouseDown={(event) => event.target === event.currentTarget && setArchiveItem(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(1, 4, 9, 0.82)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px' }}
         >
-          <div style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '14px', maxWidth: '520px', width: '100%', padding: '18px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '10px' }}>
-              <strong style={{ color: '#f0f6fc', fontSize: '16px' }}>{archiveItem.title}</strong>
-              <button onClick={() => setArchiveItem(null)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer' }}>
-                <X size={18} />
-              </button>
-            </div>
-            {archiveItem.summary && <p style={{ color: '#8b949e', fontSize: '13px', margin: '0 0 10px' }}>{archiveItem.summary}</p>}
+          <section className="comic-archive-sheet" role="dialog" aria-modal="true" aria-label={archiveItem.title}>
+            <button className="modal-close floating" onClick={() => setArchiveItem(null)} aria-label="Close">
+              <X size={18} />
+            </button>
+            <span className="page-kicker">INTERNET ARCHIVE · FOLKSCANOMY</span>
+            <h2>{archiveItem.title}</h2>
+            {archiveItem.summary && <p className="comic-archive-summary">{archiveItem.summary}</p>}
             {archiveLoading && (
-              <p style={{ color: '#8b949e', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LoaderCircle size={18} className="spin" /> Loading files…
-              </p>
+              <p className="sanka-inline-status"><LoaderCircle size={16} className="spin" /> Loading files…</p>
             )}
-            {archiveError && <p style={{ color: '#f87171', fontSize: '13px' }}>{archiveError}</p>}
+            {archiveError && <p className="sanka-inline-error" role="alert">{archiveError}</p>}
             {archiveFiles && archiveFiles.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '12px 0' }}>
+              <div className="comic-archive-files">
                 {archiveFiles.map((file) => (
                   <button
                     key={file.name}
+                    className="comic-archive-file"
                     onClick={() => openSafeExternalUrl(file.url)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 12px', borderRadius: '10px', border: '1px solid #30363d', background: '#161b22', color: '#f0f6fc', fontSize: '13px', cursor: 'pointer', textAlign: 'left' }}
                   >
-                    <FileDown size={16} color="#d6f77a" />
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
-                    <span style={{ color: '#8b949e', fontSize: '11.5px' }}>{file.format}{BooksService.formatSize(file.sizeBytes) ? ` · ${BooksService.formatSize(file.sizeBytes)}` : ''}</span>
+                    <FileDown size={16} />
+                    <span>{file.name}</span>
+                    <small>{file.format}{BooksService.formatSize(file.sizeBytes) ? ` · ${BooksService.formatSize(file.sizeBytes)}` : ''}</small>
                   </button>
                 ))}
               </div>
             )}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => setReaderIdentifier(archiveItem.slug)}
-                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#d6f77a', color: '#1a1d13', fontSize: '12.5px', fontWeight: 700, cursor: 'pointer' }}
-              >
-                <BookOpen size={13} /> Read online
+            <div className="comic-archive-actions">
+              <button type="button" className="button button-primary" onClick={() => setReaderIdentifier(archiveItem.slug)}>
+                <BookOpen size={14} /> Read online
               </button>
-              <button
-                onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}
-                style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', borderRadius: '8px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                <ExternalLink size={12} /> archive.org page
+              <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}>
+                <ExternalLink size={13} /> archive.org page
               </button>
             </div>
-          </div>
+          </section>
         </div>
       )}
 
-      {/* In-app Read Online (OMLE) — archive.org BookReader embed */}
+      {/* In-app Read Online — native archive.org leaf reader */}
       {readerIdentifier && (
         <ArchiveReader
           identifier={readerIdentifier}

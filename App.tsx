@@ -12,6 +12,9 @@ import SankaExplorer from './components/SankaExplorer';
 import AudiobooksView from './components/AudiobooksView';
 import BooksView from './components/BooksView';
 import MusicView from './components/MusicView';
+import { MusicPlayerProvider } from './components/music/MusicPlayerProvider';
+import MusicPlayerBar from './components/music/MusicPlayerBar';
+import NowPlayingSheet from './components/music/NowPlayingSheet';
 import LiveTvView from './components/LiveTvView';
 import FlowView from './components/FlowView';
 import ProfilePicker from './components/ProfilePicker';
@@ -1252,7 +1255,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <>
+    <MusicPlayerProvider>
       {/* Main app navigation and pages — completely hidden when player is active to prevent transparency bleed and ghost clicks */}
       {profilePickerCompleted && (
         <div
@@ -1407,7 +1410,13 @@ const App: React.FC = () => {
           <button onClick={() => setToast(null)} aria-label="Dismiss notification"><X size={15} /></button>
         </div>
       )}
-    </>
+
+      {/* Persistent SimpMusic-style player: mini bar on every tab (hidden inside
+          the Music tab, which has its own layout, and under the video player),
+          expandable into the full Now Playing sheet. */}
+      <MusicPlayerBar hidden={view === 'music' || Boolean(player)} />
+      <NowPlayingSheet />
+    </MusicPlayerProvider>
   );
 };
 

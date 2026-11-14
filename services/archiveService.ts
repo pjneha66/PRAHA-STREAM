@@ -97,6 +97,7 @@ const firstOf = (value: string | string[] | number | undefined): string | undefi
 export class BooksService {
   private static readonly searchCache = new Map<string, BookItem[]>();
   private static readonly filesCache = new Map<string, BookFile[]>();
+  private static readonly leavesCache = new Map<string, { title: string; leafCount: number }>();
 
   /** Open Library search; items that have an archive.org copy come first. */
   static async searchOpenLibrary(query: string, page = 1): Promise<BookItem[]> {
@@ -193,6 +194,30 @@ export class BooksService {
 
   static detailsUrl(identifier: string): string {
     return `https://archive.org/details/${encodeURIComponent(identifier)}`;
+  }
+
+  /** Scanned leaf count + display title for the in-app ArchiveReader (imagecount field). */
+  static async itemLeaves(identifier: string): Promise<{ title: string; leafCount: number }> {
+    const cached = this.leavesCache.get(identifier);
+    if (cached) return cached;
+    const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
+    if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('Could not load the archive.org item metadata.');
+    const data = JSON.parse(res.data) as { metadata?: Record<string, unknown> };
+    const meta = data.metadata || {};
+    const leafCount = Number(meta.imagecount) || 0;
+    if (leafCount <= 0) throw new Error('This item has no scanned pages to read.');
+    const info = { title: firstOf(meta.title as string | string[] | undefined) || identifier, leafCount };
+    this.leavesCache.set(identifier, info);
+    evictOldest(this.leavesCache, 40);
+    return info;
+  }
+
+  /**
+   * archive.org BookReader leaf image at a given width (the `page/nX_wY.jpg`
+   * service derivative, 302-redirected to BookReaderImages.php — verified live).
+   */
+  static leafImageUrl(identifier: string, leaf: number, width = 760): string {
+    return `https://archive.org/download/${encodeURIComponent(identifier)}/page/n${leaf}_w${width}.jpg`;
   }
 
   static workUrl(key: string): string {
