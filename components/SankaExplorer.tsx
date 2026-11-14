@@ -304,6 +304,19 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       }
 
       let primaryError = '';
+      // Comick sweeps many aggregators — show each source's results as they
+      // arrive instead of a full-page spinner.
+      let progressiveStarted = false;
+      const onTitles = source === 'comick' || source === 'webtoon'
+        ? (titles: SankaTitle[]) => {
+            if (!current || !titles.length) return;
+            if (!progressiveStarted) {
+              progressiveStarted = true;
+              setLoading(false);
+            }
+            setItems((prev) => mergeUniqueTitles(prev, titles).merged);
+          }
+        : undefined;
       try {
         const primary = await fetchSankaTitlesPage('comic', {
           query: submittedQuery,
@@ -313,6 +326,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           signal: controller.signal,
           bypassCache,
           subSource: source === 'comick' ? comickSubSource : undefined,
+          onTitles,
         });
         if (!current) return;
         if (primary.items.length > 0 || submittedQuery || manualSource) {

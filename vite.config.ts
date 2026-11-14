@@ -138,6 +138,65 @@ function comickRelayPlugin(): Plugin {
         res.end('Comick API relay failed');
       }
     });
+    // Streaming sweep: one request fans out to every active source upstream and
+    // pushes each completed NDJSON batch line to the client as it arrives, so
+    // the UI shows results progressively through a single HTTP/1.1 connection.
+    middlewares.use('/comick-stream', async (req, res) => {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks).toString('utf8');
+        const upstreamRes = await fetch(COMICK_ORIGIN + '/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body || undefined,
+        });
+        res.setHeader('Content-Type', 'application/x-ndjson');
+        res.setHeader('Cache-Control', 'no-store');
+        res.statusCode = upstreamRes.status || 200;
+        if (!upstreamRes.body) {
+          res.end(await upstreamRes.text());
+          return;
+        }
+        const reader = upstreamRes.body.getReader();
+        const decoder = new TextDecoder();
+        let lineBuf = '';
+        let closed = false;
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          if (lineBuf.trim().startsWith('{')) res.write(lineBuf.trim() + '\n');
+          res.end();
+        };
+        // End the stream after 5s without new upstream bytes (the API holds
+        // the connection open long after the last batch).
+        let quietTimer: ReturnType<typeof setTimeout>;
+        const armQuiet = () => {
+          clearTimeout(quietTimer);
+          quietTimer = setTimeout(close, 5000);
+        };
+        const pump = async (): Promise<void> => {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) { close(); return; }
+            lineBuf += decoder.decode(value, { stream: true });
+            let idx: number;
+            while ((idx = lineBuf.indexOf('\n')) !== -1) {
+              const line = lineBuf.slice(0, idx).trim();
+              lineBuf = lineBuf.slice(idx + 1);
+              if (line.startsWith('{')) res.write(line + '\n');
+            }
+            armQuiet();
+          }
+        };
+        armQuiet();
+        void pump().catch(close);
+        req.on('close', () => { if (!closed) { closed = true; clearTimeout(quietTimer); try { void reader.cancel(); } catch {} res.end(); } });
+      } catch {
+        res.statusCode = 502;
+        res.end('Comick API relay failed');
+      }
+    });
     middlewares.use('/comick-page', async (req, res) => {
       try {
         const reqUrl = new URL(req.url || '', 'http://localhost');

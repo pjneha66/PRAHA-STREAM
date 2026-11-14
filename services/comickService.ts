@@ -114,16 +114,14 @@ export const COMICK_SOURCE_OPTIONS: Array<{ id: string; name: string }> = [
   { id: 'yaksha-scans', name: 'Yaksha Scans' },
 ];
 
-/** Per-source search (NDJSON response — one batch line per call). */
-async function searchComickSource(query: string, source: string): Promise<ComickSeries[]> {
-  // The search endpoint validates source ids with SPACES ("vortex scans"),
-  // unlike /api/sources which uses dashes ("vortex-scans").
-  const searchSource = source.replaceAll('-', ' ');
+/** Raw search against one source id (verbatim — no dash conversion). */
+async function searchComickSourceRaw(query: string, source: string, signal?: AbortSignal): Promise<ComickSeries[]> {
+  if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
   const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_SEARCH : API_SEARCH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, source: searchSource }),
-    timeoutMs: 25000,
+    body: JSON.stringify({ query, source }),
+    timeoutMs: 50000,
   });
   if (!res.ok || !res.data) return [];
   const series: ComickSeries[] = [];
@@ -153,31 +151,118 @@ async function searchComickSource(query: string, source: string): Promise<Comick
   return series;
 }
 
+/** Per-source search — converts the dash id to the search endpoint's space form. */
+async function searchComickSource(query: string, source: string, signal?: AbortSignal): Promise<ComickSeries[]> {
+  // The search endpoint validates source ids with SPACES ("vortex scans"),
+  // unlike /api/sources which uses dashes ("vortex-scans").
+  return searchComickSourceRaw(query, source.replaceAll('-', ' '), signal);
+}
+
 /**
- * Search Comick: across every active aggregator concurrently by default, or
- * a single chosen aggregator when `subSource` is given.
+ * Search Comick. Two transports:
+ *  - Android (direct native): ONE 'all' request — the upstream streams every
+ *    source's NDJSON batch and closes after ~30s; a single request avoids
+ *    queueing 46 jobs behind the ~6-worker native HTTP pool. (nativeFetchText
+ *    buffers until close, so batches can't be streamed to the UI here.)
+ *  - Desktop browser (relay): ONE streaming request (/comick-stream) that
+ *    pushes each source's NDJSON batch as it completes — `onBatch` fires
+ *    progressively and the first results land in a few seconds.
  */
-export async function searchComick(query: string, subSource?: string): Promise<ComickSeries[]> {
+export async function searchComick(
+  query: string,
+  subSource?: string,
+  options?: { signal?: AbortSignal; onBatch?: (batch: ComickSeries[]) => void },
+): Promise<ComickSeries[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
-  const targets = subSource ? [subSource] : ACTIVE_SOURCES;
-  const settled = await Promise.allSettled(
-    targets.map((source) => searchComickSource(trimmed, source)),
-  );
-  const series: ComickSeries[] = [];
-  for (const result of settled) {
-    if (result.status === 'fulfilled') series.push(...result.value);
-  }
-  // Different aggregators mirror the same series — dedupe by title.
+  const signal = options?.signal;
   const seen = new Set<string>();
-  return series
-    .filter((entry) => {
+  const dedupe = (entries: ComickSeries[]): ComickSeries[] =>
+    entries.filter((entry) => {
       const key = entry.title.toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, 40);
+    });
+
+  const parseBatches = (data: string): ComickSeries[] => {
+    const series: ComickSeries[] = [];
+    for (const line of data.split('\n')) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine.startsWith('{')) continue;
+      try {
+        const batch = JSON.parse(trimmedLine) as { source?: string; results?: Array<Record<string, unknown>> };
+        const sourceLabel = String(batch.source || 'Comick');
+        for (const entry of batch.results || []) {
+          const url = String(entry.url || '');
+          const title = String(entry.title || '').trim();
+          if (!isHttpUrl(url) || !title) continue;
+          series.push({
+            id: `${sourceLabel}|${String(entry.id ?? url)}`,
+            sourceLabel,
+            title,
+            url,
+            cover: typeof entry.coverImage === 'string' && isHttpUrl(entry.coverImage) ? entry.coverImage : undefined,
+            latestChapter: Number(entry.latestChapter) || undefined,
+          });
+        }
+      } catch {
+        // Malformed batch line — skip it.
+      }
+    }
+    return series;
+  };
+
+  // Browser: one streaming relay request, batches parsed as they arrive.
+  if (browserNeedsRelay()) {
+    const series: ComickSeries[] = [];
+    try {
+      const response = await fetch('/comick-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: trimmed, source: subSource || 'all' }),
+        signal,
+      });
+      if (!response.ok || !response.body) return [];
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let lineBuf = '';
+      let done = false;
+      while (!done) {
+        const { done: streamDone, value } = await reader.read();
+        done = Boolean(streamDone);
+        if (value) {
+          lineBuf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = lineBuf.indexOf('\n')) !== -1) {
+            const line = lineBuf.slice(0, idx).trim();
+            lineBuf = lineBuf.slice(idx + 1);
+            if (!line.startsWith('{')) continue;
+            const batch = parseBatches(line);
+            const fresh = batch.filter((entry) => {
+              const key = entry.title.toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            if (fresh.length) {
+              series.push(...fresh);
+              options?.onBatch?.(fresh);
+            }
+          }
+        }
+      }
+    } catch {
+      return dedupe(series).slice(0, 40);
+    }
+    return series.slice(0, 40);
+  }
+
+  // Device: single native request (all sources) or a single chosen source.
+  const source = subSource || 'all';
+  const searchSource = source === 'all' ? source : source.replaceAll('-', ' ');
+  const batches = await searchComickSourceRaw(trimmed, searchSource, signal);
+  return dedupe(batches).slice(0, 40);
 }
 
 /** Chapter list for a series page URL on its aggregator. */

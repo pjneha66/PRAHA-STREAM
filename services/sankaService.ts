@@ -1,7 +1,7 @@
 import { isAndroidApp, nativeFetchText } from './androidBridge';
 import { MangaService } from './mangaService';
 import { evictOldest } from './cacheCaps';
-import { comickChapterImages, comickChapters, searchComick } from './comickService';
+import { comickChapterImages, comickChapters, searchComick, type ComickSeries } from './comickService';
 
 const PRIMARY_ORIGIN = 'https://www.sankavollerei.web.id';
 const MIRROR_ORIGIN = 'https://www.sankavollerei.com';
@@ -665,6 +665,8 @@ export async function fetchSankaTitlesPage(
     bypassCache?: boolean;
     /** Comick: restrict the search to one aggregator ('webtoon', etc.). */
     subSource?: string;
+    /** Comick: progressive results — called as each aggregator answers. */
+    onTitles?: (titles: SankaTitle[]) => void;
   } = {},
 ): Promise<SankaTitlesPage> {
   const normalizedQuery = (options.query || '').trim();
@@ -725,21 +727,29 @@ export async function fetchSankaTitlesPage(
 
   // Comick aggregator gateway (search-driven; see comickService).
   if (source === 'comick') {
+    // Search-only source: NEVER auto-sweep 46 aggregators for the bare feed —
+    // that hogged the native HTTP pool and made the whole tab crawl. The UI
+    // shows a search prompt instead until the user types a title.
+    if (!normalizedQuery) return { items: [], hasMore: false, page };
     try {
-      const series = await searchComick(normalizedQuery || 'manga', options.subSource);
-      const items: SankaTitle[] = series.map((entry) => ({
-        id: 'comick:' + entry.url,
-        slug: entry.url,
-        detailPath: entry.url,
-        title: entry.title,
-        poster: entry.cover,
-        kind: 'comic' as const,
-        source: 'comick',
-        sourceUrl: entry.url,
-        comicType: entry.sourceLabel,
-        genres: [],
-      }));
-      return { items, hasMore: false, page };
+      const toTitles = (batch: ComickSeries[]): SankaTitle[] =>
+        batch.map((entry) => ({
+          id: 'comick:' + entry.url,
+          slug: entry.url,
+          detailPath: entry.url,
+          title: entry.title,
+          poster: entry.cover,
+          kind: 'comic' as const,
+          source: 'comick',
+          sourceUrl: entry.url,
+          comicType: entry.sourceLabel,
+          genres: [],
+        }));
+      const series = await searchComick(normalizedQuery, options.subSource, {
+        signal: options.signal,
+        onBatch: (batch) => options.onTitles?.(toTitles(batch)),
+      });
+      return { items: toTitles(series), hasMore: false, page };
     } catch (e) {
       if ((e as { name?: string })?.name === 'AbortError') throw e;
       return { items: [], hasMore: false, page };
