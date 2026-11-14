@@ -298,6 +298,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         return;
       }
 
+      let primaryError = '';
       try {
         const primary = await fetchSankaTitlesPage('comic', {
           query: submittedQuery,
@@ -316,12 +317,11 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         }
       } catch (primaryErr) {
         if (!current || (primaryErr as { name?: string })?.name === 'AbortError') return;
-        if (submittedQuery || manualSource) {
-          setItems([]);
-          setHasMore(false);
-          setError(primaryErr instanceof Error ? primaryErr.message : 'Could not load comics from Sanka API.');
-          return;
-        }
+        primaryError = primaryErr instanceof Error ? primaryErr.message : 'Could not load comics from Sanka API.';
+        setItems([]);
+        setHasMore(false);
+        // A manually picked source that died must not dead-end — fall through
+        // to the automatic fallback below (it skips the failed source).
       }
 
       // Automatic comic source fallback so comics load out of the box even if one mirror is down
@@ -357,6 +357,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       setHasMore(false);
       if (lastFallbackErr) {
         setError(lastFallbackErr instanceof Error ? lastFallbackErr.message : 'Could not load comics from Sanka API.');
+      } else if (primaryError) {
+        setError(primaryError);
       }
     };
 

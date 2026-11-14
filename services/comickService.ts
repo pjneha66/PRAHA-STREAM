@@ -46,58 +46,81 @@ const isHttpUrl = (value: string): boolean => {
   }
 };
 
-/** Search across every upstream aggregator; results deduped by title. */
+/**
+ * Upstream sources with "Active" status (from the API's /api/sources list
+ * cross-checked against the upstream health table). Shutdown (MangaPark,
+ * Weebdex, Bato, Falcon) and Unstable entries are excluded — searching them
+ * only wastes seconds of the 30s stream window and returns 403s.
+ */
+const ACTIVE_SOURCES = [
+  'arven-comics', 'asmodeus-scans', 'asurascan', 'athrea-scans', 'demonicscans',
+  'elf-toon', 'eva-scans', 'flamecomics', 'galaxy-degen-scans', 'hades-scans',
+  'kappabeast', 'kdt-scans', 'kenscans', 'ks-group', 'kuramanga', 'lagoonscans',
+  'lhtranslation', 'lua-comic', 'madarascans', 'magus-manga', 'mangago',
+  'mangakatana', 'mangaread', 'mangasushi', 'mangataro', 'manhuaplus', 'mgeko',
+  'novelcool', 'project-suki', 'rd-scans', 'ritharscans', 'rizz-fables',
+  'rokari-comics', 'scythe-scans', 'spider-scans', 'stonescape', 'thunderscans',
+  'topmanhua', 'utoon', 'violetscans', 'vortex-scans', 'webtoon', 'weebcentral',
+  "writers'-scans", 'yaksha-comics', 'yaksha-scans',
+];
+
+/** Per-source search (NDJSON response — one batch line per call). */
+async function searchComickSource(query: string, source: string): Promise<ComickSeries[]> {
+  const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_SEARCH : API_SEARCH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, source }),
+    timeoutMs: 25000,
+  });
+  if (!res.ok || !res.data) return [];
+  const series: ComickSeries[] = [];
+  for (const line of res.data.split('\n')) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith('{')) continue;
+    try {
+      const batch = JSON.parse(trimmedLine) as { source?: string; results?: Array<Record<string, unknown>> };
+      const sourceLabel = String(batch.source || source);
+      for (const entry of batch.results || []) {
+        const url = String(entry.url || '');
+        const title = String(entry.title || '').trim();
+        if (!isHttpUrl(url) || !title) continue;
+        series.push({
+          id: `${sourceLabel}|${String(entry.id ?? url)}`,
+          sourceLabel,
+          title,
+          url,
+          cover: typeof entry.coverImage === 'string' && isHttpUrl(entry.coverImage) ? entry.coverImage : undefined,
+          latestChapter: Number(entry.latestChapter) || undefined,
+        });
+      }
+    } catch {
+      // Malformed batch line — skip it.
+    }
+  }
+  return series;
+}
+
+/** Search across every active aggregator concurrently; results deduped by title. */
 export async function searchComick(query: string): Promise<ComickSeries[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
-  try {
-    const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_SEARCH : API_SEARCH, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: trimmed, source: 'all' }),
-      // The upstream streams one NDJSON batch per aggregator and closes after
-      // ~30s — the timeout must outlive that.
-      timeoutMs: 50000,
-    });
-    if (!res.ok || !res.data) return [];
-    // Response is NDJSON — one JSON batch per upstream source.
-    const series: ComickSeries[] = [];
-    for (const line of res.data.split('\n')) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine.startsWith('{')) continue;
-      try {
-        const batch = JSON.parse(trimmedLine) as { source?: string; results?: Array<Record<string, unknown>> };
-        const sourceLabel = String(batch.source || 'Comick');
-        for (const entry of batch.results || []) {
-          const url = String(entry.url || '');
-          const title = String(entry.title || '').trim();
-          if (!isHttpUrl(url) || !title) continue;
-          series.push({
-            id: `${sourceLabel}|${String(entry.id ?? url)}`,
-            sourceLabel,
-            title,
-            url,
-            cover: typeof entry.coverImage === 'string' && isHttpUrl(entry.coverImage) ? entry.coverImage : undefined,
-            latestChapter: Number(entry.latestChapter) || undefined,
-          });
-        }
-      } catch {
-        // Malformed batch line — skip it.
-      }
-    }
-    // Different aggregators mirror the same series — dedupe by title.
-    const seen = new Set<string>();
-    return series
-      .filter((entry) => {
-        const key = entry.title.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, 30);
-  } catch {
-    return [];
+  const settled = await Promise.allSettled(
+    ACTIVE_SOURCES.map((source) => searchComickSource(trimmed, source)),
+  );
+  const series: ComickSeries[] = [];
+  for (const result of settled) {
+    if (result.status === 'fulfilled') series.push(...result.value);
   }
+  // Different aggregators mirror the same series — dedupe by title.
+  const seen = new Set<string>();
+  return series
+    .filter((entry) => {
+      const key = entry.title.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 40);
 }
 
 /** Chapter list for a series page URL on its aggregator. */
