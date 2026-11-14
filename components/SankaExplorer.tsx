@@ -833,7 +833,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           <span><BookOpen size={26} /></span>
           <h2>No comics found</h2>
           <p>{source === 'comick' && !submittedQuery
-            ? 'Comick is search-driven — type a title above to search every aggregator at once.'
+            ? 'Comick swept every aggregator and nothing matched right now — try a specific title above.'
             : submittedQuery
               ? 'Try another title or switch comic sources above.'
               : 'This source returned no comics right now. Try selecting another source above.'}</p>

@@ -725,12 +725,10 @@ export async function fetchSankaTitlesPage(
     }
   }
 
-  // Comick aggregator gateway (search-driven; see comickService).
+  // Comick aggregator gateway (see comickService). Streams results as each
+  // aggregator answers — a single request per sweep, so the bare feed can
+  // safely auto-load a broad 'manga' search without blocking the app.
   if (source === 'comick') {
-    // Search-only source: NEVER auto-sweep 46 aggregators for the bare feed —
-    // that hogged the native HTTP pool and made the whole tab crawl. The UI
-    // shows a search prompt instead until the user types a title.
-    if (!normalizedQuery) return { items: [], hasMore: false, page };
     try {
       const toTitles = (batch: ComickSeries[]): SankaTitle[] =>
         batch.map((entry) => ({
@@ -745,9 +743,17 @@ export async function fetchSankaTitlesPage(
           comicType: entry.sourceLabel,
           genres: [],
         }));
-      const series = await searchComick(normalizedQuery, options.subSource, {
+      let passed = 0;
+      const series = await searchComick(normalizedQuery || 'manga', options.subSource, {
         signal: options.signal,
-        onBatch: (batch) => options.onTitles?.(toTitles(batch)),
+        onBatch: (batch) => {
+          // Progressive display cap — mirrors the final 40-title cap so the
+          // grid never jumps from 165 cards down to 40 at the end.
+          if (passed >= 40) return;
+          const slice = toTitles(batch).slice(0, 40 - passed);
+          passed += slice.length;
+          options.onTitles?.(slice);
+        },
       });
       return { items: toTitles(series), hasMore: false, page };
     } catch (e) {
