@@ -1373,7 +1373,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* Audiobook player bar — two stacked rows, nothing overlaps on phones */
-.audiobook-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 95; display: flex; flex-direction: column; gap: 9px; padding: 11px 14px calc(11px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: rgba(14, 16, 19, .97); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 -8px 32px rgba(0, 0, 0, .6); }
+.audiobook-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 120; display: flex; flex-direction: column; gap: 9px; padding: 11px 14px calc(11px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: rgba(14, 16, 19, .97); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 -8px 32px rgba(0, 0, 0, .6); }
 .audiobook-bar-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .audiobook-bar-art { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 8px; object-fit: cover; }
 .audiobook-bar-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

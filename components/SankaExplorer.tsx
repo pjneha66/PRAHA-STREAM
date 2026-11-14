@@ -131,9 +131,11 @@ function mergeUniqueTitles(existing: SankaTitle[], incoming: SankaTitle[]): { me
   return { merged, addedCount };
 }
 
-// Web sources plus the Internet Archive folkscanomy collections.
+// Web sources plus the Comick aggregator gateway and the Internet Archive
+// folkscanomy collections.
 const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
   ...SANKA_COMIC_SOURCES.map((option) => ({ id: option.id as string, label: option.label })),
+  { id: 'comick', label: 'Comick (aggregator search)' },
   { id: 'archive', label: 'Internet Archive (folkscanomy)' },
 ];
 
@@ -141,6 +143,7 @@ const COMIC_SOURCE_OPTIONS: Array<{ id: string; label: string }> = [
 const COMIC_SOURCE_SHORT: Record<string, string> = {
   weebcentral: 'WeebCentral',
   archive: 'Archive.org',
+  comick: 'Comick',
 };
 
 const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
@@ -792,7 +795,11 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         <div className="empty-state sanka-state">
           <span><BookOpen size={26} /></span>
           <h2>No comics found</h2>
-          <p>{submittedQuery ? 'Try another title or switch comic sources above.' : 'This source returned no comics right now. Try selecting another source above.'}</p>
+          <p>{source === 'comick' && !submittedQuery
+            ? 'Comick is search-driven — type a title above to search every aggregator at once.'
+            : submittedQuery
+              ? 'Try another title or switch comic sources above.'
+              : 'This source returned no comics right now. Try selecting another source above.'}</p>
         </div>
       )}
 

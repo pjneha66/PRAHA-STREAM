@@ -1,6 +1,7 @@
 import { isAndroidApp, nativeFetchText } from './androidBridge';
 import { MangaService } from './mangaService';
 import { evictOldest } from './cacheCaps';
+import { comickChapterImages, comickChapters, searchComick } from './comickService';
 
 const PRIMARY_ORIGIN = 'https://www.sankavollerei.web.id';
 const MIRROR_ORIGIN = 'https://www.sankavollerei.com';
@@ -698,6 +699,29 @@ export async function fetchSankaTitlesPage(
     }
   }
 
+  // Comick aggregator gateway (search-driven; see comickService).
+  if (source === 'comick') {
+    try {
+      const series = await searchComick(normalizedQuery || 'manga');
+      const items: SankaTitle[] = series.map((entry) => ({
+        id: 'comick:' + entry.url,
+        slug: entry.url,
+        detailPath: entry.url,
+        title: entry.title,
+        poster: entry.cover,
+        kind: 'comic' as const,
+        source: 'comick',
+        sourceUrl: entry.url,
+        comicType: entry.sourceLabel,
+        genres: [],
+      }));
+      return { items, hasMore: false, page };
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') throw e;
+      return { items: [], hasMore: false, page };
+    }
+  }
+
   const routes = buildTitleRoutes(kind, normalizedQuery, source, feed, page);
 
   let lastError: unknown = null;
@@ -900,6 +924,23 @@ export async function fetchSankaMangaDetail(
   signal?: AbortSignal,
   detailPath?: string,
 ): Promise<SankaMangaDetail> {
+  // Comick aggregator: the series URL rides in via detailPath.
+  if (source === 'comick') {
+    const seriesUrl = detailPath && detailPath.startsWith('http') ? detailPath : slug.startsWith('http') ? slug : '';
+    if (!seriesUrl) throw new Error('This Comick series is missing its source link.');
+    const chapters = await comickChapters(seriesUrl);
+    if (!chapters.length) throw new Error('No chapters were listed for this series on Comick.');
+    return {
+      title: '',
+      genres: [],
+      chapters: chapters.map((chapter) => ({
+        id: 'comick:' + chapter.url,
+        slug: chapter.url,
+        chapterPath: chapter.url,
+        title: chapter.title,
+      })),
+    };
+  }
   if (source === 'weebcentral') {
     const [detail, chapters] = await Promise.all([
       MangaService.getSeriesDetail(slug),
@@ -1036,6 +1077,14 @@ export async function fetchSankaChapterImages(
   signal?: AbortSignal,
   chapterPath?: string,
 ): Promise<string[]> {
+  // Comick aggregator: scrape the chapter page directly for page images.
+  if (source === 'comick') {
+    const chapterUrl = chapterPath && chapterPath.startsWith('http') ? chapterPath : slug.startsWith('http') ? slug : '';
+    if (!chapterUrl) throw new Error('This Comick chapter is missing its source link.');
+    const images = await comickChapterImages(chapterUrl);
+    if (!images.length) throw new Error('No readable page images were found for this chapter.');
+    return images;
+  }
   if (source === 'weebcentral') {
     const images = await MangaService.getChapterImages(slug);
     if (images.length > 0) return images;
