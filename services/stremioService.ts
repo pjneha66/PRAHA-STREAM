@@ -227,7 +227,7 @@ export async function findStremioStreams(
   episode?: number,
 ): Promise<{ streams: StreamResult[]; errors: SourceError[] }> {
   const baseId = media.imdbId || media.id;
-  const resourceId = media.type === 'series' && season && episode ? `${baseId}:${season}:${episode}` : baseId;
+  const resourceId = media.type === 'series' && season != null && episode != null ? `${baseId}:${season}:${episode}` : baseId;
   const eligible = addons.filter((addon) => addon.enabled && addon.features?.streams !== false && supportsResource(addon, 'stream', media.type, baseId));
   const results = await Promise.allSettled(eligible.map((addon) => fetchAddonStreams(addon, media, resourceId)));
   const streams: StreamResult[] = [];
@@ -253,7 +253,7 @@ export async function findStremioSubtitles(
 ): Promise<StreamSubtitle[]> {
   const baseId = media.imdbId || media.id;
   if (!baseId) return [];
-  const resourceId = media.type === 'series' && season && episode ? `${baseId}:${season}:${episode}` : baseId;
+  const resourceId = media.type === 'series' && season != null && episode != null ? `${baseId}:${season}:${episode}` : baseId;
   const eligible = addons.filter((addon) => addon.enabled && supportsResource(addon, 'subtitles', media.type, baseId));
   if (!eligible.length) return [];
 

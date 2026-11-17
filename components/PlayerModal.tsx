@@ -88,6 +88,11 @@ const PlayerModal: React.FC<{
   const [torrentBusy, setTorrentBusy] = useState(false);
   const [torrentError, setTorrentError] = useState('');
   const [torrentStats, setTorrentStats] = useState<TorrentStreamStats | null>(null);
+  const torrentUnsubRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    torrentUnsubRef.current?.();
+    torrentUnsubRef.current = null;
+  }, []);
   const [addonSubtitles, setAddonSubtitles] = useState<StreamSubtitle[]>([]);
   const [introSegments, setIntroSegments] = useState<IntroSegment[]>([]);
   // Zap bar availability — re-checked whenever the playing stream changes.
@@ -217,7 +222,8 @@ const PlayerModal: React.FC<{
         format: 'torrent-http',
         provider: `${activeStream.provider || 'Torrent'} (Torrent Engine)`,
       });
-      TorrentStreamingEngine.subscribeStats(infoHash, (stats) => setTorrentStats(stats));
+      torrentUnsubRef.current?.();
+      torrentUnsubRef.current = TorrentStreamingEngine.subscribeStats(infoHash, (stats) => setTorrentStats(stats));
       return true;
     } catch (err) {
       setTorrentError(err instanceof Error ? err.message : 'Unable to connect to Torrent Streaming Engine.');

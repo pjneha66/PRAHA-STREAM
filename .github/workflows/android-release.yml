@@ -13,6 +13,11 @@ jobs:
   build-apk:
     name: Build & Release Android APK
     runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
     steps:
       - name: Checkout Code
@@ -45,11 +50,24 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
+      - name: Prepare release signing keystore
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Release signing secrets are missing. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD to the repository secrets."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/praha-signing"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/praha-signing/release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/praha-signing/release.keystore" >> "$GITHUB_ENV"
+          ls -l "$RUNNER_TEMP/praha-signing/release.keystore"
+
       - name: Build Android Release APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/praha-signing/release.keystore
 
       - name: Verify Generated APK
         run: |
@@ -67,8 +85,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v2.0.0' }}
-          name: PRAHA STREAM ${{ github.ref_name || 'v2.0.0' }}
+          tag_name: ${{ github.ref_name || 'v2.11.8' }}
+          name: PRAHA STREAM ${{ github.ref_name || 'v2.11.8' }}
           files: dist-apk/*.apk
           draft: false
           prerelease: false

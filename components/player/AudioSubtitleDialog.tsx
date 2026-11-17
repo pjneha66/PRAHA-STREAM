@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import {
   AudioLines, Captions, CaptionsOff, Check, RotateCcw, Sliders,
   Upload, VolumeX, X,
@@ -60,6 +60,9 @@ export const AudioSubtitleDialog: React.FC<AudioSubtitleDialogProps> = ({
   isAndroid = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'audio' | 'subs'>(initialTab);
+  useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+  }, [isOpen, initialTab]);
   const [showAppearance, setShowAppearance] = useState(false);
   const dialogId = useId();
 

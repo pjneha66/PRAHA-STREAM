@@ -90,6 +90,7 @@ export class BookracyService {
           coverUrl: entry.book_image || entry.external_cover_url || undefined,
           identifier: undefined,
           openLibraryKey: undefined,
+          downloadUrl: BookracyService.downloadUrl(md5, entry.link),
           source: 'archive',
           // Bookracy-specific fields ride on the archive shape:
           ...( {

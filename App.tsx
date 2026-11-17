@@ -156,6 +156,14 @@ const App: React.FC = () => {
   const [discoverItems, setDiscoverItems] = useState<MediaItem[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
+
+  // A cross-tab search prefill is one-shot. Once the user leaves the target tab
+  // it must be cleared, otherwise returning later re-applies the stale term on
+  // top of whatever they are typing.
+  useEffect(() => {
+    if (searchPrefill && view !== searchPrefill.view) setSearchPrefill(null);
+  }, [view, searchPrefill]);
+
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [sourceState, setSourceState] = useState<SourceRequest | null>(null);
   const [embedState, setEmbedState] = useState<SourceRequest | null>(null);
@@ -259,6 +267,33 @@ const App: React.FC = () => {
     setToast({ id: Date.now(), message, tone });
   }, []);
 
+  // Every profile switch (Settings dropdown, Navigation dropdown and the full
+  // ProfilePicker) funnels through these helpers so a PIN-protected profile can
+  // never be entered by bypassing the PIN gate.
+  const pendingPinProfileRef = useRef<string | null>(null);
+
+  const commitProfileSwitch = useCallback((profileId: string) => {
+    const target = profiles.find((p) => p.id === profileId);
+    setActiveProfileId(profileId);
+    try {
+      window.sessionStorage.setItem(SESSION_PROFILE_KEY, profileId);
+      window.localStorage.setItem('praha.v2.profile-picker-completed', 'true');
+    } catch { /* ignore */ }
+    setSessionProfilePicked(true);
+    setProfileSwitcherOpen(false);
+    if (target && profileId !== activeProfile.id) notify(`Switched to ${target.name}.`, 'success');
+  }, [profiles, activeProfile.id, notify, setActiveProfileId]);
+
+  const requestProfileSwitch = useCallback((profileId: string) => {
+    const target = profiles.find((p) => p.id === profileId);
+    if (target?.pinHash) {
+      pendingPinProfileRef.current = profileId;
+      setPinGateProfile(target);
+      return;
+    }
+    commitProfileSwitch(profileId);
+  }, [profiles, commitProfileSwitch]);
+
   // Autonomous In-App Update check on launch
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -335,6 +370,13 @@ const App: React.FC = () => {
         document.exitFullscreen().catch(() => undefined);
         return;
       }
+      if (pinGateProfile) {
+        // Back must never dismiss the PIN prompt and fall through into the
+        // underlying picker / exit, which would let a protected profile through.
+        pendingPinProfileRef.current = null;
+        setPinGateProfile(null);
+        return;
+      }
       if (profileSwitcherOpen) {
         setProfileSwitcherOpen(false);
         return;
@@ -370,7 +412,7 @@ const App: React.FC = () => {
 
     window.addEventListener('praha:hardware-back', onHardwareBack);
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
-  }, [profileSwitcherOpen, player, sourceState, embedState, selected, view, notify]);
+  }, [pinGateProfile, profileSwitcherOpen, player, sourceState, embedState, selected, view, notify]);
 
   // Custom background image (port of PlayTorrio's custom background): URL
   // based, dimmed with a scrim so text stays readable.
@@ -1248,15 +1290,7 @@ const App: React.FC = () => {
         repositories={repositories}
         profiles={profiles}
         activeProfile={activeProfile}
-        onSelectProfile={(id) => {
-          const target = profiles.find((p) => p.id === id);
-          if (target?.pinHash) {
-            setPinGateProfile(target);
-            return;
-          }
-          setActiveProfileId(id);
-          if (target) notify(`Switched to ${target.name}.`, 'success');
-        }}
+        onSelectProfile={(id) => requestProfileSwitch(id)}
         onCreateProfile={createProfile}
         onDeleteProfile={deleteProfile}
         onUpdateProfile={updateProfile}
@@ -1269,18 +1303,7 @@ const App: React.FC = () => {
   }
 
   const handleCompleteProfileGate = (profileId: string) => {
-    const wasSwitching = profileSwitcherOpen && profileId !== activeProfile.id;
-    setActiveProfileId(profileId);
-    try {
-      window.sessionStorage.setItem(SESSION_PROFILE_KEY, profileId);
-      window.localStorage.setItem('praha.v2.profile-picker-completed', 'true');
-    } catch { /* ignore */ }
-    setSessionProfilePicked(true);
-    setProfileSwitcherOpen(false);
-    if (wasSwitching) {
-      const target = profiles.find((p) => p.id === profileId);
-      if (target) notify(`Switched to ${target.name}.`, 'success');
-    }
+    requestProfileSwitch(profileId);
   };
 
   return (
@@ -1301,12 +1324,7 @@ const App: React.FC = () => {
             sourceCount={activeSourceCount}
             profiles={profiles}
             activeProfile={activeProfile}
-            onSelectProfile={(id) => {
-              setActiveProfileId(id);
-              try { window.sessionStorage.setItem(SESSION_PROFILE_KEY, id); } catch { /* ignore */ }
-              const target = profiles.find((p) => p.id === id);
-              if (target) notify(`Switched to ${target.name}.`, 'success');
-            }}
+            onSelectProfile={(id) => requestProfileSwitch(id)}
             onOpenProfilePicker={() => setProfileSwitcherOpen(true)}
           >
             {page}
@@ -1424,11 +1442,15 @@ const App: React.FC = () => {
         <ProfilePinGate
           profile={pinGateProfile}
           onUnlocked={() => {
-            setActiveProfileId(pinGateProfile.id);
-            notify(`Switched to ${pinGateProfile.name}.`, 'success');
+            const targetId = pendingPinProfileRef.current || pinGateProfile.id;
+            pendingPinProfileRef.current = null;
+            commitProfileSwitch(targetId);
             setPinGateProfile(null);
           }}
-          onCancel={() => setPinGateProfile(null)}
+          onCancel={() => {
+            pendingPinProfileRef.current = null;
+            setPinGateProfile(null);
+          }}
         />
       )}
 

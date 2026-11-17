@@ -40,7 +40,8 @@ async function probeUncached(): Promise<NetworkCondition> {
   for (const target of targets) {
     try {
       const response = await nativeFetchText(target, { method: 'GET', timeoutMs: 5000 });
-      if (response.status > 0) return 'servers-unreachable';
+      // A reachable catalog source means the internet and our sources are fine.
+      if (response.status > 0) return 'online';
     } catch {
       // keep probing
     }

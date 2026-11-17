@@ -58,13 +58,18 @@ const apiProxy = {
 };
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  // WHATWG URL.hostname keeps IPv6 brackets, so strip them before matching.
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   return (
     host === 'localhost' ||
     host.endsWith('.localhost') ||
     host.endsWith('.local') ||
     host === '0.0.0.0' ||
+    host === '::' ||
     host === '::1' ||
+    /^::ffff:(127\.|10\.|192\.168\.|169\.254\.)/.test(host) ||
+    /^fe[89ab][0-9a-f]?:/.test(host) ||
+    /^f[cd][0-9a-f]{2}:/.test(host) ||
     /^127\./.test(host) ||
     /^10\./.test(host) ||
     /^192\.168\./.test(host) ||

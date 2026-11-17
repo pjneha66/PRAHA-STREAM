@@ -21,8 +21,8 @@ export function relevanceScore(query: string, candidate: ScoreableTitle): number
 
   let score = 0;
   if (t === q) score += 10000;
-  else if (t.includes(q)) score += 5000;
-  else if (t.startsWith(q)) score += 3000;
+  else if (t.startsWith(q)) score += 5000;
+  else if (t.includes(q)) score += 3000;
   else {
     // Token overlap: proportion of query words present in the title.
     const qTokens = q.split(' ').filter(Boolean);

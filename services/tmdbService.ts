@@ -26,10 +26,10 @@ export const DISCOVER_GENRE_OPTIONS: Array<{ id: string; label: string; movieGen
   { id: 'drama', label: 'Drama', movieGenreId: 18, tvGenreId: 18 },
   { id: 'family', label: 'Family', movieGenreId: 10751, tvGenreId: 10751 },
   { id: 'fantasy', label: 'Fantasy & Sci-Fi', movieGenreId: 878, tvGenreId: 10765 },
-  { id: 'horror', label: 'Horror', movieGenreId: 27, tvGenreId: 9648 },
+  { id: 'horror', label: 'Horror', movieGenreId: 27 },
   { id: 'mystery', label: 'Mystery', movieGenreId: 9648, tvGenreId: 9648 },
   { id: 'romance', label: 'Romance', movieGenreId: 10749, tvGenreId: 10749 },
-  { id: 'thriller', label: 'Thriller', movieGenreId: 53, tvGenreId: 80 },
+  { id: 'thriller', label: 'Thriller', movieGenreId: 53 },
 ];
 
 export class TmdbKeyError extends Error {

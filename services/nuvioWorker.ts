@@ -25,7 +25,7 @@ interface PendingProxyRequest {
 
 const pendingProxy = new Map<string, PendingProxyRequest>();
 
-function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   const method = init?.method || (typeof input === 'object' && 'method' in input ? input.method : 'GET') || 'GET';
   const headers: Record<string, string> = {};
@@ -34,7 +34,29 @@ function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): 
       headers[key] = value;
     });
   }
-  const body = typeof init?.body === 'string' ? init.body : undefined;
+  // The main-thread bridge only forwards string bodies. Serialize the common
+  // RequestInit body types here so proxied POST/PUT requests keep their payload.
+  let body: string | undefined;
+  const rawBody = init?.body;
+  if (typeof rawBody === 'string') {
+    body = rawBody;
+  } else if (rawBody instanceof URLSearchParams) {
+    body = rawBody.toString();
+    if (!headers['content-type']) headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+  } else if (rawBody instanceof FormData) {
+    const params = new URLSearchParams();
+    rawBody.forEach((value, key) => {
+      if (typeof value === 'string') params.append(key, value);
+    });
+    body = params.toString();
+    if (!headers['content-type']) headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+  } else if (rawBody instanceof Blob) {
+    body = await rawBody.text();
+  } else if (rawBody instanceof ArrayBuffer) {
+    body = new TextDecoder().decode(rawBody);
+  } else if (rawBody != null) {
+    body = String(rawBody);
+  }
   const reqId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return new Promise<Response>((resolve, reject) => {

@@ -214,6 +214,18 @@ const AnimeView: React.FC<{
     return grid.filter((item) => item.genres.some((value) => value.toLowerCase() === genre.toLowerCase()));
   }, [grid, genre]);
 
+  // Genre is applied client-side, so matches on later pages are invisible if we
+  // only ever look at what has loaded. Page ahead (bounded) while the filtered
+  // set is empty and the index reports more results.
+  const genreAutoLoadRef = useRef(0);
+  useEffect(() => { genreAutoLoadRef.current = 0; }, [genre, sort, format, minScore]);
+  useEffect(() => {
+    if (genre === 'all' || filteredGrid.length > 0 || !gridHasMore) return;
+    if (gridLoading || gridLoadingMore || genreAutoLoadRef.current >= 8) return;
+    genreAutoLoadRef.current += 1;
+    void loadGrid(gridPage + 1, true);
+  }, [genre, filteredGrid.length, gridHasMore, gridLoading, gridLoadingMore, gridPage, loadGrid, sort, format, minScore]);
+
   const saved = featured ? watchlist.some((item) => item.id === featured.id) : false;
   const totalAnime = rows.trending.length + rows.topRated.length;
 
@@ -504,20 +516,33 @@ const AnimeView: React.FC<{
           </div>
         ) : gridLoading ? (
           <div className="media-grid">{Array.from({ length: 12 }).map((_, index) => <div className="media-skeleton" key={index}><span /><i /><i /></div>)}</div>
-        ) : filteredGrid.length ? (
+        ) : (
           <>
-            <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
-              {filteredGrid.map((item) => (
-                <MediaCard
-                  key={item.id}
-                  item={item}
-                  onSelect={onSelect}
-                  onToggleWatchlist={onToggleWatchlist}
-                  inWatchlist={watchlist.some((entry) => entry.id === item.id)}
-                  compact={compact}
-                />
-              ))}
-            </div>
+            {filteredGrid.length ? (
+              <div className={`media-grid ${compact ? 'compact-grid' : ''}`}>
+                {filteredGrid.map((item) => (
+                  <MediaCard
+                    key={item.id}
+                    item={item}
+                    onSelect={onSelect}
+                    onToggleWatchlist={onToggleWatchlist}
+                    inWatchlist={watchlist.some((entry) => entry.id === item.id)}
+                    compact={compact}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <span><Tv size={26} /></span>
+                <h2>No titles match those filters</h2>
+                <p>{gridHasMore
+                  ? 'Checking more pages for a match — or load more below.'
+                  : 'Try a different format, a lower score, or clear the genre filter.'}</p>
+                <button className="button button-secondary" onClick={() => { setFormat('ALL'); setMinScore(0); setGenre('all'); }}>
+                  <RotateCcw size={15} /> Reset filters
+                </button>
+              </div>
+            )}
             {gridHasMore && (
               <div className="discover-load-more">
                 <button className="button button-secondary" onClick={() => void loadGrid(gridPage + 1, true)} disabled={gridLoadingMore}>
@@ -527,15 +552,6 @@ const AnimeView: React.FC<{
               </div>
             )}
           </>
-        ) : (
-          <div className="empty-state">
-            <span><Tv size={26} /></span>
-            <h2>No titles match those filters</h2>
-            <p>Try a different format, a lower score, or clear the genre filter.</p>
-            <button className="button button-secondary" onClick={() => { setFormat('ALL'); setMinScore(0); setGenre('all'); }}>
-              <RotateCcw size={15} /> Reset filters
-            </button>
-          </div>
         )}
       </section>
 

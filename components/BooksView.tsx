@@ -217,6 +217,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       payload: {
         identifier: item.identifier,
         openLibraryKey: item.openLibraryKey,
+        downloadUrl: item.downloadUrl,
         source: item.source,
         authors: item.authors,
         year: item.year,
@@ -445,6 +446,11 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
               {selected.openLibraryKey && (
                 <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
                   <ExternalLink size={13} /> Open Library page
+                </button>
+              )}
+              {selected.downloadUrl && (
+                <button type="button" className="button button-primary" onClick={() => openSafeExternalUrl(selected.downloadUrl!)}>
+                  <FileDown size={14} /> Download from Bookracy
                 </button>
               )}
             </div>

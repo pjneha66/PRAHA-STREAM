@@ -355,7 +355,7 @@ public class MainActivity extends BridgeActivity {
             case "shareText":
                 return rpcBridge.shareText(args.optString(0, ""), args.optString(1, ""));
             case "downloadFile":
-                return rpcBridge.downloadFile(args.optString(0, ""), args.optString(2, ""), args.optString(1, ""));
+                return rpcBridge.downloadFile(args.optString(0, ""), args.optString(1, ""), args.optString(2, ""));
             case "downloadAndInstallUpdate":
                 return rpcBridge.downloadAndInstallUpdate(args.optString(0, ""), args.optString(1, ""));
             case "openSubtitlePicker":
@@ -491,6 +491,16 @@ public class MainActivity extends BridgeActivity {
             }
 
             while (redirects < 5) {
+                // Re-gate every hop, not just the entry URL: an allowed host may
+                // 30x-redirect to loopback / link-local / non-HTTP targets.
+                if (!isAllowedRemoteUrl(currentUrl, true)) {
+                    try {
+                        result.put("ok", false);
+                        result.put("status", 0);
+                        result.put("error", "Blocked redirect target");
+                    } catch (Exception ignored) {}
+                    return result;
+                }
                 try {
                     URL url = new URL(currentUrl);
                     conn = (HttpURLConnection) url.openConnection();
@@ -650,18 +660,28 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public boolean enterPip() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
                 final boolean[] ok = {false};
+                final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
                 runOnUiThread(() -> {
                     try {
                         PictureInPictureParams params = new PictureInPictureParams.Builder()
                                 .setAspectRatio(new Rational(16, 9))
                                 .build();
                         enterPictureInPictureMode(params);
+                        ok[0] = true;
                     } catch (Exception ignored) {
+                        ok[0] = false;
+                    } finally {
+                        latch.countDown();
                     }
                 });
-                ok[0] = true;
+                try {
+                    latch.await(2, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 return ok[0];
             }
             return false;
@@ -947,6 +967,7 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
+        @JavascriptInterface
         public boolean downloadAndInstallUpdate(final String apkUrl, final String versionName) {
             if (apkUrl == null || apkUrl.isEmpty()) return false;
             // Pin self-updates to the GitHub release feed over HTTPS and require

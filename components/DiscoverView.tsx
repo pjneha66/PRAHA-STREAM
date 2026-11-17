@@ -78,6 +78,22 @@ const CrossTabResults: React.FC<{
 
 const YEARS = Array.from({ length: 37 }, (_, idx) => String(2026 - idx));
 
+/** Genre names (as they appear on MediaItem.genres) matching each discover genre id. */
+const GENRE_KEYWORDS: Record<string, string[]> = {
+  action: ['action'],
+  animation: ['animation'],
+  comedy: ['comedy'],
+  crime: ['crime'],
+  documentary: ['documentary'],
+  drama: ['drama'],
+  family: ['family'],
+  fantasy: ['fantasy', 'sci-fi', 'science fiction'],
+  horror: ['horror'],
+  mystery: ['mystery'],
+  romance: ['romance', 'romantic'],
+  thriller: ['thriller'],
+};
+
 const DiscoverView: React.FC<{
   items: MediaItem[];
   loading: boolean;
@@ -120,15 +136,32 @@ const DiscoverView: React.FC<{
     filters.language !== 'all' ||
     filters.sortBy !== 'popularity.desc';
 
-  const filtered = useMemo(() => items.filter((item) => {
-    if (filters.type !== 'all' && item.type !== filters.type) return false;
-    if (filters.source === 'tmdb' && item.source !== 'tmdb') return false;
-    if (filters.source === 'imdx' && item.source !== 'imdx') return false;
-    if (filters.source === 'stremio' && item.source === 'tmdb') return false;
-    if (query && filters.minRating > 0 && (item.rating || 0) < filters.minRating) return false;
-    if (query && filters.year !== 'all' && item.year !== filters.year) return false;
-    return true;
-  }), [items, filters, query]);
+  const filtered = useMemo(() => {
+    const genreKeys = filters.genre !== 'all'
+      ? (GENRE_KEYWORDS[filters.genre] || [DISCOVER_GENRE_OPTIONS.find((option) => option.id === filters.genre)?.label || filters.genre])
+      : null;
+    const result = items.filter((item) => {
+      if (filters.type !== 'all' && item.type !== filters.type) return false;
+      if (filters.source === 'tmdb' && item.source !== 'tmdb') return false;
+      if (filters.source === 'imdx' && item.source !== 'imdx') return false;
+      if (filters.source === 'stremio' && item.source === 'tmdb') return false;
+      if (query && filters.minRating > 0 && (item.rating || 0) < filters.minRating) return false;
+      if (query && filters.year !== 'all' && item.year !== filters.year) return false;
+      // Search results are not server-filtered by these controls, so apply
+      // them locally (browse results already come pre-filtered from the service).
+      if (query && genreKeys && !item.genres?.some((name) => genreKeys.some((key) => name.toLowerCase().includes(key)))) return false;
+      if (query && filters.language !== 'all' && item.originalLanguage !== filters.language) return false;
+      return true;
+    });
+    if (!query || filters.sortBy === 'popularity.desc' || filters.sortBy === 'revenue.desc') return result;
+    const sorted = [...result];
+    if (filters.sortBy === 'vote_average.desc') {
+      sorted.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    } else if (filters.sortBy === 'primary_release_date.desc') {
+      sorted.sort((a, b) => Number(b.year || 0) - Number(a.year || 0));
+    }
+    return sorted;
+  }, [items, filters, query]);
 
   return (
     <div className="standard-page page-enter">

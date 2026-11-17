@@ -306,7 +306,10 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const setVolume = useCallback((next: number) => {
     setVolumeState(next);
     const audio = audioRef.current;
-    if (audio) audio.volume = next;
+    if (audio) {
+      audio.volume = next;
+      audio.muted = next === 0;
+    }
     setMuted(next === 0);
   }, []);
 
@@ -339,10 +342,33 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, []);
 
   const removeFromQueue = useCallback((index: number) => {
-    setQueue((existing) => existing.filter((_, i) => i !== index));
-    if (index === queueIndex) return;
-    if (index < queueIndex) setQueueIndex((value) => value - 1);
-  }, [queueIndex]);
+    const nextQueue = queue.filter((_, i) => i !== index);
+    setQueue(nextQueue);
+    if (index < queueIndex) {
+      setQueueIndex(queueIndex - 1);
+      return;
+    }
+    if (index > queueIndex) return;
+    // The currently playing item was removed: stop it and load the item that
+    // shifted into its place (or clear the player when the queue is empty).
+    if (!nextQueue.length) {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      }
+      setCurrentTrack(null);
+      setQueueIndex(-1);
+      setIsPlaying(false);
+      return;
+    }
+    const newIndex = Math.min(index, nextQueue.length - 1);
+    const nextTrack = nextQueue[newIndex];
+    setQueueIndex(newIndex);
+    setCurrentTrack(nextTrack);
+    void loadStream(nextTrack);
+  }, [queue, queueIndex, loadStream]);
 
   const clearPlayer = useCallback(() => {
     const audio = audioRef.current;

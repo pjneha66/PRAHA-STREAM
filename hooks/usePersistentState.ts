@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * Deep-merges a stored plain object over the defaults so that settings saved by
@@ -29,13 +29,24 @@ function readKey<T>(key: string, fallback: T): T {
 
 export function usePersistentState<T>(key: string, initialValue: T) {
   const initialRef = useRef(initialValue);
-  const [value, setValue] = useState<T>(() => readKey(key, initialValue));
+  // Keep the key alongside the value in a single state object. When `key`
+  // changes we re-read synchronously during render, so callers never observe
+  // the previous key's value for a frame (and cannot persist it to the new key).
+  const [state, setState] = useState<{ key: string; value: T }>(() => ({
+    key,
+    value: readKey(key, initialValue),
+  }));
+
+  let value: T;
+  if (state.key !== key) {
+    value = readKey(key, initialRef.current);
+    setState({ key, value });
+  } else {
+    value = state.value;
+  }
+
   const valueRef = useRef(value);
   valueRef.current = value;
-
-  useEffect(() => {
-    setValue(readKey(key, initialRef.current));
-  }, [key]);
 
   const setStoredValue = useCallback((next: T | ((current: T) => T)) => {
     const resolved = next instanceof Function ? next(valueRef.current) : next;
@@ -45,7 +56,7 @@ export function usePersistentState<T>(key: string, initialValue: T) {
     } catch (error) {
       console.error(`Unable to persist ${key}`, error);
     }
-    setValue(resolved);
+    setState({ key, value: resolved });
   }, [key]);
 
   return [value, setStoredValue] as const;

@@ -283,6 +283,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
         const url = await LiveMatchesScraper.resolveNuvioStream(match.id);
         if (url) playStreamNow(match.title, url, match.league, match.poster);
         else setMatchesError(`No stream available for "${match.title}" right now — try another match.`);
+      } catch (error) {
+        setMatchesError(error instanceof Error ? error.message : `Could not resolve a stream for "${match.title}".`);
       } finally {
         setResolvingMatchId(null);
       }

@@ -21,6 +21,8 @@ export interface BookItem {
   identifier?: string;
   /** Open Library work key (when source === 'openlibrary'), e.g. /works/OL123W. */
   openLibraryKey?: string;
+  /** Direct download link for sources (e.g. Bookracy) that have no archive.org identifier. */
+  downloadUrl?: string;
   source: 'openlibrary' | 'archive';
   note?: string;
   /** Lending-locked on archive.org — page images are 403 without a loan. */
@@ -118,7 +120,7 @@ export class BooksService {
     const items: BookItem[] = docs.map((doc) => {
       const iaList = Array.isArray(doc.ia) ? (doc.ia as string[]) : [];
       const identifier = iaList[0];
-      const olCover = doc.cover_i ? `https://covers.openlibrary.org/b/cover_i/${doc.cover_i}-L.jpg` : undefined;
+      const olCover = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : undefined;
       return {
         id: String(doc.key || identifier || doc.title),
         title: String(doc.title || 'Untitled'),

@@ -57,13 +57,34 @@ export function getDismissedUpdateVersion(): string {
  * Parses semver string (e.g. "v2.4.0", "2.5.0", "2.6.0-beta.1") into
  * numerical components with prerelease awareness.
  */
-function parseVersion(v: string): [number, number, number, number] {
+function parseVersion(v: string): [number, number, number, string[]] {
   const clean = v.replace(/^v/i, '').trim();
-  const [core, pre] = clean.split('-');
+  const [core, pre] = clean.split('-', 2);
   const parts = core.split('.').map((p) => parseInt(p, 10) || 0);
-  // A prerelease of the same core version ranks below it (Nuvio's VersionUtils rule).
-  const preRank = pre ? -1 : 0;
-  return [parts[0] || 0, parts[1] || 0, parts[2] || 0, preRank];
+  // An empty prerelease array (stable) ranks ABOVE any prerelease of the
+  // same core version. Identifier arrays are compared with semver rules.
+  const preParts = pre ? pre.split('.').filter(Boolean) : [];
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0, preParts];
+}
+
+function comparePrerelease(a: string[], b: string[]): number {
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+    const leftNum = /^\d+$/.test(left);
+    const rightNum = /^\d+$/.test(right);
+    if (leftNum && rightNum) return Number(left) - Number(right);
+    if (leftNum !== rightNum) return leftNum ? -1 : 1;
+    return left < right ? -1 : 1;
+  }
+  return 0;
 }
 
 /**
@@ -76,7 +97,7 @@ export function isNewerVersion(current: string, latest: string): boolean {
   if (lMajor !== cMajor) return lMajor > cMajor;
   if (lMinor !== cMinor) return lMinor > cMinor;
   if (lPatch !== cPatch) return lPatch > cPatch;
-  return lPre > cPre;
+  return comparePrerelease(lPre, cPre) > 0;
 }
 
 /**

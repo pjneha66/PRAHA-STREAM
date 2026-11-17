@@ -238,9 +238,12 @@ export class OctaveMusicService {
     if (opts?.yt === false) {
       return { tracks: tracks.slice(0, 40), artists: artists.slice(0, 16), albums: albums.slice(0, 16) };
     }
+    // YouTube direct first; community mirrors are only a fallback when the
+    // direct endpoint is blocked or returns nothing usable.
+    const beforeYouTube = tracks.length;
     try {
-      const viaMirror = await searchMirrorMusic(trimmed);
-      for (const video of viaMirror.videos.filter((video) => !video.live).slice(0, 25)) {
+      const direct = await flowMusicSearch(trimmed);
+      for (const video of direct.data.videos.filter((video) => !video.live).slice(0, 25)) {
         pushTrack({
           id: video.id,
           title: video.title,
@@ -250,14 +253,12 @@ export class OctaveMusicService {
           coverUrl: video.thumbnail || '',
         });
       }
-    } catch {
+    } catch { /* fall through to mirrors */ }
+    if (tracks.length === beforeYouTube) {
       try {
-        const direct = await flowMusicSearch(trimmed);
-        for (const video of direct.data.videos.filter((video) => !video.live).slice(0, 25)) {
-          const key = `${(video.channel || '').toLowerCase()}|${video.title.toLowerCase()}`;
-          if (seenTracks.has(key)) continue;
-          seenTracks.add(key);
-          tracks.push({
+        const viaMirror = await searchMirrorMusic(trimmed);
+        for (const video of viaMirror.videos.filter((video) => !video.live).slice(0, 25)) {
+          pushTrack({
             id: video.id,
             title: video.title,
             artist: video.channel || 'Unknown Artist',
@@ -359,19 +360,26 @@ export class OctaveMusicService {
       'Hip-Hop & R&B': 'Hip-Hop Hits',
     };
 
-    const trendingPromise = searchMirrorMusic('trending songs 2026')
+    const toTrendingRows = (videos: Array<{ id: string; title: string; channel?: string; channelId?: string; duration?: string; thumbnail?: string; live?: boolean }>) =>
+      videos.filter((video) => !video.live).slice(0, 12).map((video) => ({
+        id: video.id,
+        title: video.title,
+        artist: video.channel || 'Unknown Artist',
+        artistId: video.channelId,
+        duration: durationToSeconds(video.duration),
+        coverUrl: video.thumbnail || '',
+      }));
+
+    const trendingPromise = flowMusicSearch('trending songs 2026')
+      .then((direct) => {
+        const rows = toTrendingRows(direct.data.videos);
+        if (rows.length >= 6) results['Trending Music'] = rows;
+        else return searchMirrorMusic('trending songs 2026');
+      })
       .then((mirror) => {
-        const trending = mirror.videos.filter((video) => !video.live).slice(0, 12);
-        if (trending.length >= 6) {
-          results['Trending Music'] = trending.map((video) => ({
-            id: video.id,
-            title: video.title,
-            artist: video.channel || 'Unknown Artist',
-            artistId: video.channelId,
-            duration: durationToSeconds(video.duration),
-            coverUrl: video.thumbnail || '',
-          }));
-        }
+        if (!mirror || results['Trending Music']) return;
+        const rows = toTrendingRows(mirror.videos);
+        if (rows.length >= 6) results['Trending Music'] = rows;
       })
       .catch(() => undefined);
 

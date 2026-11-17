@@ -1048,6 +1048,16 @@ export function useMpvEngine({
   }, [onSettingsChange]);
 
   const toggleMute = useCallback(() => {
+    // Native LibVLC owns audio on Android; the <video> element is only a
+    // transparent surface there, so muting it has no audible effect.
+    if (isNativeVlcAvailable()) {
+      if (currentVolume === 0) setVolume(lastAudibleVolumeRef.current);
+      else {
+        if (currentVolume > 0) lastAudibleVolumeRef.current = currentVolume;
+        setVolume(0);
+      }
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     if (video.volume === 0) {
@@ -1061,7 +1071,7 @@ export function useMpvEngine({
       video.muted = !video.muted;
       setMuted(video.muted);
     }
-  }, [onSettingsChange]);
+  }, [currentVolume, onSettingsChange, setVolume]);
 
   const setSpeed = useCallback((next: number) => {
     const value = clamp(Number(next.toFixed(2)), 0.25, 4);
@@ -1096,6 +1106,10 @@ export function useMpvEngine({
       if (isNativeVlcAvailable()) {
         setNativeAudioTrack(-1);
       }
+      // hls.js/dash.js do not expose audioTracks on the <video> element, so
+      // disabling those alone leaves audio playing on the primary web paths.
+      if (hlsRef.current) hlsRef.current.audioTrack = -1;
+      if (videoRef.current) videoRef.current.muted = true;
       const tracks = (videoRef.current as VideoWithAudioTracks | null)?.audioTracks;
       if (tracks) {
         for (let i = 0; i < tracks.length; i++) tracks[i].enabled = false;
@@ -1127,8 +1141,9 @@ export function useMpvEngine({
       if (!tracks || !Number.isInteger(index) || index < 0 || index >= tracks.length) return;
       for (let i = 0; i < tracks.length; i++) tracks[i].enabled = i === index;
     } else return;
+    if (currentAudio === 'audio:off' && videoRef.current) videoRef.current.muted = false;
     setCurrentAudio(id);
-  }, []);
+  }, [currentAudio]);
 
   const cycleAudio = useCallback(() => {
     if (!audioTracks.length) return;

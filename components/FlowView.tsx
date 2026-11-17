@@ -44,8 +44,6 @@ interface PlayerPrefs {
   quality: 'auto' | 'highest' | 'data-saver';
   autoplayNext: boolean;
   noCookie: boolean;
-  /** Remembered caption size for the direct player; applied straight to <track>. */
-  captionSize: 'small' | 'medium' | 'large';
   /** Direct player speed. */
   speed: number;
 }
@@ -64,7 +62,6 @@ const DEFAULT_PREFS: PlayerPrefs = {
   quality: 'auto',
   autoplayNext: true,
   noCookie: true,
-  captionSize: 'medium',
   speed: 1,
 };
 
@@ -248,6 +245,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const radioRef = useRef<HTMLAudioElement | null>(null);
+  // Monotonic request tokens: a slow response for an old channel/video must
+  // never overwrite a newer selection the user has since made.
+  const feedSeqRef = useRef(0);
+  const detailSeqRef = useRef(0);
   const android = isAndroidApp();
 
   const isSubscribed = useCallback((id?: string) => Boolean(id && subs.some((entry) => entry.id === id)), [subs]);
@@ -340,13 +342,18 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   }, [submitted, mode]);
 
   const loadChannel = useCallback((id: string) => {
+    const seq = ++feedSeqRef.current;
     setSection('channel');
     setFeedId(id);
     setFeedState('loading');
     setFeedError('');
     flowChannel(id)
-      .then(({ data, backend: source }) => { setFeed(data); setBackend(source); setFeedState('ready'); })
+      .then(({ data, backend: source }) => {
+        if (seq !== feedSeqRef.current) return;
+        setFeed(data); setBackend(source); setFeedState('ready');
+      })
       .catch((error: unknown) => {
+        if (seq !== feedSeqRef.current) return;
         setFeed(null);
         setFeedState('error');
         setFeedError(error instanceof Error ? error.message : 'Could not load that channel.');
@@ -354,8 +361,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
   }, []);
 
   const openVideo = useCallback((video: FlowVideo | string) => {
+    const seq = ++detailSeqRef.current;
     const id = typeof video === 'string' ? video : video.id;
     const stub = typeof video === 'string' ? null : video;
+    // Stop the background radio when a video starts so the two never overlap.
+    setRadioPlaying(false);
     setDetailId(id);
     setDetailState('loading');
     setDetailError('');
@@ -374,14 +384,19 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
       setRecent((current) => [stub, ...current.filter((entry) => entry.id !== stub.id)].slice(0, 12));
     }
     flowDetail(id)
-      .then(({ data, backend: source }) => { setDetail(data); setBackend(source); setDetailState('idle'); })
+      .then(({ data, backend: source }) => {
+        if (seq !== detailSeqRef.current) return;
+        setDetail(data); setBackend(source); setDetailState('idle');
+      })
       .catch((error: unknown) => {
+        if (seq !== detailSeqRef.current) return;
         setDetailState('error');
         setDetailError(error instanceof Error ? error.message : 'Could not load that video.');
       });
   }, [setRecent]);
 
   const closeWatch = () => {
+    detailSeqRef.current += 1; // invalidate any in-flight detail request
     setDetailId(null);
     setDetail(null);
     setDetailState('idle');
@@ -428,6 +443,22 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     : quality === 'auto'
       ? (activeTrack?.height ? `Auto · ${activeTrack.height}p` : 'Auto')
       : (activeTrack?.height ? `${activeTrack.height}p` : activeTrack?.label || 'Auto');
+
+  // Apply playback rate imperatively so changing speed never remounts (and
+  // restarts) the <video>. Re-apply when the source changes because the freshly
+  // mounted element resets playbackRate to 1.
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = prefs.speed;
+  }, [prefs.speed, activeSource]);
+
+  // Flow radio audio lives outside the settings drawer so closing the drawer
+  // no longer stops playback while the switch still claims "Playing".
+  useEffect(() => {
+    const audio = radioRef.current;
+    if (!audio) return;
+    if (radioPlaying) void audio.play().catch(() => setRadioPlaying(false));
+    else audio.pause();
+  }, [radioPlaying]);
 
   const syncAudio = useCallback(() => {
     const video = videoRef.current;
@@ -518,14 +549,16 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
     }
   };
 
-  const embedSrc = detail
-    ? youtubeEmbedUrl(detail.id, {
-      language: prefs.language,
-      captions: prefs.captions,
-      captionLanguage: prefs.captionLanguage,
-      noCookie: prefs.noCookie,
-    })
-    : '';
+  const embedOptions = {
+    language: prefs.language,
+    captions: prefs.captions,
+    captionLanguage: prefs.captionLanguage,
+    noCookie: prefs.noCookie,
+  };
+  const embedSrc = detail ? youtubeEmbedUrl(detail.id, embedOptions) : '';
+  // On a detail-load error `detail` is null, so build the fallback iframe URL
+  // from the id we already have instead of rendering an empty src.
+  const errorEmbedSrc = detailId ? youtubeEmbedUrl(detailId, embedOptions) : '';
 
   const nextUp = detail?.related.slice(0, 14) ?? [];
 
@@ -551,7 +584,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               )}
               {detailState === 'error' && (
                 <>
-                  <iframe src={embedSrc} title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+                  <iframe src={errorEmbedSrc} title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
                   <div className="yt-player-error">
                     <CircleAlert size={14} />
                     <span>Details unavailable — the player still works.</span>
@@ -573,7 +606,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                 ) : activeSource ? (
                   <>
                     <video
-                      key={`${detail.id}-${quality}-${audioOnly}-${prefs.quality}-${prefs.speed}`}
+                      key={`${detail.id}-${quality}-${audioOnly}-${prefs.quality}`}
                       ref={videoRef}
                       className="yt-video"
                       src={activeSource}
@@ -748,19 +781,6 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
                         ))}
                       </select>
                     </label>
-                    {prefs.captions && (
-                      <label className="yt-menu-field">
-                        <span><Captions size={12} /> Caption size</span>
-                        <select
-                          value={prefs.captionSize}
-                          onChange={(event) => setPrefs((current) => ({ ...current, captionSize: event.target.value as PlayerPrefs['captionSize'] }))}
-                        >
-                          <option value="small">Small</option>
-                          <option value="medium">Medium</option>
-                          <option value="large">Large</option>
-                        </select>
-                      </label>
-                    )}
                     <label className="yt-menu-field">
                       <span><SkipForward size={12} /> Autoplay next</span>
                       <button
@@ -928,6 +948,8 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   return (
     <div className={`flow-page yt-app page-enter ${mode === 'music' ? 'music-mode' : ''}`}>
+      {/* Kept outside the settings drawer so radio audio survives closing it. */}
+      <audio ref={radioRef} src={FLOW_RADIO.url} preload="none" />
       {/* mode switch: YouTube / YouTube Music */}
       <header className="yt-topbar">
         <div className="yt-brand">
@@ -1022,7 +1044,6 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <div className="yt-radio">
               <span className="status-dot" />
               <div><strong>{FLOW_RADIO.name}</strong><p>{FLOW_RADIO.description}</p></div>
-              <audio src={FLOW_RADIO.url} controls autoPlay preload="none" />
             </div>
           )}
           <div className="yt-settings-foot">

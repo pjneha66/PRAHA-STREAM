@@ -261,7 +261,9 @@ export class IptvClient {
         const info = root.user_info || root;
         const auth = String(info.auth ?? '');
         const status = String(info.status ?? '').toLowerCase();
-        const ok = auth === '1' || status === 'active' || !!root.user_info;
+        // `user_info` is present in some rejected responses too; require an
+        // explicit successful auth/status instead of treating it as success.
+        const ok = auth === '1' || status === 'active';
         if (ok) return { info, base };
       } catch {
         // Not a valid Xtream response — try the next transport.
@@ -1370,7 +1372,7 @@ export class LiveMatchesScraper {
             endsAt,
             timeLabel,
             isLive,
-            streamUrl: s.iframe || s.uri_name ? `https://old.ppv.to/live/${s.uri_name}` : '',
+            streamUrl: s.iframe || (s.uri_name ? `https://old.ppv.to/live/${s.uri_name}` : ''),
             poster: s.poster || undefined,
           });
         }

@@ -145,7 +145,7 @@ export function mapImdxEpisodes(episodes: ImdxEpisode[] | undefined): TmdbEpisod
     .filter((episode) => Number(episode?.episodeNumber) > 0)
     .map((episode, index) => ({
       id: Number(String(episode.id || '').replace(/\D/g, '')) || index + 1,
-      season: Number(episode.season) || 1,
+      season: episode.season == null || episode.season === '' ? 1 : Number(episode.season),
       episode: Number(episode.episodeNumber),
       title: String(episode.title || `Episode ${episode.episodeNumber}`),
       overview: String(episode.plot || ''),

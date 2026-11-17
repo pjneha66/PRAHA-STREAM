@@ -1228,56 +1228,61 @@ export async function resolveArtworkFallback(title: string, kind: SankaKind): Pr
 
   const job = (async (): Promise<string | null> => {
     await acquireArtworkSlot();
+    // A single outer finally guarantees the concurrency slot is released on
+    // EVERY exit path — including an early `return` from the Kitsu branch,
+    // which previously leaked a slot until the process restarted.
     try {
       const kitsuType = kind === 'comic' ? 'manga' : 'anime';
-      const kitsuRes = await nativeFetchText(
-        `https://kitsu.io/api/edge/${kitsuType}?filter[text]=${encodeURIComponent(clean)}&page[limit]=1`,
-        { headers: { Accept: 'application/vnd.api+json, application/json' }, timeoutMs: 7000 },
-      );
-      if (kitsuRes.ok) {
-        const parsed = JSON.parse(kitsuRes.data) as {
-          data?: Array<{ attributes?: { posterImage?: Record<string, string | undefined> } }>;
-        };
-        const poster = parsed.data?.[0]?.attributes?.posterImage;
-        const url = safeUrl(poster?.medium || poster?.large || poster?.small || poster?.original, true);
-        if (url) {
-          ARTWORK_CACHE.set(key, url);
-          evictOldest(ARTWORK_CACHE, 200);
-          return url;
+      try {
+        const kitsuRes = await nativeFetchText(
+          `https://kitsu.io/api/edge/${kitsuType}?filter[text]=${encodeURIComponent(clean)}&page[limit]=1`,
+          { headers: { Accept: 'application/vnd.api+json, application/json' }, timeoutMs: 7000 },
+        );
+        if (kitsuRes.ok) {
+          const parsed = JSON.parse(kitsuRes.data) as {
+            data?: Array<{ attributes?: { posterImage?: Record<string, string | undefined> } }>;
+          };
+          const poster = parsed.data?.[0]?.attributes?.posterImage;
+          const url = safeUrl(poster?.medium || poster?.large || poster?.small || poster?.original, true);
+          if (url) {
+            ARTWORK_CACHE.set(key, url);
+            evictOldest(ARTWORK_CACHE, 200);
+            return url;
+          }
         }
+      } catch {
+        // Fall through to Jikan
       }
-    } catch {
-      // Fall through to Jikan
-    }
 
-    try {
-      const jikanType = kind === 'comic' ? 'manga' : 'anime';
-      const jikanRes = await nativeFetchText(
-        `https://api.jikan.moe/v4/${jikanType}?q=${encodeURIComponent(clean)}&limit=1&sfw=true`,
-        { headers: { Accept: 'application/json' }, timeoutMs: 7000 },
-      );
-      if (jikanRes.ok) {
-        const parsed = JSON.parse(jikanRes.data) as {
-          data?: Array<{ images?: { webp?: { large_image_url?: string; image_url?: string }; jpg?: { large_image_url?: string; image_url?: string } } }>;
-        };
-        const img = parsed.data?.[0]?.images;
-        const url = safeUrl(img?.webp?.large_image_url || img?.webp?.image_url || img?.jpg?.large_image_url || img?.jpg?.image_url, true);
-        if (url) {
-          ARTWORK_CACHE.set(key, url);
-          evictOldest(ARTWORK_CACHE, 200);
-          return url;
+      try {
+        const jikanType = kind === 'comic' ? 'manga' : 'anime';
+        const jikanRes = await nativeFetchText(
+          `https://api.jikan.moe/v4/${jikanType}?q=${encodeURIComponent(clean)}&limit=1&sfw=true`,
+          { headers: { Accept: 'application/json' }, timeoutMs: 7000 },
+        );
+        if (jikanRes.ok) {
+          const parsed = JSON.parse(jikanRes.data) as {
+            data?: Array<{ images?: { webp?: { large_image_url?: string; image_url?: string }; jpg?: { large_image_url?: string; image_url?: string } } }>;
+          };
+          const img = parsed.data?.[0]?.images;
+          const url = safeUrl(img?.webp?.large_image_url || img?.webp?.image_url || img?.jpg?.large_image_url || img?.jpg?.image_url, true);
+          if (url) {
+            ARTWORK_CACHE.set(key, url);
+            evictOldest(ARTWORK_CACHE, 200);
+            return url;
+          }
         }
+      } catch {
+        // Ignore fallback lookup errors
       }
-    } catch {
-      // Ignore fallback lookup errors
+
+      ARTWORK_CACHE.set(key, null);
+      evictOldest(ARTWORK_CACHE, 200);
+      return null;
     } finally {
       releaseArtworkSlot();
       ARTWORK_INFLIGHT.delete(key);
     }
-
-    ARTWORK_CACHE.set(key, null);
-    evictOldest(ARTWORK_CACHE, 200);
-    return null;
   })();
 
   ARTWORK_INFLIGHT.set(key, job);

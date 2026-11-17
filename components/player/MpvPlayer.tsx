@@ -43,6 +43,7 @@ interface MpvPlayerProps {
   episodeTitle?: string;
   nextEpisodeLabel?: string;
   onNextEpisode?: () => void;
+  onPreloadNextEpisode?: () => void;
   nextEpisodeLoading?: boolean;
   onProgress?: (currentTime: number, duration: number) => void;
   autoplay: boolean;
@@ -98,7 +99,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [osd, setOsd] = useState('');
   const [scrub, setScrub] = useState<{ ratio: number; seconds: number } | null>(null);
   const [gestureLabel, setGestureLabel] = useState('');
-  const [gestureHud, setGestureHud] = useState<{ mode: 'volume' | 'brightness'; level: number } | null>(null);
+  const [gestureHud, setGestureHud] = useState<{ mode: 'volume' | 'brightness'; level: number; fill: number } | null>(null);
   const [ripple, setRipple] = useState<{ id: number; side: 'left' | 'right'; label: string } | null>(null);
   const [statsOpen, setStatsOpen] = useState(settings.stats);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -497,7 +498,12 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     const deltaY = touch.clientY - gesture.y;
 
     if (gesture.mode === 'none') {
-      if (Math.abs(deltaX) > 24 && Math.abs(deltaX) > Math.abs(deltaY)) gesture.mode = 'seek';
+      if (Math.abs(deltaX) > 24 && Math.abs(deltaX) > Math.abs(deltaY)) {
+        gesture.mode = 'seek';
+        // Capture the start position once: seekTo() updates currentTime on
+        // every move, so adding an absolute delta to the live value compounds.
+        gesture.base = currentTime;
+      }
       else if (Math.abs(deltaY) > 24) {
         gesture.mode = zoneOf(gesture.x) === 'left' ? 'brightness' : 'volume';
         gesture.base = gesture.mode === 'volume' ? volume : settings.brightness;
@@ -510,18 +516,22 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       // long content needs reach — a full-width drag covers 60/90/120s.
       const sweep = duration < 1800 ? 60 : duration < 3600 ? 90 : 120;
       const delta = (deltaX / 320) * sweep;
-      engine.seekTo(clamp(currentTime + delta, 0, duration));
+      engine.seekTo(clamp(gesture.base + delta, 0, duration));
       setGestureLabel(`${delta > 0 ? '+' : '−'}${formatTime(Math.abs(delta))}`);
     } else if (gesture.mode === 'volume') {
       const next = clamp(gesture.base - (deltaY / 220) * 100, 0, 100);
       engine.setVolume(next);
       setGestureLabel(`Volume ${Math.round(next)}%`);
-      setGestureHud({ mode: 'volume', level: Math.round(next) });
+      setGestureHud({ mode: 'volume', level: Math.round(next), fill: Math.round(next) });
     } else if (gesture.mode === 'brightness') {
       const next = clamp(gesture.base - (deltaY / 220) * 100, 20, 150);
       onSettingsChange({ brightness: next });
       setGestureLabel(`Brightness ${Math.round(next)}%`);
-      setGestureHud({ mode: 'brightness', level: Math.round(((next - 20) / 130) * 100) });
+      setGestureHud({
+        mode: 'brightness',
+        level: Math.round(next),
+        fill: Math.round(((next - 20) / 130) * 100),
+      });
     }
   };
 
@@ -657,7 +667,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       >
         {preparedSubtitles.map((subtitle, index) => (
           <track
-            key={`${subtitle.id || subtitle.name || index}-${subtitle.url}`}
+            key={`${subtitle.id || subtitle.name || index}`}
             kind="subtitles"
             src={subtitle.url}
             label={subtitle.name || subtitle.language}
@@ -758,7 +768,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         <div className={`mpv-gesture-bar-container ${gestureHud.mode === 'brightness' ? 'left' : 'right'}`}>
           <span className="mpv-gesture-bar-label">{gestureHud.level}%</span>
           <div className="mpv-gesture-bar-track">
-            <div className="mpv-gesture-bar-fill" style={{ height: `${gestureHud.level}%` }} />
+            <div className="mpv-gesture-bar-fill" style={{ height: `${gestureHud.fill}%` }} />
           </div>
         </div>
       )}

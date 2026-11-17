@@ -137,6 +137,8 @@ const LibraryView: React.FC<{
                   title={`${entry.ids.length} items — click to filter, shift-click to delete`}
                   onClickCapture={(event) => {
                     if (event.shiftKey) {
+                      event.stopPropagation();
+                      event.preventDefault();
                       persistCollections(collections.filter((candidate) => candidate.name !== entry.name));
                       if (collectionFilter === entry.name) setCollectionFilter('');
                     }

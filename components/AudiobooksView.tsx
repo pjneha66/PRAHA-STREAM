@@ -251,6 +251,21 @@ const AudiobooksView: React.FC = () => {
     }
   }, [selectedBook, activeChapter]);
 
+  const closePlayer = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    setIsPlaying(false);
+    setSelectedBook(null);
+    setChapters([]);
+    setCurrentChapterIndex(0);
+    setCurrentTime(0);
+    setDuration(0);
+  };
+
   return (
     <div className="audiobooks-view" style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
       <header style={{ marginBottom: '2rem' }}>
@@ -566,7 +581,7 @@ const AudiobooksView: React.FC = () => {
             <button onClick={changeRate} className="audiobook-bar-rate" aria-label="Change playback speed">
               {playbackRate}x
             </button>
-            <button onClick={() => { setIsPlaying(false); }} className="audiobook-bar-close" aria-label="Close player">
+            <button onClick={closePlayer} className="audiobook-bar-close" aria-label="Close player">
               <X size={17} />
             </button>
           </div>

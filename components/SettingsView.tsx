@@ -172,6 +172,7 @@ const SettingsView: React.FC<{
   activeProfile: UserProfile;
   onSelectProfile: (profileId: string) => void;
   onCreateProfile: (name: string, avatarColor: string, isKids: boolean) => void;
+  onUpdateProfile: (profileId: string, patch: Partial<Pick<UserProfile, 'name' | 'avatarColor' | 'isKids' | 'avatarIcon' | 'avatarImage' | 'pinHash'>>) => void;
   onDeleteProfile: (profileId: string) => void;
   onOpenProfilePicker?: () => void;
   onExportBackup: () => void;
