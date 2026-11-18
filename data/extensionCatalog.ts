@@ -84,4 +84,13 @@ export const CURATED_EXTENSIONS: CuratedExtensionItem[] = [
     manifestUrl: 'https://cyberflix.elfhosted.com/manifest.json',
     configureUrl: 'https://cyberflix.elfhosted.com/configure',
   },
+  {
+    id: 'notorrent',
+    name: 'NoTorrent',
+    kind: 'stremio',
+    category: 'Catalogs & Metadata',
+    description: 'Community Stremio addon with movie/series catalogs and stream sources. Preinstalled by default; reinstall here if needed.',
+    manifestUrl: 'https://addon.notorrent2.workers.dev/manifest.json',
+    badge: 'Default',
+  },
 ];

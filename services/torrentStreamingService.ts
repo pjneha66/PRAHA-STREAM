@@ -153,13 +153,21 @@ export class TorrentStreamingEngine {
   /**
    * Checks if TorrServer or local torrent streaming proxy is reachable.
    */
-  static async checkEngineAvailable(): Promise<boolean> {
-    try {
-      const res = await nativeFetchText(`${this.getHost()}/echo`, { timeoutMs: 2500 });
-      return res.ok || res.status === 200 || res.data.includes('MatriX') || res.data.includes('TorrServer');
-    } catch {
-      return false;
+  static async checkEngineAvailable(host = this.getHost()): Promise<boolean> {
+    const base = host.replace(/\/$/, '');
+    const probes = [`${base}/echo`, `${base}/`];
+    for (const url of probes) {
+      try {
+        const res = await nativeFetchText(url, { timeoutMs: 3500 });
+        const body = (res.data || '').toLowerCase();
+        if (res.ok || res.status === 200 || body.includes('matrix') || body.includes('torrserver') || body.includes('torr')) {
+          return true;
+        }
+      } catch {
+        // try next probe
+      }
     }
+    return false;
   }
 
   /**

@@ -295,7 +295,7 @@ const PlayerModal: React.FC<{
           });
           return;
         }
-        setTorrentError('Torrent engines unavailable. Try Debrid, another source, or open in an external torrent app.');
+        setTorrentError(`No torrent engine could stream this right now. You can use Debrid, configure a TorrServer host in Settings → Network & Torrent Engine (${TorrentStreamingEngine.getHost()}), try another source, or open in an external torrent app.`);
       } catch {
         // Manual panel remains available.
       } finally {

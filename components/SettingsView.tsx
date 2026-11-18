@@ -2,13 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { readBadgeRules, saveBadgeRules, type BadgeRule } from '../services/badgeRules';
 import { hashPin } from '../services/profilePin';
 import {
-  Blocks, Check, CircleAlert, Database, Download, ExternalLink, Eye, EyeOff, Gauge,
-  KeyRound, Keyboard, LoaderCircle, Magnet, MonitorPlay, Package, RefreshCw, RotateCcw,
-  Settings, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, Upload, UserPlus, Users,
+  Blocks, Check, CircleAlert, Database, Download, ExternalLink, Eye, EyeOff, Gauge, Globe,
+  KeyRound, Keyboard, LoaderCircle, Magnet, MonitorPlay, Package, RefreshCw, RotateCcw, Server,
+  Settings, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, Upload, UserPlus, Users, Wifi,
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
 import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
 import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
+import { NETWORK_CONDITION_COPY, probeNetworkCondition, type NetworkCondition } from '../services/networkCondition';
+import { TorrentStreamingEngine } from '../services/torrentStreamingService';
 import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
 import type { JellyfinSnapshot } from '../services/jellyfinService';
@@ -54,6 +56,7 @@ const SETTINGS_GROUPS: Array<[string, string]> = [
   ['Backup, Restore & Sync', 'Backup'],
   ['Android & TV Experience', 'Android/TV'],
   ['Private DNS', 'DNS'],
+  ['Network & Torrent Engine', 'Network'],
   ['Playback & browsing', 'Playback'],
   ['Player', 'Player'],
   ['Appearance & Palette', 'Appearance'],
@@ -198,6 +201,11 @@ const SettingsView: React.FC<{
   const [imdxMessage, setImdxMessage] = useState('');
   const [dnsOpenError, setDnsOpenError] = useState(false);
   const [dnsCopied, setDnsCopied] = useState(false);
+  const [networkCondition, setNetworkCondition] = useState<NetworkCondition | null>(null);
+  const [networkChecking, setNetworkChecking] = useState(false);
+  const [torrentHostDraft, setTorrentHostDraft] = useState(() => TorrentStreamingEngine.getHost());
+  const [torrentHostStatus, setTorrentHostStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [torrentHostMessage, setTorrentHostMessage] = useState('');
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
   const [apiMessage, setApiMessage] = useState('');
 
@@ -212,6 +220,33 @@ const SettingsView: React.FC<{
   useEffect(() => { setImdxBaseDraft(settings.imdx.baseUrl); setImdxKeyDraft(settings.imdx.apiKey || ''); }, [settings.imdx.baseUrl, settings.imdx.apiKey]);
 
   const updateImdx = (patch: Partial<AppSettings['imdx']>) => onChange({ ...settings, imdx: { ...settings.imdx, ...patch } });
+
+  const checkNetworkCondition = async () => {
+    setNetworkChecking(true);
+    try {
+      const condition = await probeNetworkCondition();
+      setNetworkCondition(condition);
+    } finally {
+      setNetworkChecking(false);
+    }
+  };
+
+  const saveTorrentHost = async (testAfterSave = false) => {
+    const host = (torrentHostDraft || '').trim().replace(/\/$/, '') || 'http://127.0.0.1:8090';
+    setTorrentHostDraft(host);
+    TorrentStreamingEngine.setHost(host);
+    setTorrentHostStatus('idle');
+    setTorrentHostMessage(testAfterSave ? '' : 'Saved torrent engine host.');
+    if (!testAfterSave) {
+      window.setTimeout(() => setTorrentHostMessage(''), 2500);
+      return;
+    }
+    setTorrentHostStatus('checking');
+    setTorrentHostMessage('');
+    const ok = await TorrentStreamingEngine.checkEngineAvailable(host);
+    setTorrentHostStatus(ok ? 'ok' : 'error');
+    setTorrentHostMessage(ok ? 'Torrent engine reachable.' : 'Could not reach a TorrServer-compatible engine at this host. Make sure it is running and accessible from this device.');
+  };
 
   const verifyImdx = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -509,6 +544,7 @@ const SettingsView: React.FC<{
                 </div>
               </div>
             )}
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Paid debrid providers (Real-Debrid, AllDebrid, TorBox) require your own API token. For open-source/self-hosted torrent streaming options, use a local <b>TorrServer</b> engine in <b>Network & Torrent Engine</b> (free, self-hosted), or explore projects like <b>WebTor</b>, <b>Torrin</b>, and <b>StremThru</b> for self-hosted setups. PRAHA does not bundle a free public cached-debrid service.</span></p>
           </section>
 
           {/* Backup, Restore & Scrobble Sync */}
@@ -650,6 +686,60 @@ const SettingsView: React.FC<{
                 </button>
                 {isAndroidApp() && <button type="button" className="button button-secondary" onClick={() => { void openPrivateDnsSettings().then((ok) => setDnsOpenError(!ok)); }}>Open Android settings <ExternalLink size={15} /></button>}
               </div>
+            </div>
+          </section>
+
+          {/* Network & Torrent Engine */}
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><Globe size={19} /></span><div><h2>Network & Torrent Engine</h2><p>Check connectivity, tune torrent streaming, and configure a local/self-hosted torrent engine.</p></div></div>
+            <div className="setting-row">
+              <div>
+                <strong>Network status</strong>
+                <p>Diagnose whether the device is offline or catalog sources are unreachable (DNS/network filters can affect this).</p>
+                {networkCondition && (
+                  <p role="status" style={{ marginTop: '8px', color: networkCondition === 'online' ? '#4ade80' : '#f5c518' }}>
+                    {NETWORK_CONDITION_COPY[networkCondition].title}: {NETWORK_CONDITION_COPY[networkCondition].message}
+                  </p>
+                )}
+              </div>
+              <button type="button" className="button button-secondary" onClick={() => { void checkNetworkCondition(); }} disabled={networkChecking}>
+                {networkChecking ? <LoaderCircle size={15} className="spin" /> : <Wifi size={15} />} {networkChecking ? 'Checking…' : 'Check network'}
+              </button>
+            </div>
+            <div className="setting-row" style={{ alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <strong>Torrent engine host (TorrServer)</strong>
+                <p>Used for magnet/torrent streaming when a compatible local or LAN TorrServer engine is available. Default is <b>http://127.0.0.1:8090</b>. In-app WebTorrent P2P is also attempted automatically for magnet streams (WebRTC peers required).</p>
+              </div>
+            </div>
+            <div className="api-key-form" style={{ marginTop: '4px' }}>
+              <label htmlFor="torrent-host">TorrServer URL</label>
+              <div className="api-key-input">
+                <Server size={16} />
+                <input
+                  id="torrent-host"
+                  type="text"
+                  value={torrentHostDraft}
+                  onChange={(e) => { setTorrentHostDraft(e.target.value); setTorrentHostStatus('idle'); setTorrentHostMessage(''); }}
+                  placeholder="http://127.0.0.1:8090"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="api-key-actions">
+                <button type="button" className="button button-secondary" onClick={() => { void saveTorrentHost(false); }}>Save</button>
+                <button type="button" className="button button-primary" onClick={() => { void saveTorrentHost(true); }} disabled={torrentHostStatus === 'checking'}>
+                  {torrentHostStatus === 'checking' ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />} {torrentHostStatus === 'checking' ? 'Testing…' : 'Save & test'}
+                </button>
+              </div>
+              {torrentHostMessage && (
+                <p className={`api-key-message ${torrentHostStatus === 'error' ? 'error' : 'success'}`} role="status">
+                  {torrentHostStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />} {torrentHostMessage}
+                </p>
+              )}
+              <p className="api-privacy"><ShieldCheck size={14} /><span>No torrent engine found? Install/run an open-source <b>TorrServer</b> on this device or your LAN, or use Debrid for cached magnet playback. In-app P2P depends on torrent swarm WebRTC availability.</span></p>
             </div>
           </section>
 
