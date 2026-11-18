@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import type { MediaInfo } from 'dashjs';
 import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
 import {
@@ -60,6 +61,8 @@ interface EngineOptions {
   forceWebEngine?: boolean;
   /** Live source (IPTV): enables the frozen-stream watchdog. */
   isLive?: boolean;
+  /** Stream format hint (hls, dash, mpegts, direct, torrent-http) from source metadata. */
+  streamFormat?: string;
   streamHeaders?: Record<string, string>;
   subtitles: StreamSubtitle[];
   autoplay: boolean;
@@ -80,12 +83,9 @@ interface EngineOptions {
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
 }
 
-const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url) || /playlist|master|index\.m3u/i.test(url);
+const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url);
 const isDashUrl = (url: string) => /\.mpd($|\?)/i.test(url) || /[?&]format=mpd\b/i.test(url);
-const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url) || /\/live\/|\/stream\/|\.ts\?/i.test(url);
-
-/** Detects IPTV-style URLs that often serve MPEG-TS without a recognizable extension. */
-const isIptvStyleUrl = (url: string) => /\/live\//i.test(url) || /:8080|:8000|:25461|:9981|\/play\//i.test(url);
+const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
 
 /**
  * Wires a stream URL to a <video> element the way mpv does: HLS (`hls.js`),
@@ -98,6 +98,7 @@ export function useMpvEngine({
   fallbackUrl,
   forceWebEngine = false,
   isLive = false,
+  streamFormat,
   streamHeaders,
   subtitles,
   autoplay,
@@ -115,6 +116,7 @@ export function useMpvEngine({
 }: EngineOptions) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const hlsP2pRef = useRef<{ destroy: () => void } | null>(null);
   const dashRef = useRef<{ reset: () => void; setQualityFor?: (type: string, index: number, force?: boolean) => void; setAutoSwitchQualityFor?: (type: string, enable: boolean) => void; getTracksFor: (type: 'audio') => MediaInfo[]; getCurrentTrackFor: (type: 'audio') => MediaInfo | null; setCurrentTrack: (track: MediaInfo) => void } | null>(null);
   const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef({ network: 0, media: 0 });
@@ -401,83 +403,60 @@ export function useMpvEngine({
         nativeVlcStop();
         video.style.opacity = '1';
       };
-    } else if (isHlsUrl(url) && Hls.isSupported()) {
-      engineNameRef.current = 'hls.js';
-      setEngineLabel('hls.js');
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 60 });
-      hlsRef.current = hls;
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (disposed) return;
-        setLevels(hls.levels.map((level, index) => ({
+    } else {
+      const fmt = (streamFormat || '').toLowerCase();
+      const preferHls = fmt === 'hls' || isHlsUrl(url);
+      const preferDash = fmt === 'dash' || fmt === 'mpd' || isDashUrl(url);
+      const preferMpegTs = fmt === 'mpegts' || fmt === 'ts' || fmt === 'flv' || isMpegTsUrl(url);
+
+      if (preferHls && Hls.isSupported()) {
+        engineNameRef.current = 'hls.js';
+        setEngineLabel('hls.js');
+        let p2pLoaders: Record<string, unknown> = {};
+        let p2pEngine: HlsJsP2PEngine | null = null;
+        try {
+          p2pEngine = new HlsJsP2PEngine();
+          hlsP2pRef.current = p2pEngine;
+          p2pLoaders = p2pEngine.getConfigForHlsJs() as Record<string, unknown>;
+        } catch {
+          hlsP2pRef.current = null;
+          p2pEngine = null;
+        }
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: Boolean(isLive),
+          backBufferLength: isLive ? 30 : 90,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
+          maxBufferLength: isLive ? 20 : 30,
+          maxMaxBufferLength: isLive ? 60 : 60,
+          ...(p2pLoaders as any),
+        });
+        hlsRef.current = hls;
+        try { p2pEngine?.bindHls(hls); } catch {}
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (disposed) return;
+          setLevels(hls.levels.map((level, index) => ({
+            id: index,
+            label: level.height ? `${level.height}p` : level.width ? `${level.width}px` : `Variant ${index + 1}`,
+            bitrate: level.bitrate || undefined,
+          })));
+          if (shouldAutoplay) video.play().catch(() => undefined);
+        });
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => setCurrentLevel(data.level));
+        hls.on(Hls.Events.LEVELS_UPDATED, (_, data) => setLevels(data.levels.map((level, index) => ({
           id: index,
           label: level.height ? `${level.height}p` : level.width ? `${level.width}px` : `Variant ${index + 1}`,
           bitrate: level.bitrate || undefined,
-        })));
-        if (shouldAutoplay) video.play().catch(() => undefined);
-      });
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => setCurrentLevel(data.level));
-      hls.on(Hls.Events.LEVELS_UPDATED, (_, data) => setLevels(data.levels.map((level, index) => ({
-        id: index,
-        label: level.height ? `${level.height}p` : level.width ? `${level.width}px` : `Variant ${index + 1}`,
-        bitrate: level.bitrate || undefined,
-      }))));
-      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
-        setAudioTracks(data.audioTracks.map((track, index) => {
-          const lang = track.lang || undefined;
-          const langName = resolveLanguageName(lang);
-          const label = langName ? `${langName}${track.name && track.name !== langName ? ` (${track.name})` : ''}` : track.name || (data.audioTracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
-          const codec = (track as unknown as { audioCodec?: string }).audioCodec || undefined;
-          return {
-            id: `audio:${index}`,
-            label,
-            trackNumber: index + 1,
-            language: lang,
-            languageName: langName,
-            codec,
-            codecLabel: formatAudioCodec(codec),
-          };
-        }));
-        if (data.audioTracks.length) setCurrentAudio(`audio:${hls.audioTrack >= 0 ? hls.audioTrack : 0}`);
-      });
-      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_, data) => setCurrentAudio(`audio:${data.id}`));
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal || disposed) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recoveredRef.current.network < 1) {
-          recoveredRef.current.network += 1;
-          hls.startLoad();
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recoveredRef.current.media < 1) {
-          recoveredRef.current.media += 1;
-          hls.recoverMediaError();
-          return;
-        }
-        hls.destroy();
-        onFatalError('This HLS source could not be loaded. Try another stream or open it in an external player.');
-      });
-      hls.loadSource(url);
-      hls.attachMedia(video);
-    } else if (isDashUrl(url)) {
-      engineNameRef.current = 'dash.js';
-      setEngineLabel('dash.js');
-      import('dashjs').then((dashModule) => {
-        if (disposed) return;
-        const dash = dashModule.MediaPlayer().create();
-        dash.initialize(video, url, shouldAutoplay);
-        dashRef.current = dash as unknown as typeof dashRef.current;
-        dash.on('streamInitialized', () => {
-          if (disposed) return;
-          const dashAny = dash as unknown as { getBitrateInfoListFor?: (type: string) => Array<{ qualityIndex: number; height?: number; bitrate?: number }> };
-          const tracks = dash.getTracksFor('audio');
-          const selected = dash.getCurrentTrackFor('audio');
-          setAudioTracks(tracks.map((track, index) => {
+        }))));
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
+          setAudioTracks(data.audioTracks.map((track, index) => {
             const lang = track.lang || undefined;
             const langName = resolveLanguageName(lang);
-            const rawLabel = track.labels?.[0]?.text || track.lang;
-            const label = langName ? `${langName}${rawLabel && rawLabel !== langName ? ` (${rawLabel})` : ''}` : rawLabel || (tracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
-            const codec = (track as unknown as { codec?: string }).codec || undefined;
+            const label = langName ? `${langName}${track.name && track.name !== langName ? ` (${track.name})` : ''}` : track.name || (data.audioTracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
+            const codec = (track as unknown as { audioCodec?: string }).audioCodec || undefined;
             return {
-              id: `dash:${index}`,
+              id: `audio:${index}`,
               label,
               trackNumber: index + 1,
               language: lang,
@@ -486,60 +465,120 @@ export function useMpvEngine({
               codecLabel: formatAudioCodec(codec),
             };
           }));
-          const selectedIndex = tracks.findIndex((track) => track === selected || (track.id != null && track.id === selected?.id));
-          setCurrentAudio(selectedIndex >= 0 ? `dash:${selectedIndex}` : '');
-          const bitrates = dashAny.getBitrateInfoListFor?.('video') || [];
-          setLevels(bitrates.map((info, idx) => ({
-            id: info.qualityIndex ?? idx,
-            label: info.height ? `${info.height}p` : `Variant ${idx + 1}`,
-            bitrate: info.bitrate,
-          })));
+          if (data.audioTracks.length) setCurrentAudio(`audio:${hls.audioTrack >= 0 ? hls.audioTrack : 0}`);
         });
-        dash.on('error', () => {
-          if (!disposed) onFatalError('This DASH (.mpd) stream could not be loaded.');
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_, data) => setCurrentAudio(`audio:${data.id}`));
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (!data.fatal || disposed) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recoveredRef.current.network < 2) {
+            recoveredRef.current.network += 1;
+            hls.startLoad();
+            return;
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recoveredRef.current.media < 2) {
+            recoveredRef.current.media += 1;
+            hls.recoverMediaError();
+            return;
+          }
+          hls.destroy();
+          onFatalError('This HLS source could not be loaded. Try another stream or open it in an external player.');
         });
-      }).catch(() => {
-        if (!disposed) {
-          video.src = url;
-          if (shouldAutoplay) video.play().catch(() => undefined);
-        }
-      });
-    } else if (isMpegTsUrl(url) || (isIptvStyleUrl(url) && !isHlsUrl(url))) {
-      engineNameRef.current = 'mpegts.js';
-      setEngineLabel('mpegts.js');
-      import('mpegts.js').then((mpegtsModule) => {
-        if (disposed) return;
-        const mpegts = mpegtsModule.default;
-        if (mpegts.isSupported()) {
-          const type = /\.flv($|\?)/i.test(url) ? 'flv' : 'mpegts';
-          const player = mpegts.createPlayer({ type, url, isLive: true });
-          player.on(mpegts.Events.ERROR, () => {
-            if (!disposed) {
-              // Fall back to HLS if MPEG-TS fails
-              if (isIptvStyleUrl(url)) {
-                onFatalError('This stream could not be loaded as MPEG-TS. Try another source or open in an external player.');
+        hls.loadSource(url);
+        hls.attachMedia(video);
+      } else if (preferDash) {
+        engineNameRef.current = 'dash.js';
+        setEngineLabel('dash.js');
+        import('dashjs').then((dashModule) => {
+          if (disposed) return;
+          const dash = dashModule.MediaPlayer().create();
+          dash.initialize(video, url, shouldAutoplay);
+          dashRef.current = dash as unknown as typeof dashRef.current;
+          dash.on('streamInitialized', () => {
+            if (disposed) return;
+            const dashAny = dash as unknown as { getBitrateInfoListFor?: (type: string) => Array<{ qualityIndex: number; height?: number; bitrate?: number }> };
+            const tracks = dash.getTracksFor('audio');
+            const selected = dash.getCurrentTrackFor('audio');
+            setAudioTracks(tracks.map((track, index) => {
+              const lang = track.lang || undefined;
+              const langName = resolveLanguageName(lang);
+              const rawLabel = track.labels?.[0]?.text || track.lang;
+              const label = langName ? `${langName}${rawLabel && rawLabel !== langName ? ` (${rawLabel})` : ''}` : rawLabel || (tracks.length > 1 ? `Audio ${index + 1}` : 'Audio Track');
+              const codec = (track as unknown as { codec?: string }).codec || undefined;
+              return {
+                id: `dash:${index}`,
+                label,
+                trackNumber: index + 1,
+                language: lang,
+                languageName: langName,
+                codec,
+                codecLabel: formatAudioCodec(codec),
+              };
+            }));
+            const selectedIndex = tracks.findIndex((track) => track === selected || (track.id != null && track.id === selected?.id));
+            setCurrentAudio(selectedIndex >= 0 ? `dash:${selectedIndex}` : '');
+            const bitrates = dashAny.getBitrateInfoListFor?.('video') || [];
+            setLevels(bitrates.map((info, idx) => ({
+              id: info.qualityIndex ?? idx,
+              label: info.height ? `${info.height}p` : `Variant ${idx + 1}`,
+              bitrate: info.bitrate,
+            })));
+          });
+          dash.on('error', () => {
+            if (!disposed) onFatalError('This DASH (.mpd) stream could not be loaded.');
+          });
+        }).catch(() => {
+          if (!disposed) {
+            video.src = url;
+            if (shouldAutoplay) video.play().catch(() => undefined);
+          }
+        });
+      } else if (preferMpegTs) {
+        engineNameRef.current = 'mpegts.js';
+        setEngineLabel('mpegts.js');
+        import('mpegts.js').then((mpegtsModule) => {
+          if (disposed) return;
+          const mpegts = mpegtsModule.default;
+          if (mpegts.isSupported()) {
+            const type = /\.flv($|\?)/i.test(url) || fmt === 'flv' ? 'flv' : 'mpegts';
+            const player = mpegts.createPlayer(
+              { type, url, isLive: Boolean(isLive) },
+              { enableWorker: true, stashInitialSize: 128, lazyLoad: false },
+            );
+            player.on(mpegts.Events.ERROR, () => {
+              if (disposed) return;
+              try { player.destroy(); } catch {}
+              mpegtsRef.current = null;
+              // On failure, try native/HLS fallback for live streams that might actually be HLS
+              if (isLive) {
+                engineNameRef.current = 'HTML5';
+                setEngineLabel('HTML5');
+                video.src = url;
+                if (shouldAutoplay) video.play().catch(() => onFatalError('This live stream could not be played. Try another channel or open in an external player.'));
               } else {
                 onFatalError('This MPEG-TS/FLV source could not be loaded. Try another source or an external player.');
               }
-            }
-          });
-          player.attachMediaElement(video);
-          player.load();
-          if (shouldAutoplay) Promise.resolve(player.play()).catch(() => undefined);
-          mpegtsRef.current = player;
-        } else {
-          video.src = url;
-          if (shouldAutoplay) video.play().catch(() => undefined);
-        }
-      }).catch(() => {
-        if (!disposed) {
-          video.src = url;
-          if (shouldAutoplay) video.play().catch(() => undefined);
-        }
-      });
-    } else {
-      video.src = url;
-      if (shouldAutoplay) video.play().catch(() => undefined);
+            });
+            player.attachMediaElement(video);
+            player.load();
+            if (shouldAutoplay) Promise.resolve(player.play()).catch(() => undefined);
+            mpegtsRef.current = player;
+          } else {
+            video.src = url;
+            if (shouldAutoplay) video.play().catch(() => undefined);
+          }
+        }).catch(() => {
+          if (!disposed) {
+            video.src = url;
+            if (shouldAutoplay) video.play().catch(() => undefined);
+          }
+        });
+      } else {
+        // Direct/native playback (mp4, mkv where supported, etc.)
+        engineNameRef.current = 'HTML5';
+        setEngineLabel('HTML5');
+        video.src = url;
+        if (shouldAutoplay) video.play().catch(() => undefined);
+      }
     }
 
     // Detect RemotePlayback (Chromecast / AirPlay) support
@@ -559,6 +598,8 @@ export function useMpvEngine({
       }
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      try { hlsP2pRef.current?.destroy(); } catch {}
+      hlsP2pRef.current = null;
       dashRef.current?.reset();
       dashRef.current = null;
       mpegtsRef.current?.destroy();
@@ -567,7 +608,7 @@ export function useMpvEngine({
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, forceWebEngine, escalateToWeb, autoplay, onFatalError, reloadKey]);
+  }, [url, forceWebEngine, escalateToWeb, autoplay, onFatalError, reloadKey, streamFormat, isLive]);
 
   /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {
@@ -762,10 +803,6 @@ export function useMpvEngine({
     const syncRate = () => setRate(video.playbackRate);
     const handlePlay = () => setPlaying(true);
     const handlePlaying = () => { setPlaying(true); setWaiting(false); setRecoveryStatus(''); };
-  // Audio-only guard: if playback has been running but no video frames have
-  // rendered after a few seconds, the stream is likely audio-only or the
-  // container/codec is unsupported by the current engine — surface a hint.
-  const audioOnlyCheckRef = useRef<number | null>(null);
     const handlePause = () => { setPlaying(false); emitProgress(true); };
     const handleWaiting = () => setWaiting(true);
     const handleCanPlay = () => { setReady(true); setWaiting(false); };

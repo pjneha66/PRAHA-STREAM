@@ -220,6 +220,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     forceWebEngine,
     // Live sources get the frozen-stream watchdog in the engine.
     isLive: media?.source === 'iptv' || stream?.sourceType === 'iptv',
+    streamFormat: stream.format,
     streamHeaders,
     subtitles: preparedSubtitles,
     autoplay,

@@ -1,7 +1,7 @@
 {
   "name": "praha-stream",
   "private": true,
-  "version": "2.11.12",
+  "version": "2.11.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,6 +26,8 @@
     "hls.js": "^1.7.4",
     "lucide-react": "^1.65.0",
     "mpegts.js": "^1.8.0",
+    "p2p-media-loader-core": "^4.0.0",
+    "p2p-media-loader-hlsjs": "^4.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "webtorrent": "^2.8.5"
