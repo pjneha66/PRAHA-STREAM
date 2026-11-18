@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.11';
+export const APP_VERSION = '2.11.12';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
@@ -409,6 +409,10 @@ export interface AppSettings {
   askProfileOnStartup: boolean;
   /** Route header-protected streams through native Android proxy when running in APK. */
   preferNativeProxy: boolean;
+  /** DNS over HTTPS provider for app network requests. */
+  dnsProvider?: string;
+  /** Fall back to system DNS when DoH resolver is slow or blocked. */
+  dnsFallback?: boolean;
   player: PlayerSettings;
 }
 

@@ -114,6 +114,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dpadNavigation: false,
   askProfileOnStartup: true,
   preferNativeProxy: true,
+  dnsProvider: 'system',
+  dnsFallback: true,
   player: DEFAULT_PLAYER_SETTINGS,
 };
 
@@ -145,5 +147,7 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
       ...DEFAULT_PLAYER_SETTINGS,
       ...(base.player || {}),
     },
+    dnsProvider: typeof base.dnsProvider === 'string' ? base.dnsProvider : DEFAULT_SETTINGS.dnsProvider,
+    dnsFallback: typeof base.dnsFallback === 'boolean' ? base.dnsFallback : DEFAULT_SETTINGS.dnsFallback,
   };
 }

@@ -1793,6 +1793,19 @@ export class IptvZapStore {
 
 /** Shared media/stream builder for IPTV playback (hub tap + zap bar). */
 export function buildIptvPlayback(ch: IptvZapChannel): { media: MediaItem; stream: StreamResult } {
+  const url = ch.url || '';
+  // Improve format detection for IPTV streams: many providers serve HLS
+  // without a .m3u8 extension, or MPEG-TS without a .ts extension.
+  let format = 'direct';
+  if (/\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url)) {
+    format = 'hls';
+  } else if (/\.(ts|flv)($|\?)/i.test(url)) {
+    format = 'mpegts';
+  } else if (/\/live\//i.test(url) || /:8080|:8000|:25461|:9981/i.test(url)) {
+    // Heuristic: common IPTV URL patterns often serve MPEG-TS or HLS.
+    // Prefer HLS when the URL hints at a playlist endpoint.
+    format = /playlist|index|master/i.test(url) ? 'hls' : 'mpegts';
+  }
   const media: MediaItem = {
     id: `livetv-${Date.now()}`,
     title: ch.name,
@@ -1809,7 +1822,7 @@ export function buildIptvPlayback(ch: IptvZapChannel): { media: MediaItem; strea
     sourceName: ch.group || 'Live TV',
     sourceType: 'iptv',
     quality: '1080p',
-    format: ch.url.includes('.m3u8') ? 'hls' : 'direct',
+    format,
   };
   return { media, stream };
 }

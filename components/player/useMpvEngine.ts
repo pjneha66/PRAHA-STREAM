@@ -80,9 +80,12 @@ interface EngineOptions {
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
 }
 
-const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url);
+const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url) || /playlist|master|index\.m3u/i.test(url);
 const isDashUrl = (url: string) => /\.mpd($|\?)/i.test(url) || /[?&]format=mpd\b/i.test(url);
-const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url);
+const isMpegTsUrl = (url: string) => /\.(ts|flv)($|\?)/i.test(url) || /\/live\/|\/stream\/|\.ts\?/i.test(url);
+
+/** Detects IPTV-style URLs that often serve MPEG-TS without a recognizable extension. */
+const isIptvStyleUrl = (url: string) => /\/live\//i.test(url) || /:8080|:8000|:25461|:9981|\/play\//i.test(url);
 
 /**
  * Wires a stream URL to a <video> element the way mpv does: HLS (`hls.js`),
@@ -501,7 +504,7 @@ export function useMpvEngine({
           if (shouldAutoplay) video.play().catch(() => undefined);
         }
       });
-    } else if (isMpegTsUrl(url)) {
+    } else if (isMpegTsUrl(url) || (isIptvStyleUrl(url) && !isHlsUrl(url))) {
       engineNameRef.current = 'mpegts.js';
       setEngineLabel('mpegts.js');
       import('mpegts.js').then((mpegtsModule) => {
@@ -509,9 +512,16 @@ export function useMpvEngine({
         const mpegts = mpegtsModule.default;
         if (mpegts.isSupported()) {
           const type = /\.flv($|\?)/i.test(url) ? 'flv' : 'mpegts';
-          const player = mpegts.createPlayer({ type, url, isLive: false });
+          const player = mpegts.createPlayer({ type, url, isLive: true });
           player.on(mpegts.Events.ERROR, () => {
-            if (!disposed) onFatalError('This MPEG-TS/FLV source could not be loaded. Try another source or an external player.');
+            if (!disposed) {
+              // Fall back to HLS if MPEG-TS fails
+              if (isIptvStyleUrl(url)) {
+                onFatalError('This stream could not be loaded as MPEG-TS. Try another source or open in an external player.');
+              } else {
+                onFatalError('This MPEG-TS/FLV source could not be loaded. Try another source or an external player.');
+              }
+            }
           });
           player.attachMediaElement(video);
           player.load();
@@ -752,6 +762,10 @@ export function useMpvEngine({
     const syncRate = () => setRate(video.playbackRate);
     const handlePlay = () => setPlaying(true);
     const handlePlaying = () => { setPlaying(true); setWaiting(false); setRecoveryStatus(''); };
+  // Audio-only guard: if playback has been running but no video frames have
+  // rendered after a few seconds, the stream is likely audio-only or the
+  // container/codec is unsupported by the current engine — surface a hint.
+  const audioOnlyCheckRef = useRef<number | null>(null);
     const handlePause = () => { setPlaying(false); emitProgress(true); };
     const handleWaiting = () => setWaiting(true);
     const handleCanPlay = () => { setReady(true); setWaiting(false); };

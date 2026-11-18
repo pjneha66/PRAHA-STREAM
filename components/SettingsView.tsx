@@ -743,6 +743,33 @@ const SettingsView: React.FC<{
             </div>
           </section>
 
+          {/* DNS over HTTPS */}
+          <section className="settings-card">
+            <div className="settings-card-heading"><span><Globe size={19} /></span><div><h2>DNS over HTTPS</h2><p>Choose an encrypted DNS resolver for app network requests. Helps when your network blocks some sites.</p></div></div>
+            <div className="setting-row">
+              <div><strong>DNS provider</strong><p>System default uses your device's configured DNS. Encrypted providers may improve privacy and bypass DNS blocks.</p></div>
+              <select
+                className="settings-select"
+                value={settings.dnsProvider || 'system'}
+                onChange={(e) => update('dnsProvider', e.target.value)}
+              >
+                <option value="system">System default</option>
+                <option value="cloudflare">Cloudflare (1.1.1.1)</option>
+                <option value="google">Google (8.8.8.8)</option>
+                <option value="adguard">AdGuard</option>
+                <option value="quad9">Quad9</option>
+                <option value="dnssb">DNS.SB</option>
+                <option value="dnswatch">DNS.Watch</option>
+                <option value="canadianshield">Canadian Shield</option>
+              </select>
+            </div>
+            <div className="setting-row">
+              <div><strong>Fall back to system DNS</strong><p>When the resolver is slow or blocked, fall back to system DNS automatically.</p></div>
+              <Toggle checked={settings.dnsFallback !== false} onChange={(val) => update('dnsFallback', val)} label="Fall back to system DNS" />
+            </div>
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Applies when the app restarts. Encrypted DNS sends queries over HTTPS to the selected provider instead of your network's default resolver.</span></p>
+          </section>
+
           {/* Playback & Browsing */}
           <section className="settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Playback & browsing</h2><p>Choose how PRAHA feels as you move through it.</p></div></div>
