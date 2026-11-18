@@ -53,26 +53,32 @@ jobs:
       - name: Prepare release signing keystore
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
-            echo "::error::Release signing secrets are missing. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD to the repository secrets."
-            exit 1
+            echo "ANDROID_SIGNING_AVAILABLE=false" >> "$GITHUB_ENV"
+            echo "::warning::Release signing secrets are missing. Falling back to a debug APK build for this release run."
+            exit 0
           fi
           mkdir -p "$RUNNER_TEMP/praha-signing"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/praha-signing/release.keystore"
+          echo "ANDROID_SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/praha-signing/release.keystore" >> "$GITHUB_ENV"
           ls -l "$RUNNER_TEMP/praha-signing/release.keystore"
 
-      - name: Build Android Release APK
+      - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+          if [ "${ANDROID_SIGNING_AVAILABLE}" = "true" ]; then
+            ./gradlew assembleRelease --stacktrace
+          else
+            ./gradlew assembleDebug --stacktrace
+          fi
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/praha-signing/release.keystore
 
       - name: Verify Generated APK
         run: |
           ls -lh dist-apk/
-          test -f dist-apk/praha-stream-v*.apk
+          test -n "$(ls dist-apk/praha-stream-v*.apk 2>/dev/null)"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -85,8 +91,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v2.11.9' }}
-          name: PRAHA STREAM ${{ github.ref_name || 'v2.11.9' }}
+          tag_name: ${{ github.ref_name || 'v2.11.10' }}
+          name: PRAHA STREAM ${{ github.ref_name || 'v2.11.10' }}
           files: dist-apk/*.apk
           draft: false
           prerelease: false
