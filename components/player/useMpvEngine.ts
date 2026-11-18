@@ -13,7 +13,7 @@ import {
 } from '../../services/androidBridge';
 import { formatAudioCodec, formatSubtitleCodec, resolveLanguageName } from '../../services/subtitleService';
 import { clamp } from './format';
-import { MAX_STALL_RETRIES, STABLE_PLAYBACK_SECONDS, stallAction } from './recovery';
+import { formatSupportHint, MAX_STALL_RETRIES, STABLE_PLAYBACK_SECONDS, stallAction, vlcBufferingToWaiting } from './recovery';
 
 export interface LevelOption {
   id: number;
@@ -47,6 +47,14 @@ export interface PlayerStats {
   levelLabel: string;
   readyState: number;
   engineName: string;
+  /** Live P2P loader counters (only when the web engine used a P2P loader). */
+  p2p: {
+    enabled: boolean;
+    peers: number;
+    fromPeersBytes: number;
+    fromHttpBytes: number;
+    errors: number;
+  };
 }
 
 interface NativeAudioTrack { label?: string; language?: string; enabled: boolean }
@@ -117,6 +125,7 @@ export function useMpvEngine({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const hlsP2pRef = useRef<{ destroy: () => void } | null>(null);
+  const p2pStatsRef = useRef({ enabled: false, peers: 0, fromPeersBytes: 0, fromHttpBytes: 0, errors: 0 });
   const dashRef = useRef<{ reset: () => void; setQualityFor?: (type: string, index: number, force?: boolean) => void; setAutoSwitchQualityFor?: (type: string, enable: boolean) => void; getTracksFor: (type: 'audio') => MediaInfo[]; getCurrentTrackFor: (type: 'audio') => MediaInfo | null; setCurrentTrack: (track: MediaInfo) => void } | null>(null);
   const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef({ network: 0, media: 0 });
@@ -188,9 +197,11 @@ export function useMpvEngine({
     recoveredRef.current = { network: 0, media: 0 };
     frameTimesRef.current = [];
     initialSeekDoneRef.current = false;
+    p2pStatsRef.current = { enabled: false, peers: 0, fromPeersBytes: 0, fromHttpBytes: 0, errors: 0 };
     engineNameRef.current = 'HTML5';
     setEngineLabel('HTML5');
     const shouldAutoplay = autoplay || resumeRef.current !== null;
+    const formatHint = formatSupportHint(url, streamFormat);
 
     if (!forceWebEngine && !escalateToWeb && isNativeVlcAvailable()) {
       engineNameRef.current = 'LibVLC (Hardware)';
@@ -285,7 +296,11 @@ export function useMpvEngine({
         const detail = e.detail || {};
         const cur = (detail.time || 0) / 1000;
         const dur = (detail.duration || 0) / 1000;
+        const previousTime = lastVlcTimeSec;
         if (cur > 0) lastVlcTimeSec = cur;
+        // Forward progress is proof we are not stalled. A late or duplicate
+        // buffer event must never leave the spinner on top of moving video.
+        if (cur > previousTime + 0.05) setWaiting(false);
         if (cur >= 0) setCurrentTime(cur);
         if (dur > 0) {
           setDuration(dur);
@@ -310,7 +325,10 @@ export function useMpvEngine({
 
       const onVlcBuffering = (e: any) => {
         if (disposed) return;
-        setWaiting(Boolean(e.detail?.buffering ?? true));
+        // detail.buffer is a 0–100 fill percentage, not a boolean (see
+        // vlcBufferingToWaiting). Late/duplicate events are also neutralised by
+        // the forward-progress check in onVlcTime and by vlc-state events.
+        setWaiting(vlcBufferingToWaiting(e.detail?.buffer, playingRef.current));
       };
 
       const onVlcTracks = () => {
@@ -433,6 +451,22 @@ export function useMpvEngine({
           ...(p2pLoaders as any),
         });
         hlsRef.current = hls;
+        if (p2pEngine) {
+          p2pStatsRef.current.enabled = true;
+          try {
+            p2pEngine.addEventListener('onChunkDownloaded', (bytesLength, downloadSource) => {
+              if (downloadSource === 'p2p') p2pStatsRef.current.fromPeersBytes += bytesLength;
+              else p2pStatsRef.current.fromHttpBytes += bytesLength;
+            });
+            p2pEngine.addEventListener('onPeerConnect', () => { p2pStatsRef.current.peers += 1; });
+            p2pEngine.addEventListener('onPeerClose', () => {
+              p2pStatsRef.current.peers = Math.max(0, p2pStatsRef.current.peers - 1);
+            });
+            p2pEngine.addEventListener('onSegmentError', () => { p2pStatsRef.current.errors += 1; });
+          } catch {
+            // Older core builds may not expose every event — stats stay optional.
+          }
+        }
         try { p2pEngine?.bindHls(hls); } catch {}
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (disposed) return;
@@ -481,7 +515,7 @@ export function useMpvEngine({
             return;
           }
           hls.destroy();
-          onFatalError('This HLS source could not be loaded. Try another stream or open it in an external player.');
+          onFatalError(`This HLS source could not be loaded. Try another stream or open it in an external player.${formatHint ? ` ${formatHint}` : ''}`);
         });
         hls.loadSource(url);
         hls.attachMedia(video);
@@ -524,7 +558,7 @@ export function useMpvEngine({
             })));
           });
           dash.on('error', () => {
-            if (!disposed) onFatalError('This DASH (.mpd) stream could not be loaded.');
+            if (!disposed) onFatalError(`This DASH (.mpd) stream could not be loaded.${formatHint ? ` ${formatHint}` : ''}`);
           });
         }).catch(() => {
           if (!disposed) {
@@ -555,7 +589,7 @@ export function useMpvEngine({
                 video.src = url;
                 if (shouldAutoplay) video.play().catch(() => onFatalError('This live stream could not be played. Try another channel or open in an external player.'));
               } else {
-                onFatalError('This MPEG-TS/FLV source could not be loaded. Try another source or an external player.');
+                onFatalError(`This MPEG-TS/FLV source could not be loaded. Try another source or an external player.${formatHint ? ` ${formatHint}` : ''}`);
               }
             });
             player.attachMediaElement(video);
@@ -1000,6 +1034,7 @@ export function useMpvEngine({
           levelLabel: level ? (level.height ? `${level.height}p` : 'variant') : 'source',
           readyState: video.readyState,
           engineName: engineNameRef.current,
+          p2p: { ...p2pStatsRef.current },
         });
       }
       rafRef.current = requestAnimationFrame(tick);

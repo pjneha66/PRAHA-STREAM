@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, Check, CircleAlert, Copy, ExternalLink, Globe, ListFilter, LoaderCircle,
-  Play, Plus, Radio, RefreshCw, Search, ShieldCheck, Sparkles, Star,
-  Tv, Tv2, Users, Volume2, X,
+  Activity, ArrowRightLeft, Check, CircleAlert, Clock3, Copy, ExternalLink, Globe,
+  ListFilter, LoaderCircle, MoreHorizontal, Play, Plus, Radio, RefreshCw, Search,
+  ShieldCheck, Sparkles, Star, Tv, Tv2, Users, Volume2, X,
 } from 'lucide-react';
 import type { MediaItem, StreamResult } from '../types';
 import {
@@ -11,11 +11,12 @@ import {
   IptvScraper, IptvSourceStore, IptvSources, type IptvSourceEntry, IptvStore,
   M3uParser, type M3uChannel, type M3uPlaylist,
   LiveMatchesScraper, type LiveMatchEvent,
-  IptvZapStore, buildIptvPlayback,
+  IptvZapStore, buildIptvPlayback, detectIptvFormat, formatIptvBadge,
 } from '../services/iptvService';
-import { nativeFetchText, openSafeExternalUrl } from '../services/androidBridge';
+import { nativeFetchText, openExternalPlayer, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
-import { pickFirstHealthyStream } from '../services/streamHealth';
+import { pickFirstHealthyStream, probeStreamHealth } from '../services/streamHealth';
+import { LiveTvPrefs, type CachedHealth, type LastPlayedChannel } from '../services/liveTvPrefs';
 
 interface LiveTvViewProps {
   onPlayStream: (media: MediaItem, stream: StreamResult) => void;
@@ -134,6 +135,27 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
       return next;
     });
   };
+
+  // ── Channel reliability + recovery state ──
+  const [healthMap, setHealthMap] = useState<Record<string, CachedHealth>>(() => LiveTvPrefs.getAllHealth());
+  const [modeMap, setModeMap] = useState<Record<string, 'internal' | 'external'>>(() => LiveTvPrefs.getAllModes());
+  const [lastPlayed, setLastPlayed] = useState<LastPlayedChannel[]>(() => LiveTvPrefs.getLastPlayed());
+  const [actionChannel, setActionChannel] = useState<M3uChannel | null>(null);
+  const [checkingUrl, setCheckingUrl] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  const noticeTimer = useRef<number | null>(null);
+  const sourceCursorRef = useRef<Record<string, number>>({});
+
+  const flashNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 3000);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+  }, []);
+
   const [iptvOrgCountries, setIptvOrgCountries] = useState<Array<{ code: string; name: string }>>(IptvSources.IPTV_ORG_COUNTRIES_FALLBACK);
   const [iptvOrgCountry, setIptvOrgCountry] = useState<string>(() => IptvSourceStore.loadIptvOrgCountry());
   const [stepDaddyUrl, setStepDaddyUrl] = useState<string>(() => IptvSourceStore.loadStepDaddyUrl());
@@ -480,6 +502,93 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     onPlayStream(media, stream);
   };
 
+  /** Play a channel honouring its remembered per-source mode, and record it. */
+  const playChannel = (channel: M3uChannel, mode?: 'internal' | 'external') => {
+    const selected = mode || LiveTvPrefs.getMode(channel.url) || 'internal';
+    if (selected === 'external') {
+      const { stream } = buildIptvPlayback(channel);
+      openExternalPlayer(stream, channel.name, 'chooser');
+      flashNotice(`Opened externally · ${channel.name}`);
+    } else {
+      playStreamNow(channel.name, channel.url, channel.group || activeSourceName, channel.logo);
+    }
+    setLastPlayed(LiveTvPrefs.markPlayed(channel));
+    setActionChannel(null);
+  };
+
+  /** Ranged-GET probe with a 10-minute local cache; `force` re-checks live. */
+  const checkChannelHealth = async (channel: M3uChannel, force = false) => {
+    if (checkingUrl && checkingUrl !== channel.url) return;
+    const cached = LiveTvPrefs.getHealth(channel.url);
+    if (cached && !force) {
+      setHealthMap((current) => ({ ...current, [channel.url]: cached }));
+      flashNotice(`${channel.name}: ${cached.ok ? 'alive' : 'unreachable'} · ${cached.latencyMs}ms`);
+      return;
+    }
+    setCheckingUrl(channel.url);
+    try {
+      const result = await probeStreamHealth(channel.url);
+      const entry = LiveTvPrefs.setHealth(channel.url, result);
+      setHealthMap((current) => ({ ...current, [channel.url]: entry }));
+      flashNotice(`${channel.name}: ${result.ok ? 'alive' : 'unreachable'} · ${result.latencyMs}ms`);
+    } catch {
+      flashNotice(`${channel.name}: health check failed`);
+    } finally {
+      setCheckingUrl(null);
+    }
+  };
+
+  const copyStreamUrl = async (url: string) => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(url);
+      flashNotice('Stream URL copied');
+    } catch {
+      // Android WebViews often deny the async Clipboard API; use the legacy path.
+      try {
+        const field = document.createElement('textarea');
+        field.value = url;
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        document.body.appendChild(field);
+        field.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(field);
+        flashNotice(copied ? 'Stream URL copied' : 'Copy blocked — long-press the URL below');
+      } catch {
+        flashNotice('Copy blocked — long-press the URL below');
+      }
+    }
+  };
+
+  const rememberPlaybackMode = (channel: M3uChannel, mode: 'internal' | 'external') => {
+    LiveTvPrefs.setMode(channel.url, mode);
+    setModeMap((current) => ({ ...current, [channel.url]: mode }));
+    flashNotice(mode === 'external'
+      ? `External player remembered for ${channel.name}`
+      : `In-app player restored for ${channel.name}`);
+  };
+
+  const alternates = useMemo(
+    () => (actionChannel ? LiveTvPrefs.findAlternates(playlistChannels, actionChannel) : []),
+    [actionChannel, playlistChannels],
+  );
+
+  /** Cycle through other URLs that look like the same channel (different source). */
+  const tryNextSource = (channel: M3uChannel) => {
+    const options = LiveTvPrefs.findAlternates(playlistChannels, channel);
+    if (!options.length) {
+      flashNotice('No alternate source found for this channel');
+      return;
+    }
+    const key = channel.name.toLowerCase();
+    const cursor = sourceCursorRef.current[key] || 0;
+    const next = options[cursor % options.length];
+    sourceCursorRef.current[key] = cursor + 1;
+    playChannel(next);
+    flashNotice(`Trying ${next.group || next.name} · ${next.name}`);
+  };
+
   // ── Import Custom M3U ──
   const handleImportPlaylist = async () => {
     setImportError('');
@@ -546,13 +655,14 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   const filteredPlaylistChannels = useMemo(() => {
     let list = playlistChannels;
     if (sourceGroup === '__favorites') list = list.filter((c) => favChannels.includes(c.url));
+    else if (sourceGroup === '__recent') list = lastPlayed.map((entry) => playlistChannels.find((c) => c.url === entry.url) || entry);
     else if (sourceGroup !== 'All') list = list.filter((c) => c.group === sourceGroup);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(q) || (c.group && c.group.toLowerCase().includes(q)));
     }
     return list;
-  }, [playlistChannels, searchQuery, sourceGroup, favChannels]);
+  }, [playlistChannels, searchQuery, sourceGroup, favChannels, lastPlayed]);
 
   return (
     <div style={{ padding: '24px 20px', maxWidth: '1400px', margin: '0 auto', color: '#e6edf3' }}>
@@ -637,8 +747,62 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
         <div>
           {activeSourceName ? (
             <>
+              {/* Recently played — instant comeback to the last working streams */}
+              {lastPlayed.length > 0 && sourceGroup !== '__recent' && (
+                <div style={{ marginBottom: 16 }}>
+                  <p style={{ margin: '0 0 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.6px', color: '#8b949e' }}>
+                    RECENTLY PLAYED
+                  </p>
+                  <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+                    {lastPlayed.slice(0, 12).map((entry) => (
+                      <button
+                        key={entry.url}
+                        onClick={() => playChannel(playlistChannels.find((c) => c.url === entry.url) || entry)}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+                          padding: '7px 12px', borderRadius: 20, border: '1px solid rgba(88,166,255,.35)',
+                          background: 'rgba(88,166,255,.1)', color: '#c9d1d9', fontSize: 12, cursor: 'pointer',
+                        }}
+                      >
+                        <Play size={10} fill="#58a6ff" color="#58a6ff" />
+                        <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
+                        <em style={{ fontStyle: 'normal', fontSize: 9, color: '#58a6ff', fontWeight: 700 }}>
+                          {formatIptvBadge(detectIptvFormat(entry.url))}
+                        </em>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Group Pills */}
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '14px', marginBottom: '16px' }}>
+                <button
+                  key="__recent"
+                  onClick={() => { setSourceGroup('__recent'); setHubLimit(250); }}
+                  style={{
+                    padding: '8px 16px', borderRadius: '20px', border: '1px solid',
+                    borderColor: sourceGroup === '__recent' ? '#58a6ff' : '#30363d',
+                    background: sourceGroup === '__recent' ? 'rgba(88,166,255,.15)' : '#161b22',
+                    color: sourceGroup === '__recent' ? '#58a6ff' : '#c9d1d9',
+                    fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  ◷ Recent
+                </button>
+                <button
+                  key="__curated"
+                  onClick={() => { setSourceGroup('__curated'); setHubLimit(250); }}
+                  style={{
+                    padding: '8px 16px', borderRadius: '20px', border: '1px solid',
+                    borderColor: sourceGroup === '__curated' ? '#a371f7' : '#30363d',
+                    background: sourceGroup === '__curated' ? 'rgba(163,113,247,.15)' : '#161b22',
+                    color: sourceGroup === '__curated' ? '#d2a8ff' : '#c9d1d9',
+                    fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  ✦ Curated
+                </button>
                 <button
                   key="__favorites"
                   onClick={() => { setSourceGroup('__favorites'); setHubLimit(250); }}
@@ -681,7 +845,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
               <div style={{ margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 <p style={{ margin: 0, fontSize: '13px', color: '#8b949e', flex: 1 }}>
-                  {activeSourceName} · {filteredPlaylistChannels.length.toLocaleString()} channels{sourceGroup !== 'All' ? ` in ${sourceGroup}` : ''}
+                  {sourceGroup === '__curated'
+                    ? `${filteredHardcoded.length} curated channels · multi-source scan + health pick`
+                    : `${activeSourceName} · ${filteredPlaylistChannels.length.toLocaleString()} channels${sourceGroup !== 'All' ? ` in ${sourceGroup === '__recent' ? 'Recent' : sourceGroup === '__favorites' ? 'Favorites' : sourceGroup}` : ''}`}
                 </p>
                 <button
                   onClick={() => setIptvPref('praha.iptv.hubCompact', !hubCompact, setHubCompact)}
@@ -697,24 +863,123 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                 </button>
               </div>
 
-              {/* Source Channels Grid — capped per chunk to keep the page snappy */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
-                {filteredPlaylistChannels.slice(0, hubLimit).map((ch, i) => (
-                  <div
-                    key={`${i}-${ch.url}-${ch.name || 'unknown'}`}
-                    onClick={() => playStreamNow(ch.name, ch.url, ch.group || activeSourceName, ch.logo)}
-                    style={{
-                      background: '#161b22',
-                      borderRadius: '12px',
-                      border: '1px solid #30363d',
-                      padding: hubCompact ? '8px 10px' : '14px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      minHeight: hubCompact ? '56px' : '84px',
-                    }}
-                  >
+              {sourceGroup === '__curated' ? (
+                /* Curated channels scan your loaded sources and play the healthiest hit. */
+                <div>
+                  <p style={{ margin: '0 0 14px', fontSize: 12.5, color: '#8b949e' }}>
+                    Each card searches the loaded M3U and your Xtream portals, probes the candidates, then plays the
+                    fastest working source — no manual URL hunting.
+                  </p>
+                  <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBottom: 12 }}>
+                    {CATEGORY_FILTERS.map((category) => (
+                      <button
+                        key={category}
+                        onClick={() => setSelectedCategory(category)}
+                        style={{
+                          padding: '5px 12px', borderRadius: 16, whiteSpace: 'nowrap',
+                          border: '1px solid',
+                          borderColor: selectedCategory === category ? '#a371f7' : '#30363d',
+                          background: selectedCategory === category ? 'rgba(163,113,247,.15)' : '#161b22',
+                          color: selectedCategory === category ? '#d2a8ff' : '#8b949e',
+                          fontSize: 12, cursor: 'pointer',
+                        }}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
+                    {filteredHardcoded.map((channel) => (
+                      <div
+                        key={channel.id}
+                        style={{
+                          background: 'linear-gradient(135deg, rgba(163,113,247,.1), #161b22)',
+                          borderRadius: 12, border: '1px solid #30363d', padding: 14,
+                          display: 'flex', alignItems: 'center', gap: 10,
+                        }}
+                      >
+                        {channel.logo ? (
+                          <img src={channel.logo} alt="" loading="lazy" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain', background: '#0d1117' }} />
+                        ) : (
+                          <div style={{ width: 40, height: 40, borderRadius: 8, background: 'rgba(163,113,247,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Sparkles size={17} color="#d2a8ff" />
+                          </div>
+                        )}
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <h3 title={channel.name} style={{ fontSize: 13, fontWeight: 600, color: '#f0f6fc', margin: '0 0 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel.shortName}</h3>
+                          <p style={{ margin: 0, fontSize: 11, color: '#d2a8ff' }}>{channel.category}</p>
+                        </div>
+                        <button
+                          onClick={() => void scanCuratedChannel(channel)}
+                          disabled={scanningBusy}
+                          title={`Scan sources for ${channel.name}`}
+                          style={{
+                            padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(163,113,247,.5)',
+                            background: 'rgba(163,113,247,.15)', color: '#d2a8ff', fontSize: 11,
+                            fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+                          }}
+                        >
+                          {scanningBusy && scanningChannel?.id === channel.id
+                            ? <LoaderCircle size={13} className="spin" />
+                            : <Radio size={13} />}
+                          Scan
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {scanningChannel && channelHits.length > 0 && (
+                    <div style={{ marginTop: 18, background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                        <h4 style={{ margin: 0, fontSize: 14, color: '#f0f6fc' }}>Sources for {scanningChannel.shortName}</h4>
+                        <span style={{ fontSize: 11, color: '#8b949e' }}>{channelHits.length} found · healthiest played first</span>
+                      </div>
+                      {channelHits.map((hit, index) => (
+                        <div key={`${hit.url}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid #21262d' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: index === 0 ? '#4ade80' : '#8b949e', minWidth: 58 }}>
+                            {index === 0 ? 'BEST' : `#${index + 1}`}
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 12.5, color: '#c9d1d9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hit.name}</div>
+                            <div style={{ fontSize: 11, color: '#8b949e' }}>{hit.source} · {formatIptvBadge(detectIptvFormat(hit.url))}</div>
+                          </div>
+                          <button
+                            onClick={() => playStreamNow(scanningChannel.name, hit.url, hit.source, scanningChannel.logo)}
+                            style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #58a6ff', background: 'rgba(88,166,255,.1)', color: '#58a6ff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                          >
+                            Play
+                          </button>
+                          <button
+                            onClick={() => void copyStreamUrl(hit.url)}
+                            aria-label="Copy stream URL"
+                            style={{ padding: 6, borderRadius: 7, border: '1px solid #30363d', background: '#21262d', color: '#8b949e', cursor: 'pointer' }}
+                          >
+                            <Copy size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Source Channels Grid — capped per chunk to keep the page snappy */
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '10px' }}>
+                  {filteredPlaylistChannels.slice(0, hubLimit).map((ch, i) => (
+                    <div
+                      key={`${i}-${ch.url}-${ch.name || 'unknown'}`}
+                      onClick={() => playChannel(ch)}
+                      style={{
+                        background: '#161b22',
+                        borderRadius: '12px',
+                        border: '1px solid #30363d',
+                        padding: hubCompact ? '8px 10px' : '14px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        minHeight: hubCompact ? '56px' : '84px',
+                      }}
+                    >
                     {ch.logo && !hubHideLogos ? (
                       <img src={ch.logo} alt="" loading="lazy" style={{ width: hubCompact ? '32px' : '46px', height: hubCompact ? '32px' : '46px', borderRadius: '8px', objectFit: 'contain', background: '#0d1117', flexShrink: 0 }}
                         onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }} />
@@ -726,6 +991,27 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <h3 title={ch.name} style={{ fontSize: '13.5px', fontWeight: 600, margin: '0 0 3px 0', color: '#f0f6fc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name || 'Unknown channel'}</h3>
                       <p style={{ fontSize: '12px', color: '#8b949e', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.group || 'Live'}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+                        <span style={{
+                          fontSize: 9, fontWeight: 800, letterSpacing: '0.4px', padding: '1px 5px',
+                          borderRadius: 4, border: '1px solid rgba(88,166,255,.35)',
+                          background: 'rgba(88,166,255,.1)', color: '#79c0ff',
+                        }}>
+                          {formatIptvBadge(detectIptvFormat(ch.url))}
+                        </span>
+                        {modeMap[ch.url] === 'external' && (
+                          <span style={{ fontSize: 9, fontWeight: 800, color: '#d2a8ff' }} title="Remembered: open externally">EXT</span>
+                        )}
+                        {healthMap[ch.url] && (
+                          <span
+                            title={healthMap[ch.url].detail}
+                            style={{ fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3, color: healthMap[ch.url].ok ? '#4ade80' : '#f87171' }}
+                          >
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
+                            {healthMap[ch.url].ok ? `${healthMap[ch.url].latencyMs}ms` : 'dead'}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={(event) => { event.stopPropagation(); toggleFavorite(ch.url); }}
@@ -734,12 +1020,20 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
                     >
                       <Star size={15} fill={favChannels.includes(ch.url) ? '#f5c518' : 'none'} />
                     </button>
+                    <button
+                      onClick={(event) => { event.stopPropagation(); setActionChannel(ch); }}
+                      aria-label={`More options for ${ch.name}`}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px', flexShrink: 0, color: '#8b949e' }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
                     <Play size={14} fill="#58a6ff" color="#58a6ff" style={{ flexShrink: 0 }} />
                   </div>
                 ))}
-              </div>
+                </div>
+              )}
 
-              {filteredPlaylistChannels.length > hubLimit && (
+              {sourceGroup !== '__curated' && filteredPlaylistChannels.length > hubLimit && (
                 <div style={{ textAlign: 'center', marginTop: '16px' }}>
                   <button
                     onClick={() => setHubLimit((v) => v + 250)}
@@ -1536,6 +1830,129 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Channel action sheet: health, fallback player, URL, next source ── */}
+      {actionChannel && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.78)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1100, padding: '20px' }}
+          onClick={() => setActionChannel(null)}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 16, width: '100%', maxWidth: '520px', padding: 20, maxHeight: '85vh', overflowY: 'auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ margin: 0, fontSize: 16, color: '#f0f6fc' }}>{actionChannel.name}</h3>
+                <p style={{ margin: '3px 0 0', fontSize: 12, color: '#8b949e' }}>
+                  {actionChannel.group || activeSourceName} · {formatIptvBadge(detectIptvFormat(actionChannel.url))}
+                </p>
+              </div>
+              <button onClick={() => setActionChannel(null)} aria-label="Close channel options" style={{ background: 'transparent', border: 'none', color: '#8b949e', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: '#0d1117', border: '1px solid #30363d', borderRadius: 10, padding: '10px 12px' }}>
+              {healthMap[actionChannel.url] ? (
+                <span style={{ fontSize: 12, color: healthMap[actionChannel.url].ok ? '#4ade80' : '#f87171' }}>
+                  {healthMap[actionChannel.url].ok
+                    ? `● Alive · ${healthMap[actionChannel.url].latencyMs}ms`
+                    : `● Unreachable · ${healthMap[actionChannel.url].detail}`}
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, color: '#8b949e' }}>Health not checked yet</span>
+              )}
+              <button
+                onClick={() => void checkChannelHealth(actionChannel, true)}
+                disabled={checkingUrl === actionChannel.url}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {checkingUrl === actionChannel.url ? <LoaderCircle size={12} className="spin" /> : <Activity size={12} />}
+                {checkingUrl === actionChannel.url ? 'Checking…' : 'Re-check'}
+              </button>
+            </div>
+
+            <input
+              readOnly
+              value={actionChannel.url}
+              onFocus={(event) => event.currentTarget.select()}
+              aria-label="Stream URL"
+              style={{ width: '100%', marginTop: 10, padding: '9px 10px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 8, color: '#79c0ff', fontSize: 11, boxSizing: 'border-box' }}
+            />
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 12 }}>
+              <button onClick={() => playChannel(actionChannel)} style={{ padding: '10px 8px', borderRadius: 9, border: 'none', background: '#ef4444', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                ▶ Play in-app
+              </button>
+              <button onClick={() => playChannel(actionChannel, 'external')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '10px 8px', borderRadius: 9, border: '1px solid #a371f7', background: 'rgba(163,113,247,.12)', color: '#d2a8ff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                <ExternalLink size={13} /> Open externally
+              </button>
+              <button onClick={() => void copyStreamUrl(actionChannel.url)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '10px 8px', borderRadius: 9, border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                <Copy size={13} /> Copy URL
+              </button>
+              <button onClick={() => void checkChannelHealth(actionChannel)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '10px 8px', borderRadius: 9, border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                <Activity size={13} /> Check health
+              </button>
+              <button
+                onClick={() => tryNextSource(actionChannel)}
+                disabled={!alternates.length}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '10px 8px', borderRadius: 9, border: '1px solid #58a6ff', background: alternates.length ? 'rgba(88,166,255,.1)' : 'transparent', color: alternates.length ? '#58a6ff' : '#484f58', fontSize: 12, fontWeight: 600, cursor: alternates.length ? 'pointer' : 'not-allowed' }}
+              >
+                <ArrowRightLeft size={13} /> Try next source
+              </button>
+              <button
+                onClick={() => toggleFavorite(actionChannel.url)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '10px 8px', borderRadius: 9, border: '1px solid #30363d', background: '#21262d', color: favChannels.includes(actionChannel.url) ? '#f5c518' : '#c9d1d9', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+              >
+                <Star size={13} fill={favChannels.includes(actionChannel.url) ? '#f5c518' : 'none'} />
+                {favChannels.includes(actionChannel.url) ? 'Favorited' : 'Favorite'}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, borderTop: '1px solid #30363d', paddingTop: 12 }}>
+              <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.6px', color: '#8b949e' }}>REMEMBER PLAYBACK MODE FOR THIS SOURCE</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(['internal', 'external'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => rememberPlaybackMode(actionChannel, mode)}
+                    style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: '1px solid', borderColor: modeMap[actionChannel.url] === mode ? '#58a6ff' : '#30363d', background: modeMap[actionChannel.url] === mode ? 'rgba(88,166,255,.12)' : 'transparent', color: modeMap[actionChannel.url] === mode ? '#58a6ff' : '#8b949e', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {mode === 'internal' ? 'In-app player' : 'External player'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {alternates.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.6px', color: '#8b949e' }}>SAME CHANNEL ON OTHER SOURCES ({alternates.length})</p>
+                {alternates.slice(0, 5).map((alt, index) => (
+                  <div key={`${alt.url}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid #21262d' }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 12, color: '#c9d1d9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alt.name}</div>
+                      <div style={{ fontSize: 10.5, color: '#8b949e' }}>{alt.group || 'Live'} · {formatIptvBadge(detectIptvFormat(alt.url))}</div>
+                    </div>
+                    <button
+                      onClick={() => playChannel(alt)}
+                      style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #30363d', background: '#21262d', color: '#f0f6fc', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Play
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {notice && (
+        <div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200, maxWidth: '90vw', padding: '10px 16px', borderRadius: 10, background: 'rgba(13,17,23,.96)', border: '1px solid #30363d', color: '#f0f6fc', fontSize: 12.5, boxShadow: '0 8px 30px rgba(0,0,0,.5)', textAlign: 'center' }}>
+          {notice}
         </div>
       )}
     </div>

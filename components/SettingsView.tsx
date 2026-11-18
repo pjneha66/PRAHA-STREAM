@@ -52,21 +52,31 @@ const SETTINGS_GROUPS: Array<[string, string]> = [
   ['Profiles', 'Profiles'],
   ['TMDB API', 'TMDB'],
   ['IMDx · Tiffara (optional)', 'IMDx'],
-  ['Debrid & Magnet Streaming', 'Debrid'],
   ['Backup, Restore & Sync', 'Backup'],
   ['Android & TV Experience', 'Android/TV'],
-  ['Private DNS', 'DNS'],
-  ['Network & Torrent Engine', 'Network'],
+  ['Private DNS', 'Device DNS'],
+  ['DNS over HTTPS', 'App DNS'],
+  ['Network & Torrent Engine', 'Torrent · free'],
+  ['Debrid & Magnet Streaming', 'Debrid · paid'],
   ['Playback & browsing', 'Playback'],
   ['Player', 'Player'],
   ['Appearance & Palette', 'Appearance'],
   ['Navigation', 'Navigation'],
 ];
 
+/** Clear paid-vs-self-hosted labelling for source/network settings. */
+const SourceKindBadge: React.FC<{ kind: 'paid' | 'free' }> = ({ kind }) => (
+  <span className={`source-kind-badge ${kind}`}>{kind === 'paid' ? 'PAID' : 'FREE · SELF-HOSTED'}</span>
+);
+
 const SettingsJumpChips: React.FC = () => {
   const jump = (heading: string) => {
     const cards = Array.from(document.querySelectorAll<HTMLElement>('.settings-card'));
-    const target = cards.find((card) => card.querySelector('h2')?.textContent === heading);
+    // Headings may contain a trailing paid/free badge, so match the prefix.
+    const target = cards.find((card) => {
+      const text = card.querySelector('h2')?.textContent || '';
+      return text === heading || text.startsWith(`${heading} `);
+    });
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   return (
@@ -506,47 +516,6 @@ const SettingsView: React.FC<{
             <p className="api-privacy"><ShieldCheck size={14} /><span>Requests go straight from this device to your IMDx endpoint. TMDB is never replaced or disabled by this setting.</span></p>
           </section>
 
-          {/* Debrid Magnet Streaming */}
-          <section className="settings-card">
-            <div className="settings-card-heading">
-              <span><Magnet size={19} /></span>
-              <div>
-                <h2>Debrid & Magnet Streaming</h2>
-                <p>Convert torrent & magnet streams into instant 4K direct HTTP streams inside the built-in player.</p>
-              </div>
-            </div>
-            <div className="setting-row">
-              <div><strong>Debrid provider</strong><p>Automatically unrestricts cached magnets when pressing play.</p></div>
-              <select
-                className="settings-select"
-                value={settings.debrid.provider}
-                onChange={(e) => update('debrid', { ...settings.debrid, provider: e.target.value as DebridProvider })}
-              >
-                <option value="none">Disabled</option>
-                <option value="realdebrid">Real-Debrid</option>
-                <option value="alldebrid">AllDebrid</option>
-                <option value="torbox">TorBox</option>
-              </select>
-            </div>
-            {settings.debrid.provider !== 'none' && (
-              <div className="api-key-form">
-                <label htmlFor="debrid-key">Personal {settings.debrid.provider} API token</label>
-                <div className="api-key-input">
-                  <KeyRound size={16} />
-                  <input
-                    id="debrid-key"
-                    type="password"
-                    value={settings.debrid.apiKey}
-                    onChange={(e) => update('debrid', { ...settings.debrid, apiKey: e.target.value })}
-                    placeholder="Paste your Debrid API token"
-                    autoComplete="off"
-                  />
-                </div>
-              </div>
-            )}
-            <p className="api-privacy"><ShieldCheck size={14} /><span>Paid debrid providers (Real-Debrid, AllDebrid, TorBox) require your own API token. For open-source/self-hosted torrent streaming options, use a local <b>TorrServer</b> engine in <b>Network & Torrent Engine</b> (free, self-hosted), or explore projects like <b>WebTor</b>, <b>Torrin</b>, and <b>StremThru</b> for self-hosted setups. PRAHA does not bundle a free public cached-debrid service.</span></p>
-          </section>
-
           {/* Backup, Restore & Scrobble Sync */}
           <section className="settings-card">
             <div className="settings-card-heading">
@@ -648,6 +617,9 @@ const SettingsView: React.FC<{
             </div>
           </section>
 
+          {/* ── Network · DNS · Torrent · Debrid cluster ── */}
+          <h3 className="settings-group-label">Network · DNS · Torrent · Debrid</h3>
+
           {/* DNS is configured by Android, not silently changed by the app. */}
           <section className="settings-card">
             <div className="settings-card-heading"><span><ShieldCheck size={19} /></span><div><h2>Private DNS</h2><p>Encrypted DNS may help if your network's DNS cannot resolve a service.</p></div></div>
@@ -689,9 +661,62 @@ const SettingsView: React.FC<{
             </div>
           </section>
 
+          {/* DNS over HTTPS — grouped next to device DNS and the torrent engine */}
+          <section className="settings-card">
+            <div className="settings-card-heading">
+              <span><Globe size={19} /></span>
+              <div>
+                <h2>DNS over HTTPS <SourceKindBadge kind="free" /></h2>
+                <p>Choose an encrypted DNS resolver for app network requests. Helps when your network blocks some sites.</p>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div><strong>Quick presets</strong><p>One tap to apply a resolver pair, then fine-tune below.</p></div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {([
+                  ['System', 'system', true],
+                  ['Cloudflare', 'cloudflare', true],
+                  ['AdGuard', 'adguard', false],
+                ] as const).map(([label, provider, fallback]) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => { update('dnsProvider', provider); update('dnsFallback', fallback); }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="setting-row">
+              <div><strong>DNS provider</strong><p>System default uses your device's configured DNS. Encrypted providers may improve privacy and bypass DNS blocks.</p></div>
+              <select
+                className="settings-select"
+                value={settings.dnsProvider || 'system'}
+                onChange={(e) => update('dnsProvider', e.target.value)}
+              >
+                <option value="system">System default</option>
+                <option value="cloudflare">Cloudflare (1.1.1.1)</option>
+                <option value="google">Google (8.8.8.8)</option>
+                <option value="adguard">AdGuard</option>
+                <option value="quad9">Quad9</option>
+                <option value="dnssb">DNS.SB</option>
+                <option value="dnswatch">DNS.Watch</option>
+                <option value="canadianshield">Canadian Shield</option>
+              </select>
+            </div>
+            <div className="setting-row">
+              <div><strong>Fall back to system DNS</strong><p>When the resolver is slow or blocked, fall back to system DNS automatically.</p></div>
+              <Toggle checked={settings.dnsFallback !== false} onChange={(val) => update('dnsFallback', val)} label="Fall back to system DNS" />
+            </div>
+            <p className="settings-tv-help">Android TV / remote: press <kbd>Tab</kbd> to move between controls, <kbd>Enter</kbd> to select, then scroll down with the D-pad.</p>
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Applies when the app restarts. Encrypted DNS sends queries over HTTPS to the selected provider instead of your network's default resolver. Some Android WebView requests may still use system DNS.</span></p>
+          </section>
+
           {/* Network & Torrent Engine */}
           <section className="settings-card">
-            <div className="settings-card-heading"><span><Globe size={19} /></span><div><h2>Network & Torrent Engine</h2><p>Check connectivity, tune torrent streaming, and configure a local/self-hosted torrent engine.</p></div></div>
+            <div className="settings-card-heading"><span><Globe size={19} /></span><div><h2>Network & Torrent Engine <SourceKindBadge kind="free" /></h2><p>Check connectivity, tune torrent streaming, and configure a local/self-hosted torrent engine.</p></div></div>
             <div className="setting-row">
               <div>
                 <strong>Network status</strong>
@@ -739,35 +764,51 @@ const SettingsView: React.FC<{
                   {torrentHostStatus === 'error' ? <CircleAlert size={14} /> : <Check size={14} />} {torrentHostMessage}
                 </p>
               )}
-              <p className="api-privacy"><ShieldCheck size={14} /><span>No torrent engine found? Install/run an open-source <b>TorrServer</b> on this device or your LAN, or use Debrid for cached magnet playback. In-app P2P depends on torrent swarm WebRTC availability.</span></p>
+              <p className="settings-tv-help">TV tip: use <kbd>Save &amp; test</kbd> to confirm the host is reachable before playing a magnet.</p>
+              <p className="api-privacy"><ShieldCheck size={14} /><span><b>Free / self-hosted:</b> TorrServer and in-app WebTorrent P2P need no paid account. <b>Paid:</b> cached instant playback is in the Debrid card below. In-app P2P depends on torrent swarm WebRTC availability.</span></p>
             </div>
           </section>
 
-          {/* DNS over HTTPS */}
+          {/* Debrid Magnet Streaming — grouped with network/source settings */}
           <section className="settings-card">
-            <div className="settings-card-heading"><span><Globe size={19} /></span><div><h2>DNS over HTTPS</h2><p>Choose an encrypted DNS resolver for app network requests. Helps when your network blocks some sites.</p></div></div>
+            <div className="settings-card-heading">
+              <span><Magnet size={19} /></span>
+              <div>
+                <h2>Debrid & Magnet Streaming <SourceKindBadge kind="paid" /></h2>
+                <p>Convert torrent & magnet streams into instant 4K direct HTTP streams inside the built-in player.</p>
+              </div>
+            </div>
             <div className="setting-row">
-              <div><strong>DNS provider</strong><p>System default uses your device's configured DNS. Encrypted providers may improve privacy and bypass DNS blocks.</p></div>
+              <div><strong>Debrid provider</strong><p>Automatically unrestricts cached magnets when pressing play. Requires your own paid account.</p></div>
               <select
                 className="settings-select"
-                value={settings.dnsProvider || 'system'}
-                onChange={(e) => update('dnsProvider', e.target.value)}
+                value={settings.debrid.provider}
+                onChange={(e) => update('debrid', { ...settings.debrid, provider: e.target.value as DebridProvider })}
               >
-                <option value="system">System default</option>
-                <option value="cloudflare">Cloudflare (1.1.1.1)</option>
-                <option value="google">Google (8.8.8.8)</option>
-                <option value="adguard">AdGuard</option>
-                <option value="quad9">Quad9</option>
-                <option value="dnssb">DNS.SB</option>
-                <option value="dnswatch">DNS.Watch</option>
-                <option value="canadianshield">Canadian Shield</option>
+                <option value="none">Disabled (use free TorrServer / P2P)</option>
+                <option value="realdebrid">Real-Debrid · paid</option>
+                <option value="alldebrid">AllDebrid · paid</option>
+                <option value="torbox">TorBox · paid</option>
               </select>
             </div>
-            <div className="setting-row">
-              <div><strong>Fall back to system DNS</strong><p>When the resolver is slow or blocked, fall back to system DNS automatically.</p></div>
-              <Toggle checked={settings.dnsFallback !== false} onChange={(val) => update('dnsFallback', val)} label="Fall back to system DNS" />
-            </div>
-            <p className="api-privacy"><ShieldCheck size={14} /><span>Applies when the app restarts. Encrypted DNS sends queries over HTTPS to the selected provider instead of your network's default resolver.</span></p>
+            {settings.debrid.provider !== 'none' && (
+              <div className="api-key-form">
+                <label htmlFor="debrid-key">Personal {settings.debrid.provider} API token</label>
+                <div className="api-key-input">
+                  <KeyRound size={16} />
+                  <input
+                    id="debrid-key"
+                    type="password"
+                    value={settings.debrid.apiKey}
+                    onChange={(e) => update('debrid', { ...settings.debrid, apiKey: e.target.value })}
+                    placeholder="Paste your Debrid API token"
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            )}
+            <p className="settings-tv-help">TV tip: enter the token once here; it stays on this device and appears in backups.</p>
+            <p className="api-privacy"><ShieldCheck size={14} /><span><b>Paid:</b> Real-Debrid, AllDebrid and TorBox require your own API token. <b>Free / self-hosted:</b> use a local <b>TorrServer</b> in Network &amp; Torrent Engine, or projects like <b>WebTor</b>, <b>Torrin</b> and <b>StremThru</b>. PRAHA does not bundle a free public cached-debrid service.</span></p>
           </section>
 
           {/* Playback & Browsing */}

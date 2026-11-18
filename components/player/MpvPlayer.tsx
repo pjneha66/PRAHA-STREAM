@@ -12,7 +12,7 @@ import {
   openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen,
 } from '../../services/androidBridge';
 import AudioSubtitleDialog from './AudioSubtitleDialog';
-import { clamp, formatBitrate, formatSpeed, formatTime, streamHost } from './format';
+import { clamp, formatBitrate, formatBytes, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
 import { useMpvEngine } from './useMpvEngine';
@@ -663,7 +663,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         }}
         onError={(event) => {
           const error = event.currentTarget.error;
-          if (error && !isNativeVlcAvailable()) setFatal(mediaErrorMessage(error.code));
+          if (error && !isNativeVlcAvailable()) setFatal(mediaErrorMessage(error.code, stream.url, stream.format));
         }}
       >
         {preparedSubtitles.map((subtitle, index) => (
@@ -803,6 +803,13 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
             <div><dt>Quality</dt><dd>{activeLevelLabel}</dd></div>
             <div><dt>Bitrate</dt><dd>{formatBitrate(stats.bitrate)}</dd></div>
             <div><dt>Buffer</dt><dd>{formatTime(stats.buffered)} ahead</dd></div>
+            <div>
+              <dt>P2P</dt>
+              <dd>{stats.p2p.enabled
+                ? `${stats.p2p.peers} peers · ${formatBytes(stats.p2p.fromPeersBytes)} peers / ${formatBytes(stats.p2p.fromHttpBytes)} HTTP`
+                : 'off'}</dd>
+            </div>
+            {stats.p2p.enabled && stats.p2p.errors > 0 && <div><dt>P2P errors</dt><dd>{stats.p2p.errors}</dd></div>}
             <div><dt>Host</dt><dd>{streamHost(stream.url)}</dd></div>
             <div><dt>Subtitles</dt><dd>{activeSubtitle ? activeSubtitle.label : 'off'}{settings.subtitleOffset ? ` (${settings.subtitleOffset > 0 ? '+' : ''}${settings.subtitleOffset}s)` : ''}</dd></div>
             <div><dt>Audio</dt><dd>{activeAudio ? activeAudio.label : 'default'}{muted ? ' (muted)' : ''}</dd></div>

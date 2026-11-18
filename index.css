@@ -551,8 +551,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .settings-card { padding: 20px 22px; border: 1px solid var(--line); border-radius: 15px; background: var(--bg-soft); }
 .settings-card-heading { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .settings-card-heading > span, .settings-side-icon { display: flex; align-items: center; justify-content: center; width: 37px; height: 37px; border-radius: 10px; background: rgba(var(--accent-rgb), .07); color: var(--accent); }
-.settings-card h2 { margin: 0; font-size: 12px; }
+.settings-card h2 { margin: 0; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .settings-card-heading p { margin: 4px 0 0; color: var(--muted); font-size: 8px; }
+.source-kind-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; font-size: 7px; font-weight: 800; letter-spacing: .7px; white-space: nowrap; }
+.source-kind-badge.paid { color: #f5c518; background: rgba(245,197,24,.12); border: 1px solid rgba(245,197,24,.35); }
+.source-kind-badge.free { color: #4ade80; background: rgba(74,222,128,.1); border: 1px solid rgba(74,222,128,.3); }
+.settings-group-label { margin: 10px 0 0; color: var(--muted-2); font-size: 8px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
+.settings-tv-help { margin: 12px 0 0; color: var(--muted-2); font-size: 7.5px; line-height: 1.6; }
+.settings-tv-help kbd { padding: 1px 5px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 7px; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 65px; border-bottom: 1px solid rgba(255,255,255,.045); }
 .setting-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .setting-row strong { font-size: 10px; font-weight: 620; }

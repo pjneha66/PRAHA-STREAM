@@ -7,9 +7,13 @@ import {
   HardcodedChannels,
   IptvStore,
   IptvClient,
+  buildIptvPlayback,
+  detectIptvFormat,
+  formatIptvBadge,
   type IptvPortal,
   type M3uChannel,
 } from '../services/iptvService';
+import { LiveTvPrefs } from '../services/liveTvPrefs';
 
 describe('Live TV & IPTV Service Engine', () => {
   describe('M3U / M3U8 Playlist Parser', () => {
@@ -234,6 +238,74 @@ http://iptv.com:8080/get.php?username=dupuser&password=duppass
       expect(loaded.length).toBe(1);
       expect(loaded[0].channels[0].name).toBe('Ch 1');
     });
+  });
+});
+
+describe('Live TV stream classification', () => {
+  it('classifies HLS, DASH, MPEG-TS and direct URLs', () => {
+    expect(detectIptvFormat('https://cdn.example.com/live.m3u8?token=1')).toBe('hls');
+    expect(detectIptvFormat('https://cdn.example.com/watch?format=m3u8')).toBe('hls');
+    expect(detectIptvFormat('https://cdn.example.com/watch?format=mpd')).toBe('dash');
+    expect(detectIptvFormat('https://cdn.example.com/manifest.mpd')).toBe('dash');
+    expect(detectIptvFormat('http://iptv.example.org:8080/live/u/p/456.ts')).toBe('mpegts');
+    expect(detectIptvFormat('https://cdn.example.com/live/stream.flv?a=1')).toBe('mpegts');
+    expect(detectIptvFormat('https://cdn.example.com/movie.mp4')).toBe('direct');
+  });
+
+  it('derives format hints from URL shape when the extension is missing', () => {
+    expect(detectIptvFormat('https://host:8080/live/user/pass/12/playlist.m3u8')).toBe('hls');
+    expect(detectIptvFormat('https://host:8080/live/user/pass/12')).toBe('mpegts');
+  });
+
+  it('uses the same classification for badges and the player engine hint', () => {
+    const url = 'https://cdn.example.com/sports/xyz.m3u8';
+    const { stream } = buildIptvPlayback({ name: 'F1', url, group: 'Motorsport' });
+    expect(stream.format).toBe(detectIptvFormat(url));
+    expect(formatIptvBadge(stream.format || '')).toBe('HLS');
+    expect(formatIptvBadge('mpegts')).toBe('MPEG-TS');
+  });
+});
+
+describe('Live TV local preferences', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('caches health probes with a timestamp for card badges', () => {
+    const url = 'https://cdn.example.com/a.m3u8';
+    expect(LiveTvPrefs.getHealth(url)).toBeNull();
+    const entry = LiveTvPrefs.setHealth(url, { ok: true, status: 206, latencyMs: 42, detail: 'Alive' });
+    expect(entry.ok).toBe(true);
+    expect(entry.at).toBeGreaterThan(0);
+    expect(LiveTvPrefs.getHealth(url)?.latencyMs).toBe(42);
+    expect(Object.keys(LiveTvPrefs.getAllHealth())).toContain(url);
+  });
+
+  it('keeps recently played channels most-recent-first and deduplicated', () => {
+    const a = { name: 'Sky Sports F1', url: 'https://a/f1.m3u8', group: 'Motorsport' };
+    const b = { name: 'ESPN', url: 'https://b/espn.ts', group: 'US Sports' };
+    LiveTvPrefs.markPlayed(a);
+    LiveTvPrefs.markPlayed(b);
+    LiveTvPrefs.markPlayed(a);
+    const recent = LiveTvPrefs.getLastPlayed();
+    expect(recent.map((entry) => entry.url)).toEqual([a.url, b.url]);
+    expect(recent[0].at).toBeGreaterThan(0);
+  });
+
+  it('remembers the playback mode per source', () => {
+    LiveTvPrefs.setMode('https://a/one.ts', 'external');
+    expect(LiveTvPrefs.getMode('https://a/one.ts')).toBe('external');
+    expect(LiveTvPrefs.getMode('https://a/two.ts')).toBeNull();
+    LiveTvPrefs.setMode('https://a/one.ts', 'internal');
+    expect(LiveTvPrefs.getMode('https://a/one.ts')).toBe('internal');
+  });
+
+  it('finds the same channel on other sources despite country/quality noise', () => {
+    const channels: M3uChannel[] = [
+      { name: 'UK: SKY SPORTS F1 HD', url: 'https://a/f1.m3u8', group: 'Motorsport' },
+      { name: 'US: FORMULA 1 GRAND PRIX LIVE', url: 'https://b/f1.ts', group: 'Motorsport' },
+      { name: 'CNN HD', url: 'https://c/cnn.m3u8', group: 'News' },
+    ];
+    const alternates = LiveTvPrefs.findAlternates(channels, { name: 'Sky Sports F1', url: 'https://x/f1.m3u8' });
+    expect(alternates.map((entry) => entry.url)).toEqual(['https://a/f1.m3u8']);
   });
 });
 

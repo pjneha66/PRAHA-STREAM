@@ -1791,21 +1791,40 @@ export class IptvZapStore {
   }
 }
 
+/**
+ * Classify an IPTV URL into the engine hint the player expects. Shared by the
+ * playback builder and the Live TV cards so the badge matches what actually
+ * plays. Many providers serve HLS without a `.m3u8` extension (and TS without
+ * `.ts`), so URL-shape heuristics are included after the explicit checks.
+ */
+export function detectIptvFormat(url: string): 'hls' | 'dash' | 'mpegts' | 'direct' {
+  const value = url || '';
+  if (/\.m3u8($|\?)/i.test(value) || /[?&]format=m3u8\b/i.test(value)) return 'hls';
+  if (/\.mpd($|\?)/i.test(value) || /[?&]format=mpd\b/i.test(value)) return 'dash';
+  if (/\.(ts|flv)($|\?)/i.test(value)) return 'mpegts';
+  if (/\/live\//i.test(value) || /:8080|:8000|:25461|:9981/i.test(value)) {
+    // Common IPTV URL patterns often serve MPEG-TS or HLS. Prefer HLS when the
+    // endpoint hints at a playlist (master/index/playlist).
+    return /playlist|index|master/i.test(value) ? 'hls' : 'mpegts';
+  }
+  return 'direct';
+}
+
+/** Short user-facing label for a detected format, used on source badges. */
+export function formatIptvBadge(format: string): string {
+  switch (format) {
+    case 'hls': return 'HLS';
+    case 'dash': return 'DASH';
+    case 'mpegts': return 'MPEG-TS';
+    case 'direct': return 'DIRECT';
+    default: return format.toUpperCase() || 'LIVE';
+  }
+}
+
 /** Shared media/stream builder for IPTV playback (hub tap + zap bar). */
 export function buildIptvPlayback(ch: IptvZapChannel): { media: MediaItem; stream: StreamResult } {
   const url = ch.url || '';
-  // Improve format detection for IPTV streams: many providers serve HLS
-  // without a .m3u8 extension, or MPEG-TS without a .ts extension.
-  let format = 'direct';
-  if (/\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url)) {
-    format = 'hls';
-  } else if (/\.(ts|flv)($|\?)/i.test(url)) {
-    format = 'mpegts';
-  } else if (/\/live\//i.test(url) || /:8080|:8000|:25461|:9981/i.test(url)) {
-    // Heuristic: common IPTV URL patterns often serve MPEG-TS or HLS.
-    // Prefer HLS when the URL hints at a playlist endpoint.
-    format = /playlist|index|master/i.test(url) ? 'hls' : 'mpegts';
-  }
+  const format = detectIptvFormat(url);
   const media: MediaItem = {
     id: `livetv-${Date.now()}`,
     title: ch.name,

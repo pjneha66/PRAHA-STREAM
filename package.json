@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "npm run typecheck && npm test && npm run build",
+    "check:version": "vitest run tests/version.test.ts",
+    "ci": "npm run typecheck && npm run check:version && npm test && npm run build",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",
     "build:android": "npm run build && npx cap sync android && cd android && ./gradlew assembleRelease"
