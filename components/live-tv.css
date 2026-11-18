@@ -1,0 +1,204 @@
+/* Mobile-first Live TV. Every colour comes from the app theme so the tab
+   follows the chosen accent instead of the old hard-coded desktop dark. */
+
+.ltv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  min-height: 0;
+}
+
+/* ── App bar ───────────────────────────────────────────────────────────── */
+.ltv-bar { display: flex; align-items: center; gap: 12px; padding: 2px 0; }
+.ltv-bar-icon {
+  width: 44px; height: 44px; flex: 0 0 auto; border-radius: 14px;
+  display: grid; place-items: center; color: var(--accent-ink);
+  background: var(--accent); box-shadow: var(--md-sys-elevation-level1);
+}
+.ltv-bar-title { font-size: 19px; font-weight: 800; letter-spacing: -0.3px; color: var(--text); margin: 0; line-height: 1.15; }
+.ltv-bar-sub { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+.ltv-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ff5151; margin-right: 6px; box-shadow: 0 0 0 3px rgba(255,81,81,.16); }
+.ltv-bar-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.ltv-icon-btn {
+  min-width: 40px; height: 40px; padding: 0 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; font-size: 11px; font-weight: 700;
+}
+.ltv-icon-btn:active { transform: scale(.95); color: var(--text); }
+.ltv-icon-btn.accent { border-color: transparent; background: var(--accent); color: var(--accent-ink); }
+
+/* ── Segmented tabs ────────────────────────────────────────────────────── */
+.ltv-tabs {
+  display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none;
+  padding-bottom: 4px; -webkit-overflow-scrolling: touch;
+}
+.ltv-tabs::-webkit-scrollbar, .ltv-chips::-webkit-scrollbar { display: none; }
+.ltv-tab {
+  flex: 0 0 auto; min-height: 42px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.ltv-tab.active { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+/* ── Search + filter chips ─────────────────────────────────────────────── */
+.ltv-search { position: relative; }
+.ltv-search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.ltv-search input {
+  width: 100%; height: 48px; padding: 0 44px; border-radius: 14px;
+  border: 1px solid var(--line); outline: none; background: var(--surface);
+  color: var(--text); font-size: 14px; box-sizing: border-box;
+}
+.ltv-search input:focus { border-color: rgba(var(--accent-rgb), .5); }
+.ltv-search-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: var(--muted); padding: 8px; cursor: pointer; }
+
+.ltv-chips { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; padding-bottom: 3px; }
+.ltv-chip {
+  flex: 0 0 auto; min-height: 36px; padding: 0 13px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted-2);
+  font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.ltv-chip.active { color: var(--accent); border-color: rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .1); }
+
+.ltv-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--muted); padding: 0 2px; }
+.ltv-meta button { border: 0; background: transparent; color: var(--accent); font-size: 11px; font-weight: 700; cursor: pointer; }
+
+/* ── Virtualised channel list ─────────────────────────────────────────── */
+.ltv-virtual {
+  height: clamp(300px, calc(100vh - 300px), 900px);
+  height: clamp(300px, calc(100dvh - 300px), 900px);
+  overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  border-radius: 16px; padding: 0 2px;
+}
+.ltv-virtual-row { position: absolute; left: 0; right: 0; padding-bottom: 7px; box-sizing: border-box; }
+
+.ltv-channel {
+  height: 69px; width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 11px;
+  padding: 0 10px; border-radius: 16px; border: 1px solid var(--line);
+  background: var(--surface); cursor: pointer; text-align: left; color: var(--text);
+}
+.ltv-channel:active { background: var(--surface-2); transform: scale(.995); }
+.ltv-logo {
+  width: 45px; height: 45px; flex: 0 0 auto; border-radius: 11px; overflow: hidden;
+  display: grid; place-items: center; background: var(--surface-2); color: var(--muted);
+}
+.ltv-logo img { width: 100%; height: 100%; object-fit: contain; }
+.ltv-info { min-width: 0; flex: 1; }
+.ltv-name { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ltv-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.ltv-format { padding: 1px 6px; border-radius: 5px; font-size: 9px; font-weight: 800; letter-spacing: .4px; background: rgba(var(--accent-rgb), .1); color: var(--accent); border: 1px solid rgba(var(--accent-rgb), .3); }
+.ltv-ext { font-size: 9px; font-weight: 800; color: var(--violet); }
+.ltv-health { display: inline-flex; align-items: center; gap: 4px; }
+.ltv-health i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ltv-health.ok { color: #4ade80; }
+.ltv-health.bad { color: var(--danger); }
+.ltv-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+.ltv-actions .ltv-icon-btn { min-width: 36px; width: 36px; height: 36px; padding: 0; border-color: transparent; background: transparent; }
+.ltv-actions .ltv-icon-btn.on { color: #f5c518; }
+
+/* ── Recently played ──────────────────────────────────────────────────── */
+.ltv-recent { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 3px; }
+.ltv-recent button {
+  flex: 0 0 auto; max-width: 180px; height: 36px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid rgba(var(--accent-rgb), .35); background: rgba(var(--accent-rgb), .08);
+  color: var(--text); font-size: 11.5px; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.ltv-recent span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Generic panels (other tabs) ──────────────────────────────────────── */
+.ltv-panel { display: flex; flex-direction: column; gap: 12px; }
+.ltv-card { border: 1px solid var(--line); border-radius: 18px; background: var(--surface); padding: 14px; }
+.ltv-card-title { margin: 0 0 4px; font-size: 14px; font-weight: 750; color: var(--text); }
+.ltv-card-desc { margin: 0 0 12px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+.ltv-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ltv-row + .ltv-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ltv-field {
+  width: 100%; height: 44px; padding: 0 12px; border-radius: 12px; box-sizing: border-box;
+  border: 1px solid var(--line-strong); background: var(--bg); color: var(--text); font-size: 12px; outline: 0;
+}
+.ltv-field:focus { border-color: rgba(var(--accent-rgb), .5); }
+.ltv-btn {
+  min-height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--line-strong);
+  background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+}
+.ltv-btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.ltv-btn.danger { color: var(--danger); }
+.ltv-btn.block { width: 100%; }
+.ltv-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ltv-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ltv-note { margin: 10px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--muted-2); }
+.ltv-error { margin: 0 0 10px; border-radius: 12px; padding: 10px 12px; font-size: 11.5px; color: var(--danger); background: rgba(255,124,130,.1); border: 1px solid rgba(255,124,130,.3); }
+.ltv-success { margin: 0 0 10px; border-radius: 12px; padding: 10px 12px; font-size: 11.5px; color: #4ade80; background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.28); }
+.ltv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.ltv-grid button {
+  min-height: 40px; padding: 0 10px; border-radius: 11px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--muted); font-size: 11.5px; font-weight: 650; cursor: pointer;
+}
+.ltv-grid button.on { border-color: rgba(var(--accent-rgb), .5); color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+.ltv-list-item { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
+.ltv-list-item:first-child { border-top: 0; }
+.ltv-list-item-info { min-width: 0; flex: 1; }
+.ltv-list-item-info strong { display: block; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltv-list-item-info small { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.ltv-empty { text-align: center; padding: 46px 18px; border: 1px dashed var(--line-strong); border-radius: 18px; color: var(--muted); }
+.ltv-empty svg { margin: 0 auto 12px; }
+.ltv-empty h3 { margin: 0 0 6px; color: var(--text); font-size: 15px; }
+.ltv-empty p { margin: 0 0 16px; font-size: 12px; line-height: 1.6; }
+
+/* ── Curated cards ────────────────────────────────────────────────────── */
+.ltv-curated { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 9px; }
+.ltv-curated-card {
+  display: flex; align-items: center; gap: 9px; padding: 11px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--surface);
+}
+.ltv-curated-card img, .ltv-curated-photo { width: 38px; height: 38px; border-radius: 9px; object-fit: contain; background: var(--surface-2); }
+.ltv-curated-photo { display: grid; place-items: center; color: var(--violet); }
+.ltv-curated-info { min-width: 0; flex: 1; }
+.ltv-curated-info strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltv-curated-info small { font-size: 10px; color: var(--violet); }
+.ltv-hits { margin-top: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 12px; }
+.ltv-hits h4 { margin: 0 0 8px; font-size: 13px; }
+.ltv-hit { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.ltv-hit-best { font-size: 9px; font-weight: 800; color: #4ade80; width: 34px; flex: 0 0 auto; }
+.ltv-hit-info { min-width: 0; flex: 1; }
+.ltv-hit-info strong { display: block; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltv-hit-info small { display: block; font-size: 10px; color: var(--muted); }
+
+/* ── Bottom action sheet ──────────────────────────────────────────────── */
+.ltv-sheet-backdrop { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: flex-end; background: rgba(0,0,0,.72); }
+.ltv-sheet {
+  width: 100%; max-height: 85vh; max-height: 85dvh; overflow-y: auto; box-sizing: border-box;
+  border-radius: 24px 24px 0 0; border-top: 1px solid var(--line-strong);
+  background: var(--bg-soft); padding: 18px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+}
+.ltv-sheet-grip { width: 38px; height: 4px; border-radius: 4px; background: var(--line-strong); margin: 0 auto 14px; }
+.ltv-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.ltv-sheet-head h3 { margin: 0; font-size: 16px; }
+.ltv-sheet-head p { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+.ltv-sheet-actions { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin-top: 12px; }
+.ltv-sheet-actions .ltv-btn { min-height: 46px; }
+.ltv-sheet-label { margin: 16px 0 8px; font-size: 9.5px; font-weight: 800; letter-spacing: .8px; color: var(--muted-2); text-transform: uppercase; }
+.ltv-url { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--blue); font-size: 10.5px; }
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+.ltv-toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  z-index: 1200; max-width: 88vw; padding: 11px 16px; border-radius: 999px;
+  background: var(--surface-3); border: 1px solid var(--line-strong); color: var(--text);
+  font-size: 12px; font-weight: 650; box-shadow: var(--md-sys-elevation-level3); text-align: center;
+}
+
+.spin { animation: ltv-spin 1s linear infinite; }
+@keyframes ltv-spin { to { transform: rotate(360deg); } }
+
+@media (min-width: 900px) {
+  .ltv-virtual { height: calc(100vh - 270px); height: calc(100dvh - 270px); }
+  .ltv-curated { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+}

@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.13';
+export const APP_VERSION = '2.11.14';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';

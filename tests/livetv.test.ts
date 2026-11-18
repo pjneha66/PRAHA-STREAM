@@ -7,6 +7,7 @@ import {
   HardcodedChannels,
   IptvStore,
   IptvClient,
+  IptvZapStore,
   buildIptvPlayback,
   detectIptvFormat,
   formatIptvBadge,
@@ -238,6 +239,19 @@ http://iptv.com:8080/get.php?username=dupuser&password=duppass
       expect(loaded.length).toBe(1);
       expect(loaded[0].channels[0].name).toBe('Ch 1');
     });
+  });
+});
+
+describe('Zap-list storage stays bounded on large playlists', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps the playing channel first and never stores more than 400 entries', () => {
+    const many = Array.from({ length: 5000 }, (_, i) => ({ name: `Channel ${i}`, url: `https://host/${i}.m3u8` }));
+    IptvZapStore.set(many, many[4321].url);
+    const zap = IptvZapStore.get()!;
+    expect(zap.channels.length).toBe(400);
+    expect(zap.channels[0].url).toBe(many[4321].url);
+    expect(zap.currentUrl).toBe(many[4321].url);
   });
 });
 

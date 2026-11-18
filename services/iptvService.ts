@@ -1741,15 +1741,20 @@ export class IptvZapStore {
       const seen = new Set<string>();
       const list: IptvZapChannel[] = [];
       const push = (ch: IptvZapChannel) => {
-        if (!ch?.url || seen.has(ch.url)) return;
+        if (list.length >= ZAP_MAX_CHANNELS || !ch?.url || seen.has(ch.url)) return;
         seen.add(ch.url);
         list.push(ch);
       };
-      // The playing channel first, then the rest of the list.
-      const current = channels.find((ch) => ch.url === currentUrl);
-      if (current) push(current);
-      channels.forEach(push);
-      localStorage.setItem(ZAP_KEY, JSON.stringify({ channels: list.slice(0, ZAP_MAX_CHANNELS), currentUrl }));
+      // Bounded passes: a 10k-channel playlist used to be mapped in full and
+      // stringified on every tap, which stalled the main thread on phones.
+      for (const ch of channels) {
+        if (ch.url === currentUrl) { push(ch); break; }
+      }
+      for (const ch of channels) {
+        if (list.length >= ZAP_MAX_CHANNELS) break;
+        push(ch);
+      }
+      localStorage.setItem(ZAP_KEY, JSON.stringify({ channels: list, currentUrl }));
     } catch {
       // Quota or storage unavailable — zapping is best-effort.
     }
