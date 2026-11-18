@@ -102,8 +102,8 @@ function runWorker(
     const worker = new Worker(new URL('./nuvioWorker.ts', import.meta.url), { type: 'module' });
     const timer = window.setTimeout(() => {
       worker.terminate();
-      reject(new Error('The scraper timed out after 30 seconds.'));
-    }, 30000);
+      reject(new Error('The scraper timed out after 20 seconds.'));
+    }, 20000);
     worker.onmessage = async (event) => {
       const msg = event.data;
       if (msg?.type === 'fetch-proxy') {
@@ -118,7 +118,7 @@ function runWorker(
             method: msg.method,
             headers,
             body: restoreTmdbKey(msg.body),
-            timeoutMs: 18000,
+            timeoutMs: 12000,
           });
           worker.postMessage({
             type: 'fetch-proxy-response',

@@ -4,7 +4,7 @@ import type { MediaItem, WatchProgress } from '../types';
 import { formatTime } from './player/format';
 import { buildImageCandidates } from '../services/androidBridge';
 
-export const Artwork: React.FC<{ src?: string; alt: string; className?: string }> = ({ src, alt, className = '' }) => {
+export const Artwork = React.memo(function Artwork({ src, alt, className = '' }: { src?: string; alt: string; className?: string }) {
   // Multi-candidate chain (proxy mirrors for hotlink-protected / blocked CDNs)
   // instead of a single URL — a failed poster falls through to a proxy before
   // giving up on the placeholder.
@@ -24,7 +24,7 @@ export const Artwork: React.FC<{ src?: string; alt: string; className?: string }
       referrerPolicy="no-referrer"
     />
   );
-};
+});
 
 interface MediaCardProps {
   item: MediaItem;
@@ -34,36 +34,38 @@ interface MediaCardProps {
   compact?: boolean;
 }
 
-export const MediaCard: React.FC<MediaCardProps> = ({ item, onSelect, onToggleWatchlist, inWatchlist, compact }) => (
-  <article className={`media-card ${compact ? 'compact' : ''}`}>
-    <div className="poster-wrap">
-      <button className="poster-button" onClick={() => onSelect(item)} aria-label={`View ${item.title}`}>
-        <Artwork src={item.poster} alt={item.title} />
-        <span className="poster-shade" />
-        {item.rating && <span className="rating-badge"><Star size={11} fill="currentColor" />{item.rating.toFixed(1)}</span>}
-        <span className="poster-play"><Play size={20} fill="currentColor" /></span>
+export const MediaCard = React.memo(function MediaCard({ item, onSelect, onToggleWatchlist, inWatchlist, compact }: MediaCardProps) {
+  return (
+    <article className={`media-card ${compact ? 'compact' : ''}`}>
+      <div className="poster-wrap">
+        <button className="poster-button" onClick={() => onSelect(item)} aria-label={`View ${item.title}`}>
+          <Artwork src={item.poster} alt={item.title} />
+          <span className="poster-shade" />
+          {item.rating && <span className="rating-badge"><Star size={11} fill="currentColor" />{item.rating.toFixed(1)}</span>}
+          <span className="poster-play"><Play size={20} fill="currentColor" /></span>
+        </button>
+        <button
+          className={`watchlist-button ${inWatchlist ? 'selected' : ''}`}
+          onClick={() => onToggleWatchlist(item)}
+          aria-label={inWatchlist ? `Remove ${item.title} from watchlist` : `Add ${item.title} to watchlist`}
+        >
+          {inWatchlist ? <Check size={15} /> : <Plus size={16} />}
+        </button>
+      </div>
+      <button className="media-card-copy" onClick={() => onSelect(item)}>
+        <strong>{item.title}</strong>
+        <span>{item.year || '—'} <i /> {item.type === 'movie' ? 'Movie' : 'Series'}</span>
       </button>
-      <button
-        className={`watchlist-button ${inWatchlist ? 'selected' : ''}`}
-        onClick={() => onToggleWatchlist(item)}
-        aria-label={inWatchlist ? `Remove ${item.title} from watchlist` : `Add ${item.title} to watchlist`}
-      >
-        {inWatchlist ? <Check size={15} /> : <Plus size={16} />}
-      </button>
-    </div>
-    <button className="media-card-copy" onClick={() => onSelect(item)}>
-      <strong>{item.title}</strong>
-      <span>{item.year || '—'} <i /> {item.type === 'movie' ? 'Movie' : 'Series'}</span>
-    </button>
-  </article>
-);
+    </article>
+  );
+});
 
-export const ContinueCard: React.FC<{
+export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, onResumeEntry, onRemove }: {
   entry: WatchProgress;
   onPlay: (item: MediaItem) => void;
   onResumeEntry?: (entry: WatchProgress) => void;
   onRemove?: (entry: WatchProgress) => void;
-}> = ({ entry, onPlay, onResumeEntry, onRemove }) => {
+}) {
   const episodeLabel = entry.media.type === 'series' && entry.season
     ? `S${entry.season} E${entry.episode || 1}${entry.episodeTitle ? ` · ${entry.episodeTitle}` : ''}`
     : entry.media.genres.slice(0, 2).join(' • ') || entry.media.year || '';
@@ -119,9 +121,9 @@ export const ContinueCard: React.FC<{
       )}
     </article>
   );
-};
+});
 
-export const MediaRow: React.FC<{
+export const MediaRow = React.memo(function MediaRow({ title, subtitle, items, onSelect, onToggleWatchlist, watchlist, compact }: {
   title: string;
   subtitle?: string;
   items: MediaItem[];
@@ -129,7 +131,7 @@ export const MediaRow: React.FC<{
   onToggleWatchlist: (item: MediaItem) => void;
   watchlist: MediaItem[];
   compact?: boolean;
-}> = ({ title, subtitle, items, onSelect, onToggleWatchlist, watchlist, compact }) => {
+}) {
   const rowRef = useRef<HTMLDivElement>(null);
   if (!items.length) return null;
   return (
@@ -149,4 +151,4 @@ export const MediaRow: React.FC<{
       </div>
     </section>
   );
-};
+});

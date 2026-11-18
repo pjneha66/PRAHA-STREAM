@@ -168,25 +168,15 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
       {health.length > 0 && <details className="source-health"><summary>Provider health · {health.filter((item) => item.status !== 'searching').length}/{health.length} checked</summary>
         <ul>{health.map((item) => <li key={item.id}><strong>{item.name}</strong><span className={`health-${item.status}`}>{item.status === 'searching' ? 'Searching…' : item.status === 'ready' ? `${item.count} found` : item.status === 'empty' ? 'No streams' : item.status === 'unsupported' ? 'Not supported' : 'Failed'}{item.message ? ` · ${item.message}` : ''}</span></li>)}</ul>
       </details>}
+      {downloadHint && <p className="download-hint">{downloadHint}</p>}
       <div className="stream-list">
         {filtered.map((stream) => {
           const badges = parseStreamBadges(stream);
           return (
             <article className="stream-row" key={stream.id}>
-              <button
-                  className="stream-play"
-                  title="Download to device (system Downloads)"
-                  aria-label={`Download ${stream.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void downloadStreamFile(stream.url || '', stream.title || 'PRAHA download', stream.headers || {}).then((id) => {
-                      setDownloadHint(id ? 'Download started — see the notification shade.' : 'This stream can\'t be downloaded directly.');
-                      window.setTimeout(() => setDownloadHint(''), 3500);
-                    });
-                  }}
-                >
-                  <ArrowDownToLine size={17} />
-                </button><button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`}><Play size={18} fill="currentColor" /></button>
+              <button className="stream-play" onClick={() => play(stream)} aria-label={`Play ${stream.title}`} title="Play stream">
+                <Play size={18} fill="currentColor" />
+              </button>
               <div className="stream-main">
                 <div className="stream-title">
                   <strong>
@@ -216,8 +206,22 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
               </div>
               <div className="stream-actions">
                 {onPreferredSourceChange && <button className="icon-button" onClick={() => onPreferredSourceChange(sourceKey(stream) === preferredSource ? '' : sourceKey(stream))} aria-label={sourceKey(stream) === preferredSource ? `Remove ${stream.sourceName} preference` : `Prefer ${stream.sourceName}`} aria-pressed={sourceKey(stream) === preferredSource} title={sourceKey(stream) === preferredSource ? 'Preferred provider' : 'Prefer this provider'}><Star size={16} fill={sourceKey(stream) === preferredSource ? 'currentColor' : 'none'} /></button>}
+                <button
+                  className="icon-button"
+                  title="Download to device"
+                  aria-label={`Download ${stream.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void downloadStreamFile(stream.url || '', stream.title || 'PRAHA download', stream.headers || {}).then((id) => {
+                      setDownloadHint(id ? 'Download started — see the notification shade.' : 'This stream can\'t be downloaded directly.');
+                      window.setTimeout(() => setDownloadHint(''), 3500);
+                    });
+                  }}
+                >
+                  <ArrowDownToLine size={16} />
+                </button>
                 <button className="icon-button" onClick={() => copyStream(stream)} aria-label="Copy stream URL">{copied === stream.id ? <Check size={16} /> : <Copy size={16} />}</button>
-                <button className="button button-small button-primary" onClick={() => play(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
+                <button className="button button-small button-primary stream-play-cta" onClick={() => play(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
               </div>
             </article>
           );
@@ -243,4 +247,4 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   );
 };
 
-export default SourcePanel;
+export default React.memo(SourcePanel);

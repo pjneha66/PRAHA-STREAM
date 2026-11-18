@@ -196,7 +196,7 @@ export async function searchStremioAddons(addons: InstalledAddon[], query: strin
 async function fetchAddonStreams(addon: InstalledAddon, media: MediaItem, resourceId: string): Promise<StreamResult[]> {
   const base = transportBase(addon.manifestUrl);
   base.pathname = `${base.pathname.replace(/\/$/, '')}/stream/${media.type}/${encodeURIComponent(resourceId)}.json`;
-  const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl), 20000);
+  const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl), 12000);
   return (data.streams || []).map((stream: Record<string, any>, index: number) => {
     const url = typeof stream.url === 'string'
       ? stream.url

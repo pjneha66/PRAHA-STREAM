@@ -125,6 +125,12 @@ const SourceModal: React.FC<{
 
   useEffect(() => {
     let cancelled = false;
+    let loadingCleared = false;
+    const clearLoading = () => {
+      if (cancelled || loadingCleared) return;
+      loadingCleared = true;
+      setLoading(false);
+    };
     setLoading(true); setStreams([]); setErrors([]);
     const enabledAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream'));
     const scrapers = repositories.filter((repo) => repo.enabled).flatMap((repo) =>
@@ -150,6 +156,8 @@ const SourceModal: React.FC<{
       }
     };
     const load = async () => {
+      // Don't let slow/dead providers keep the UI in a "searching" state forever.
+      const loadingCap = window.setTimeout(clearLoading, 4500);
       try {
         const idJob = tmdbService.resolveIds(media).catch(() => ({
           tmdbId: media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined,
@@ -172,6 +180,7 @@ const SourceModal: React.FC<{
             });
           });
           setErrors((current) => [...current, ...result.errors]);
+          if (result.streams.length || result.errors.length) clearLoading();
         };
         const knownImdb = media.imdbId || (media.id.startsWith('tt') ? media.id : undefined);
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
@@ -224,16 +233,19 @@ const SourceModal: React.FC<{
                 return true;
               });
             });
+            if (result.streams.length) clearLoading();
           });
         })();
         const jobs = [playtorrioJob, stremioJob, nuvioJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
-      } finally { if (!cancelled) setLoading(false); }
+      } finally {
+        if (!cancelled) clearLoading();
+      }
     };
-    const timer = window.setTimeout(load, 150);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    void load();
+    return () => { cancelled = true; };
   }, [media, season, episode, requestKey, addons, repositories, nuvioSettings]);
 
   useEffect(() => {
