@@ -70,10 +70,14 @@
 
 /* ── Virtualised channel list ─────────────────────────────────────────── */
 .ltv-virtual {
+  /* Fallback before the JS measurement runs (and for the first paint). */
   height: clamp(300px, calc(100vh - 300px), 900px);
   height: clamp(300px, calc(100dvh - 300px), 900px);
   overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   border-radius: 16px; padding: 0 2px;
+  /* The list owns its own scroll container; layout+paint containment stops the
+     page behind it from being repainted on every flick. */
+  contain: layout paint;
 }
 .ltv-virtual-row { position: absolute; left: 0; right: 0; padding-bottom: 7px; box-sizing: border-box; }
 
@@ -199,6 +203,6 @@
 @keyframes ltv-spin { to { transform: rotate(360deg); } }
 
 @media (min-width: 900px) {
-  .ltv-virtual { height: calc(100vh - 270px); height: calc(100dvh - 270px); }
+  .ltv-virtual { height: calc(100dvh - 270px); }
   .ltv-curated { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 }

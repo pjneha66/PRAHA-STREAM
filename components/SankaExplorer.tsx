@@ -1113,9 +1113,15 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
               </div>
             )}
             <div className="comic-archive-actions">
-              <button type="button" className="button button-primary" onClick={() => setReaderIdentifier(archiveItem.slug)}>
-                <BookOpen size={14} /> Read online
-              </button>
+              {archiveItem.status?.includes('Borrow') ? (
+                <button type="button" className="button button-primary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}>
+                  <ExternalLink size={13} /> Borrow on archive.org
+                </button>
+              ) : (
+                <button type="button" className="button button-primary" onClick={() => setReaderIdentifier(archiveItem.slug)}>
+                  <BookOpen size={14} /> Read online
+                </button>
+              )}
               <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}>
                 <ExternalLink size={13} /> archive.org page
               </button>

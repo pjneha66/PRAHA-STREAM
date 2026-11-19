@@ -54,3 +54,45 @@ export function mediaErrorMessage(code?: number, url?: string, format?: string):
   const hint = url || format ? formatSupportHint(url || '', format) : '';
   return hint ? `${base} ${hint}` : base;
 }
+
+// ── Buffering / reconnecting UX helpers ─────────────────────────────────
+export type RecoveryState = 'idle' | 'loading' | 'reconnecting' | 'failed';
+
+export function isLoadingState(buffer: unknown, playing: boolean): boolean {
+  return vlcBufferingToWaiting(buffer, playing);
+}
+
+export function isReconnecting(stalledMs: number, attempts: number, eligible: boolean): boolean {
+  return stallAction(stalledMs, attempts, eligible) === 'retry';
+}
+
+export function recoveryState(input: {
+  buffer?: unknown;
+  playing?: boolean;
+  stalledMs?: number;
+  attempts?: number;
+  eligible?: boolean;
+  failed?: boolean;
+}): RecoveryState {
+  if (input.failed) return 'failed';
+  if (input.playing) return 'idle';
+  const stalledMs = input.stalledMs ?? 0;
+  const attempts = input.attempts ?? 0;
+  const eligible = input.eligible ?? true;
+  if (stallAction(stalledMs, attempts, eligible) === 'retry') return 'reconnecting';
+  if (vlcBufferingToWaiting(input.buffer, Boolean(input.playing))) return 'loading';
+  return 'idle';
+}
+
+export function canManualRetry(failed: boolean, attempts: number): boolean {
+  return Boolean(failed) || attempts >= MAX_STALL_RETRIES;
+}
+
+export function retryLabel(): string {
+  return 'Retry';
+}
+
+// Aliases for alternate naming used by callers/tests.
+export const loadingState = isLoadingState;
+export const reconnectingState = isReconnecting;
+export const manualRetryAllowed = canManualRetry;

@@ -45,6 +45,15 @@ public class PrahaVlcPlayer {
     private boolean isPlayingNative = false;
     private String currentUrl = "";
     private final ArrayList<JSONObject> externalSubtitles = new ArrayList<>();
+    /**
+     * LibVLC emits TimeChanged ~4x/second. Bridging each one into the WebView
+     * costs a JS event + setState on every tick, which competes with the video
+     * decoder for the single thread and shows up as UI stutter. Coalesce to
+     * ~1/s — the progress bar cannot resolve finer than that anyway.
+     */
+    private long lastProgressEmit = 0;
+    private long lastProgressTime = -1;
+    private static final long PROGRESS_MIN_INTERVAL_MS = 1000;
 
     private static final Map<String, String> LANGUAGE_MAP = new HashMap<>();
     static {
@@ -704,11 +713,20 @@ public class PrahaVlcPlayer {
     }
 
     private void notifyPlaybackProgress(long time, long length) {
+        long now = System.currentTimeMillis();
+        // A seek jumps backwards; deliver it at once so the scrubber snaps,
+        // otherwise send at most one update per second.
+        boolean jumped = time < lastProgressTime - 1500 || time > lastProgressTime + 5000;
+        lastProgressTime = time;
+        if (!jumped && now - lastProgressEmit < PROGRESS_MIN_INTERVAL_MS) return;
+        lastProgressEmit = now;
+        final long sendTime = time;
+        final long sendLength = length;
         mainHandler.post(() -> {
             if (webView == null) return;
             String js = String.format(Locale.ROOT,
                     "window.dispatchEvent(new CustomEvent('praha:vlc-time', { detail: { time: %d, duration: %d } }));",
-                    time, length);
+                    sendTime, sendLength);
             webView.evaluateJavascript(js, null);
         });
     }

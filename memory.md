@@ -144,6 +144,8 @@ unzip -t <apk>                                        # no errors
 
 - Do **not** try to push or create a GitHub release — the user explicitly said local APK only. No GitHub credentials are configured anyway.
 - The 36 modified files are uncommitted; treat them as the delivered work, not something to revert.
-- The debug APK is unsigned-with-debug-key and installable directly; `assembleRelease` needs a real keystore + secrets, which were deliberately avoided.
+- **Release signing:** the real keystore is `/tmp/opencode/PRAHA-STREAM-build/android/app/release.keystore` (alias `praha-release`). Its credentials live in `/tmp/opencode/praha-release-signing.env` (chmod 600) — source it before building:
+  `set -a && . /tmp/opencode/praha-release-signing.env && set +a`
+  This key's SHA-256 (`AA:E6:13:...:C3:01`) matches the shipped v2.11.13/v2.11.14 APKs, so releases upgrade in place. If that file is lost the key is unrecoverable and future APKs will need an uninstall/reinstall.
 - Avoid leaving Gradle daemons, long builds, or many parallel processes running — Android kills background processes and can terminate this whole environment under memory pressure. Use `--no-daemon` and background shell tasks with a single build at a time.
 - Gradle wrapper's Java downloader times out (10s) in this network; the zip was fetched with curl. If the cache is wiped, re-download with curl into the wrapper dists path.

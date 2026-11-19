@@ -177,6 +177,43 @@ const App: React.FC = () => {
   const playbackPositionRef = useRef(0);
   const lastBackExitPromptRef = useRef(0);
   const scrobbledKeysRef = useRef<Set<string>>(new Set());
+  // Where playback started, so closing the player returns to the exact page
+  // (and source list) instead of dumping the user somewhere else.
+  const playbackOriginRef = useRef<{ view: AppView; source: SourceRequest | null; scrollY: number } | null>(null);
+  const playerRef = useRef<ActivePlayerState | null>(null);
+  playerRef.current = player;
+  // Playback progress arrives ~4x/second from LibVLC. Persisting every tick
+  // rewrote localStorage and re-rendered the whole app tree, which is what made
+  // the UI stutter while a video was open. Keep the latest value in a ref and
+  // flush it a few seconds apart (plus once on close).
+  const latestProgressRef = useRef<{ currentTime: number; duration: number } | null>(null);
+  const lastProgressFlushRef = useRef(0);
+  const lastPlayerCloseRef = useRef(0);
+  // Set for the duration of a close, so the duplicate press cannot re-run it.
+  const closingRef = useRef(false);
+  // The back handler runs from an event-listener closure, which can still hold
+  // the state from before the player closed. Refs make it read the *current*
+  // value, so a press right after closing cannot decide the source list is gone
+  // and fall through to "navigate home".
+  const sourceStateRef = useRef<SourceRequest | null>(null);
+  sourceStateRef.current = sourceState;
+  const embedStateRef = useRef<SourceRequest | null>(null);
+  embedStateRef.current = embedState;
+  const selectedRef = useRef<MediaItem | null>(null);
+  selectedRef.current = selected;
+  const viewRef = useRef<AppView>(view);
+  viewRef.current = view;
+  // `closePlayer` is declared before `upsertHistory`; this ref bridges the two
+  // without making every memoised callback depend on it.
+  const upsertHistoryRef = useRef<((patch: {
+    media: MediaItem;
+    stream?: StreamResult;
+    season?: number;
+    episode?: number;
+    episodeTitle?: string;
+    currentTime?: number;
+    duration?: number;
+  }) => void) | null>(null);
   // Bumped whenever a new Discover search starts. "Load more" captures the
   // token so a page fetched for an older query cannot be appended afterwards.
   const discoverRequestRef = useRef(0);
@@ -353,19 +390,66 @@ const App: React.FC = () => {
   }, []);
 
   const closePlayer = useCallback(() => {
+    // The player exposes two close paths (its ✕ button and the Android back
+    // button) and the app may already be handling the same press, so make this
+    // idempotent with a flag rather than a time window: a window would also
+    // swallow a genuine close right after a quick reopen, leaving the player
+    // stuck on screen.
+    if (closingRef.current) return;
+    closingRef.current = true;
+    lastPlayerCloseRef.current = Date.now();
+
+    const active = playerRef.current;
     try {
       nativeVlcStop();
       document.documentElement.classList.remove('player-vlc-active');
       document.body.classList.remove('player-vlc-active');
       document.getElementById('root')?.classList.remove('player-vlc-active');
+      document.exitFullscreen?.().catch(() => undefined);
     } catch {}
+
+    // Persist the last known position before the player unmounts, then put the
+    // user back on the page they actually pressed play from.
+    const pending = latestProgressRef.current;
+    if (pending && active) {
+      upsertHistoryRef.current?.({
+        media: active.media,
+        stream: active.stream,
+        season: active.season,
+        episode: active.episode,
+        episodeTitle: active.episodeTitle,
+        currentTime: pending.currentTime,
+        duration: pending.duration,
+      });
+    }
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
+
+    // Where playback started wins. With no recorded origin, the source list
+    // that is still mounted underneath is the right place to land.
+    const origin = playbackOriginRef.current;
+    playbackOriginRef.current = null;
     setPlayer(null);
+    if (!origin) return;
+    setView(origin.view);
+    setSourceState(origin.source);
+    const y = origin.scrollY;
+    window.requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'auto' }));
   }, []);
+
+  // Re-arm the close guard whenever a player is actually on screen again.
+  useEffect(() => {
+    if (player) closingRef.current = false;
+  }, [player]);
 
   // Android Hardware Back Button handler
   useEffect(() => {
     const onHardwareBack = (event: Event) => {
       event.preventDefault?.();
+      // The native back button and the player's own Escape/exit handler both
+      // fire for a single press. Once the player is closing, a stray second
+      // press must not fall through this chain and land the user on Home.
+      if (!playerRef.current && Date.now() - lastPlayerCloseRef.current < 400) return;
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => undefined);
         return;
@@ -381,23 +465,23 @@ const App: React.FC = () => {
         setProfileSwitcherOpen(false);
         return;
       }
-      if (player) {
+      if (playerRef.current) {
         closePlayer();
         return;
       }
-      if (embedState) {
+      if (embedStateRef.current) {
         setEmbedState(null);
         return;
       }
-      if (sourceState) {
+      if (sourceStateRef.current) {
         setSourceState(null);
         return;
       }
-      if (selected) {
+      if (selectedRef.current) {
         setSelected(null);
         return;
       }
-      if (view !== 'home') {
+      if (viewRef.current !== 'home') {
         setView('home');
         return;
       }
@@ -412,7 +496,31 @@ const App: React.FC = () => {
 
     window.addEventListener('praha:hardware-back', onHardwareBack);
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
-  }, [pinGateProfile, profileSwitcherOpen, player, sourceState, embedState, selected, view, notify]);
+    // State is read through refs above, so this listener is registered once and
+    // never re-subscribed mid-interaction.
+  }, [pinGateProfile, profileSwitcherOpen, notify, closePlayer]);
+
+  // Warm the player chunk while the user browses. It is ~800KB of player code
+  // plus mpv/hls glue, and fetching it on the first tap left a visible freeze
+  // between "Play" and the video appearing. Loading it during idle keeps the
+  // tap instant without blocking first paint.
+  useEffect(() => {
+    let cancelled = false;
+    const warm = () => {
+      if (cancelled) return;
+      void import('./components/PlayerModal').catch(() => undefined);
+    };
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+    if (typeof idle === 'function') {
+      const handle = idle(warm, { timeout: 4000 });
+      return () => {
+        cancelled = true;
+        (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(handle);
+      };
+    }
+    const timer = window.setTimeout(warm, 1800);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, []);
 
   // Custom background image (port of PlayTorrio's custom background): URL
   // based, dimmed with a scrim so text stays readable.
@@ -647,6 +755,10 @@ const App: React.FC = () => {
   [addons, repositories]);
 
   const navigate = (next: AppView) => {
+    // The source list now stays mounted underneath the player (so closing the
+    // player returns instantly), so a tab change must dismiss it explicitly —
+    // otherwise its overlay would sit on top of the newly selected page.
+    setSourceState(null);
     setView(next);
     window.scrollTo({ top: 0, behavior: settings.reduceMotion ? 'auto' : 'smooth' });
   };
@@ -780,14 +892,25 @@ const App: React.FC = () => {
     });
   }, [setHistory, settings.sync]);
 
+  upsertHistoryRef.current = upsertHistory;
+
   const removeHistoryEntry = useCallback((target: WatchProgress) => {
     setHistory((current) => current.filter((entry) => entry.media.id !== target.media.id));
     notify(`Removed ${target.media.title} from Continue Watching.`);
   }, [setHistory, notify]);
 
+  // Remember the page + scroll offset the user pressed play from so closing the
+  // player restores it (instead of landing on Home or the wrong tab).
+  const rememberPlaybackOrigin = useCallback((keepSource: SourceRequest | null) => {
+    playbackOriginRef.current = { view, source: keepSource, scrollY: window.scrollY || 0 };
+  }, [view]);
+
   const resumeWatchEntry = (entry: WatchProgress) => {
     if (entry.lastStream && entry.progress < 96) {
       playbackPositionRef.current = entry.currentTime || 0;
+      rememberPlaybackOrigin(null);
+      latestProgressRef.current = null;
+      lastProgressFlushRef.current = 0;
       setPlayer({
         media: entry.media,
         stream: entry.lastStream,
@@ -811,8 +934,13 @@ const App: React.FC = () => {
     const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
 
     upsertHistory({ media, stream, season, episode, episodeTitle });
-    setSourceState(null);
+    rememberPlaybackOrigin(sourceState);
+    // The source list stays mounted underneath (suspended) so closing the
+    // player returns instantly to the same results instead of refetching every
+    // provider. It is cleared when the player closes without a resume target.
     playbackPositionRef.current = resumeTime;
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
     setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
   };
 
@@ -820,7 +948,10 @@ const App: React.FC = () => {
     const existing = history.find((entry) => entry.media.id === media.id);
     const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
     upsertHistory({ media, stream });
+    rememberPlaybackOrigin(null);
     playbackPositionRef.current = resumeTime;
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
     setPlayer({ media, stream, initialTime: resumeTime });
   };
 
@@ -828,12 +959,23 @@ const App: React.FC = () => {
     const channel = IptvZapStore.neighbor(direction);
     if (!channel) return;
     const { media, stream } = buildIptvPlayback(channel);
+    if (!playbackOriginRef.current) {
+      playbackOriginRef.current = { view, source: null, scrollY: window.scrollY || 0 };
+    }
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
     setPlayer({ media, stream, initialTime: 0 });
-  }, []);
+  }, [view]);
 
   const handlePlayerProgress = useCallback((currentTime: number, duration: number) => {
     if (!player || (playerIdentityRef.current !== null && playerIdentityRef.current !== playerIdentity)) return;
     playbackPositionRef.current = currentTime;
+    latestProgressRef.current = { currentTime, duration };
+    // Coalesce the ~4 Hz native tick into one write every 5s. The ref keeps the
+    // newest value so nothing is lost when the player closes or the tab hides.
+    const now = Date.now();
+    if (now - lastProgressFlushRef.current < 5000) return;
+    lastProgressFlushRef.current = now;
     upsertHistory({
       media: player.media,
       stream: player.stream,
@@ -844,6 +986,32 @@ const App: React.FC = () => {
       duration,
     });
   }, [player, playerIdentity, upsertHistory]);
+
+  // Flush the pending position when the app is backgrounded (Android home /
+  // recents) — the player may never get a chance to emit another tick.
+  useEffect(() => {
+    const flush = () => {
+      const pending = latestProgressRef.current;
+      const active = playerRef.current;
+      if (!pending || !active) return;
+      upsertHistoryRef.current?.({
+        media: active.media,
+        stream: active.stream,
+        season: active.season,
+        episode: active.episode,
+        episodeTitle: active.episodeTitle,
+        currentTime: pending.currentTime,
+        duration: pending.duration,
+      });
+    };
+    const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   // Next-episode preload cache (port of Nuvio's PlayerNextEpisodeAutoPlay):
   // sources for the next episode are fetched before the card is tapped so the
@@ -926,6 +1094,8 @@ const App: React.FC = () => {
           nextEpisodePreloadRef.current = null;
           upsertHistory({ media: player.media, stream: preferred, season: preloaded.nextSeason, episode: preloaded.nextEp, episodeTitle: preloaded.nextTitle, currentTime: 0 });
           playbackPositionRef.current = 0;
+          latestProgressRef.current = null;
+          lastProgressFlushRef.current = 0;
           setPlayer({
             media: player.media,
             stream: preferred,
@@ -992,6 +1162,8 @@ const App: React.FC = () => {
       if (preferred) {
         upsertHistory({ media: player.media, stream: preferred, season: nextSeason, episode: nextEp, episodeTitle: nextTitle, currentTime: 0 });
         playbackPositionRef.current = 0;
+        latestProgressRef.current = null;
+        lastProgressFlushRef.current = 0;
         setPlayer({
           media: player.media,
           stream: preferred,
@@ -1178,6 +1350,12 @@ const App: React.FC = () => {
     page = (
       <LiveTvView
         onPlayStream={(media, stream) => {
+          // Record where playback started so closing the player lands back on
+          // Live TV with the same channel list, not on Home.
+          rememberPlaybackOrigin(null);
+          playbackPositionRef.current = 0;
+          latestProgressRef.current = null;
+          lastProgressFlushRef.current = 0;
           setPlayer({ media, stream, initialTime: 0 });
         }}
       />
@@ -1363,7 +1541,7 @@ const App: React.FC = () => {
 
       {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} />}
 
-      {sourceState && !player && (
+      {sourceState && (
         <SourceModal
           media={sourceState.media}
           initialSeason={sourceState.season}
@@ -1378,6 +1556,7 @@ const App: React.FC = () => {
           onClose={() => setSourceState(null)}
           onOpenExtensions={() => { setSourceState(null); navigate('extensions'); }}
           onPlay={playStream}
+          suspended={Boolean(player)}
         />
       )}
 
@@ -1400,6 +1579,8 @@ const App: React.FC = () => {
             onZapChannel={zapIptvChannel}
             onTryAnother={player.alternatives?.length ? () => {
               const [next, ...remaining] = player.alternatives!;
+              latestProgressRef.current = null;
+              lastProgressFlushRef.current = 0;
               setPlayer({ ...player, stream: next, alternatives: remaining, initialTime: playbackPositionRef.current });
               upsertHistory({ media: player.media, stream: next, season: player.season, episode: player.episode, episodeTitle: player.episodeTitle, currentTime: playbackPositionRef.current });
               notify(`Trying ${next.sourceName}…`);

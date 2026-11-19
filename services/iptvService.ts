@@ -1189,6 +1189,42 @@ export class M3uParser {
     return channels;
   }
 
+  /** Async variant that runs parsing off the main thread via a Web Worker when available. */
+  static async parseAsync(content: string): Promise<M3uChannel[]> {
+    if (!content || !content.trim()) return [];
+    if (typeof Worker === 'undefined') {
+      await new Promise<void>((resolve) => {
+        if (typeof setTimeout === 'function') setTimeout(() => resolve(), 0);
+        else resolve();
+      });
+      return M3uParser.parse(content);
+    }
+    return new Promise<M3uChannel[]>((resolve) => {
+      let worker: Worker | null = null;
+      try {
+        worker = new Worker(new URL('./m3uWorker.ts', import.meta.url), { type: 'module' });
+      } catch {
+        resolve(M3uParser.parse(content));
+        return;
+      }
+      const finish = (channels: M3uChannel[]) => {
+        try { worker?.terminate(); } catch { /* ignore */ }
+        resolve(channels);
+      };
+      worker.onmessage = (event: MessageEvent<{ ok: boolean; channels?: M3uChannel[]; error?: string }>) => {
+        if (event.data?.ok && Array.isArray(event.data.channels)) finish(event.data.channels);
+        else finish(M3uParser.parse(content));
+      };
+      worker.onerror = () => finish(M3uParser.parse(content));
+      worker.postMessage(content);
+    });
+  }
+
+  /** Alias matching the Web Worker off-main-thread intent. */
+  static parseInWorker(content: string): Promise<M3uChannel[]> {
+    return M3uParser.parseAsync(content);
+  }
+
   private static extractAttr(attrs: string, name: string): string {
     const regex = new RegExp(`${name}=(?:"([^"]*)"|'([^']*)'|([^\\s]+))`, 'i');
     const match = regex.exec(attrs);

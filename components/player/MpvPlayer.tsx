@@ -21,6 +21,50 @@ import './mpv-player.css';
 
 type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'settings' | 'help' | null;
 
+/**
+ * Converted subtitle URLs, keyed by source URL + timing offset.
+ *
+ * Subtitle addons answer a second or two after the player mounts, so the
+ * conversion effect below runs more than once for the same source. Without a
+ * cache every run re-downloaded and re-encoded every track; with it, only new
+ * tracks cost anything. The cached blob URLs are owned here (bounded, evicting
+ * oldest first) rather than revoked on effect cleanup, because a later run
+ * legitimately reuses them.
+ */
+const VTT_CACHE_LIMIT = 40;
+const vttUrlCache = new Map<string, string>();
+/** Fallback for jsdom/older engines where `URL.createObjectURL` is missing. */
+const EMPTY_VTT_DATA_URL = 'data:text/vtt;charset=utf-8,WEBVTT%0A';
+/**
+ * Placeholder source for tracks that have not been converted yet. It must be a
+ * real URL: an empty `src` makes the browser re-request the page itself.
+ */
+const EMPTY_VTT_URL = (() => {
+  if (typeof URL === 'undefined' || typeof Blob === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return EMPTY_VTT_DATA_URL;
+  }
+  try {
+    return URL.createObjectURL(new Blob(['WEBVTT\n'], { type: 'text/vtt' }));
+  } catch {
+    return EMPTY_VTT_DATA_URL;
+  }
+})();
+
+function cacheVttUrl(key: string, url: string): string {
+  vttUrlCache.set(key, url);
+  if (vttUrlCache.size > VTT_CACHE_LIMIT) {
+    const oldestKey = vttUrlCache.keys().next().value;
+    if (oldestKey !== undefined && oldestKey !== key) {
+      const stale = vttUrlCache.get(oldestKey);
+      vttUrlCache.delete(oldestKey);
+      if (stale?.startsWith('blob:') && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        try { URL.revokeObjectURL(stale); } catch { /* already gone */ }
+      }
+    }
+  }
+  return url;
+}
+
 const PlayerMenu: React.FC<{ id: Exclude<MenuId, null>; title: string; active: MenuId; close: () => void; children: React.ReactNode }> = ({ id, title, active, close, children }) => (
   <div className={`mpv-menu ${active === id ? 'open' : ''}`} role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
     <header><span>{title}</span><button onClick={close} aria-label="Close menu"><X size={14} /></button></header>
@@ -110,6 +154,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [audioSubDialogOpen, setAudioSubDialogOpen] = useState(false);
   const [audioSubDialogTab, setAudioSubDialogTab] = useState<'audio' | 'subs'>('audio');
   const [aspectFit, setAspectFit] = useState<'contain' | 'cover' | 'fill'>('contain');
+  const [audioOnly, setAudioOnly] = useState(false);
 
   const toggleAspectFit = () => {
     setAspectFit((curr) => {
@@ -141,28 +186,100 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     return merged;
   }, [stream.subtitles, externalSubtitles, localSubs]);
 
-  // Convert SRT/ASS tracks to WebVTT and apply user timing offset (`subtitleOffset`)
+  // Convert SRT/ASS tracks to WebVTT and apply user timing offset (`subtitleOffset`).
+  //
+  // Two separate problems used to live here.
+  //
+  // 1. A source can expose 20-30 subtitle tracks and every one was fetched and
+  //    re-encoded the moment the player mounted — dozens of parallel downloads
+  //    landing exactly while the video was starting, which is a big part of why
+  //    opening the player felt frozen. Now the list is published at once (the
+  //    menu shows every track, and track indices stay stable) with placeholder
+  //    sources, and the real conversion runs afterwards a few at a time. Under
+  //    LibVLC it is delayed further still, since LibVLC renders subtitles itself.
+  // 2. Subtitle addons answer a second or two after mount, so this effect used
+  //    to re-run and re-convert everything from scratch. Converted URLs are now
+  //    cached by source URL + offset, making later runs nearly free.
   useEffect(() => {
     let active = true;
-    const createdUrls: string[] = [];
-    (async () => {
-      const converted = await Promise.all(rawSubtitles.slice(0, 30).map(async (sub) => {
-        try {
-          const vttUrl = await prepareSubtitleUrl(sub, settings.subtitleOffset || 0);
-          if (vttUrl.startsWith('blob:') && vttUrl !== sub.url) createdUrls.push(vttUrl);
-          return { ...sub, url: vttUrl };
-        } catch {
-          return sub;
-        }
-      }));
-      if (active) setPreparedSubtitles(converted.filter((s) => Boolean(s.url)));
-      else createdUrls.forEach((u) => URL.revokeObjectURL(u));
-    })();
-    return () => {
-      active = false;
-      createdUrls.forEach((u) => URL.revokeObjectURL(u));
+    // LibVLC draws its own subtitles, so the web <track> pipeline is only a
+    // fallback there — and even then only if playback escalates to the web
+    // engine. Delay it rather than skip it, so a fallback still has tracks.
+    const nativePassive = isNativeVlcAvailable() && !forceWebEngine;
+    const all = rawSubtitles.slice(0, 20);
+    const offset = settings.subtitleOffset || 0;
+    const cacheKey = (sub: StreamSubtitle) => `${offset}|${sub.url}`;
+
+    // Publish the full list at once with placeholder sources: the menu then
+    // shows every track immediately and the <track> indices stay stable while
+    // the real files convert underneath.
+    setPreparedSubtitles(all.map((sub) => ({
+      ...sub,
+      url: vttUrlCache.get(cacheKey(sub)) || EMPTY_VTT_URL,
+    })));
+
+    const convertOne = async (sub: StreamSubtitle): Promise<string> => {
+      const key = cacheKey(sub);
+      const cached = vttUrlCache.get(key);
+      if (cached) return cached;
+      try {
+        const vttUrl = await prepareSubtitleUrl(sub, offset);
+        return cacheVttUrl(key, vttUrl);
+      } catch {
+        return sub.url;
+      }
     };
-  }, [rawSubtitles, settings.subtitleOffset]);
+
+    const run = async () => {
+      if (nativePassive) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        if (!active) return;
+      }
+      const convertMissing = (indexes: number[]) => Promise.all(indexes.map(async (index) => {
+        const sub = all[index];
+        if (vttUrlCache.has(cacheKey(sub))) return null;
+        return { index, url: await convertOne(sub) };
+      }));
+
+      // Only tracks without a cached conversion are fetched, three at a time.
+      // Cached ones were already published above, so they cost nothing.
+      const pending = all
+        .map((sub, index) => (vttUrlCache.has(cacheKey(sub)) ? -1 : index))
+        .filter((index) => index >= 0);
+      for (let i = 0; i < pending.length && active; i += 3) {
+        if (i > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, nativePassive ? 1200 : 400));
+          if (!active) return;
+        }
+        const done = (await convertMissing(pending.slice(i, i + 3))).filter(Boolean) as Array<{ index: number; url: string }>;
+        if (!active || !done.length) continue;
+        // Replacing a <track> src resets its mode, which would silently switch
+        // subtitles back off — note which tracks are showing first, then reassert.
+        const video = videoRef.current;
+        const showing = done
+          .filter(({ index }) => video?.textTracks[index]?.mode === 'showing')
+          .map(({ index }) => index);
+        setPreparedSubtitles((current) => {
+          const next = current.slice();
+          done.forEach(({ index, url }) => {
+            if (index < next.length) next[index] = { ...all[index], url };
+          });
+          return next;
+        });
+        if (video && showing.length) {
+          const reassert = () => showing.forEach((index) => {
+            const track = video.textTracks[index];
+            if (track) track.mode = 'showing';
+          });
+          reassert();
+          window.setTimeout(() => { if (active) reassert(); }, 200);
+        }
+      }
+    };
+    void run();
+
+    return () => { active = false; };
+  }, [rawSubtitles, settings.subtitleOffset, forceWebEngine]);
 
   useEffect(() => {
     setResumeBanner(initialTime > 5);
@@ -620,6 +737,21 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     return () => window.clearTimeout(timer);
   }, [fatal, onFindSources, media?.id, stream.id]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || isNativeVlcAvailable()) { setAudioOnly(false); return; }
+    const check = () => setAudioOnly(Boolean(playing) && (video.videoWidth || 0) === 0);
+    check();
+    video.addEventListener('loadedmetadata', check);
+    video.addEventListener('resize', check);
+    const id = window.setInterval(check, 1000);
+    return () => {
+      video.removeEventListener('loadedmetadata', check);
+      video.removeEventListener('resize', check);
+      window.clearInterval(id);
+    };
+  }, [playing, media?.id]);
+
   const progressRatio = duration ? currentTime / duration : 0;
   const bufferedRatio = duration ? buffered / duration : 0;
   const activeLevelLabel = currentLevel === -1
@@ -677,6 +809,13 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           />
         ))}
       </video>
+
+      {audioOnly && (
+        <div className="mpv-audio-only" aria-hidden="true">
+          {media?.poster ? <img src={media.poster} alt="" /> : <AudioLines size={48} />}
+          <span>Audio only</span>
+        </div>
+      )}
 
       {/* PlayTorrio-style Top Overlay HUD Bar */}
       <div className={`mpv-top-bar ${controlsVisible ? 'visible' : ''}`} onClick={(e) => e.stopPropagation()}>

@@ -49,19 +49,87 @@ const VirtualChannels: React.FC<{
 }> = ({ channels, render }) => {
   const scroller = useRef<HTMLDivElement | null>(null);
   const [range, setRange] = useState({ start: 0, end: 18 });
+  const [height, setHeight] = useState<number | null>(null);
+  const frame = useRef<number | null>(null);
 
-  const measure = useCallback(() => {
+  // The list used to be sized with a fixed `calc(100dvh - 300px)`, which is
+  // wrong on almost every phone: the search box, chips and recent shelf change
+  // height depending on content, so the page gained a second (nested) scrollbar
+  // and the last rows sat under the bottom navigation. Measure the real
+  // remaining space instead — on phones only; the wide layout keeps its own cap.
+  const fitToViewport = useCallback(() => {
+    const el = scroller.current;
+    if (!el || typeof window === 'undefined') return;
+    if (window.innerWidth > 680) { setHeight((prev) => (prev === null ? prev : null)); return; }
+    const top = el.getBoundingClientRect().top;
+    const nav = document.querySelector('.mobile-nav');
+    const navHeight = nav ? Math.max(0, window.innerHeight - nav.getBoundingClientRect().top) + 10 : 28;
+    // Clamp to the viewport so a scrolled page (negative `top`) cannot ask for a
+    // list taller than the screen.
+    const next = Math.min(window.innerHeight, Math.max(240, Math.round(window.innerHeight - top - navHeight)));
+    // Ignore sub-pixel churn: this runs from a ResizeObserver on the element it
+    // resizes, so reacting to every 1px would ping-pong.
+    setHeight((prev) => (prev !== null && Math.abs(prev - next) < 8 ? prev : next));
+  }, []);
+
+  // `onScroll` fires dozens of times per second on a flick. Reading layout and
+  // calling setState for every event is what made the list feel sticky, so the
+  // work is coalesced into one update per animation frame.
+  const measureNow = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
+    const viewport = el.clientHeight || 600;
     const start = Math.max(0, Math.floor(el.scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const end = Math.min(channels.length, Math.ceil((el.scrollTop + el.clientHeight) / ROW_HEIGHT) + OVERSCAN);
+    const end = Math.min(channels.length, Math.ceil((el.scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN);
     setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
   }, [channels.length]);
 
-  useEffect(() => { measure(); }, [measure]);
+  const measure = useCallback(() => {
+    if (frame.current !== null) return;
+    frame.current = window.requestAnimationFrame(() => {
+      frame.current = null;
+      measureNow();
+    });
+  }, [measureNow]);
+
+  useEffect(() => { measureNow(); }, [measureNow]);
+
+  useEffect(() => {
+    const refit = () => { fitToViewport(); measure(); };
+    refit();
+    window.addEventListener('resize', refit);
+    window.addEventListener('orientationchange', refit);
+    // The header above the list renders asynchronously (recent shelf, health
+    // chips), so the first measurement can land before the final layout.
+    const timer = window.setTimeout(refit, 150);
+    return () => {
+      window.removeEventListener('resize', refit);
+      window.removeEventListener('orientationchange', refit);
+      window.clearTimeout(timer);
+    };
+  }, [fitToViewport, measure, channels.length]);
+
+  // Rotating, browser chrome collapsing, or a change in the mounted row count
+  // all change the usable height; re-measure the virtual window when that
+  // happens. Only `measure` runs here — re-fitting the height from inside a
+  // ResizeObserver of the same element would loop.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [measure]);
+
+  useEffect(() => () => { if (frame.current !== null) window.cancelAnimationFrame(frame.current); }, []);
 
   return (
-    <div className="ltv-virtual" ref={scroller} onScroll={measure}>
+    <div
+      className="ltv-virtual"
+      ref={scroller}
+      onScroll={measure}
+      style={height ? { height, maxHeight: height } : undefined}
+    >
       <div style={{ height: channels.length * ROW_HEIGHT, position: 'relative' }}>
         {channels.slice(range.start, range.end).map((ch, i) => {
           const index = range.start + i;
@@ -106,6 +174,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
     } catch { return []; }
   });
   const [lastPlayed, setLastPlayed] = useState<LastPlayedChannel[]>(() => LiveTvPrefs.getLastPlayed());
+  // Favorites are checked twice per mounted row on render. With a list of 5,000
+  // channels `favorites.includes()` is O(n) per check, so a Set keeps the row
+  // render cheap while scrolling.
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const [actionChannel, setActionChannel] = useState<M3uChannel | null>(null);
   const [checkingUrl, setCheckingUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
@@ -450,13 +522,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
 
   const visible = useMemo(() => {
     let list = channels;
-    if (group === '__favorites') list = list.filter((ch) => favorites.includes(ch.url));
+    if (group === '__favorites') list = list.filter((ch) => favoriteSet.has(ch.url));
     else if (group === '__recent') list = lastPlayed.map((entry) => channels.find((ch) => ch.url === entry.url) || entry);
     else if (group !== 'All') list = list.filter((ch) => ch.group === group);
     const q = deferredQuery.trim().toLowerCase();
     if (q) list = list.filter((ch) => ch.name.toLowerCase().includes(q) || (ch.group || '').toLowerCase().includes(q));
     return list;
-  }, [channels, group, favorites, lastPlayed, deferredQuery]);
+  }, [channels, group, favoriteSet, lastPlayed, deferredQuery]);
 
   const curated = useMemo(() => HardcodedChannels.all.filter((c) => {
     const matchCategory = category === 'All' || c.category === category;
@@ -467,10 +539,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
   // ── Render ─────────────────────────────────────────────────────────────
   const renderChannel = (ch: M3uChannel) => {
     const health = healthMap[ch.url];
+    const isFavorite = favoriteSet.has(ch.url);
     return (
       <div className="ltv-channel" role="button" tabIndex={0} onClick={() => playChannel(ch)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); playChannel(ch); } }}>
-        <div className="ltv-logo">{ch.logo ? <img src={ch.logo} alt="" loading="lazy" /> : <Tv2 size={19} />}</div>
+        <div className="ltv-logo">{ch.logo ? <img src={ch.logo} alt="" loading="lazy" decoding="async" /> : <Tv2 size={19} />}</div>
         <div className="ltv-info">
           <div className="ltv-name">{ch.name || 'Unknown channel'}</div>
           <div className="ltv-sub">
@@ -485,10 +558,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ onPlayStream }) => {
           </div>
         </div>
         <div className="ltv-actions">
-          <button className={`ltv-icon-btn ${favorites.includes(ch.url) ? 'on' : ''}`}
-            aria-label={favorites.includes(ch.url) ? `Unfavorite ${ch.name}` : `Favorite ${ch.name}`}
+          <button className={`ltv-icon-btn ${isFavorite ? 'on' : ''}`}
+            aria-label={isFavorite ? `Unfavorite ${ch.name}` : `Favorite ${ch.name}`}
             onClick={(e) => { e.stopPropagation(); toggleFavorite(ch.url); }}>
-            <Star size={17} fill={favorites.includes(ch.url) ? '#f5c518' : 'none'} />
+            <Star size={17} fill={isFavorite ? '#f5c518' : 'none'} />
           </button>
           <button className="ltv-icon-btn" aria-label={`Options for ${ch.name}`}
             onClick={(e) => { e.stopPropagation(); setActionChannel(ch); }}>

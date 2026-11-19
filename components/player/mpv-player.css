@@ -64,6 +64,9 @@
 
 /* Buffering spinner */
 .mpv-spinner { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; }
+.mpv-audio-only { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; gap: 12px; background: #000; color: #fff; pointer-events: none; }
+.mpv-audio-only img { max-width: 60%; max-height: 60%; object-fit: contain; border-radius: 12px; opacity: 0.9; }
+.mpv-audio-only span { font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
 .mpv-spinner > span {
   width: 42px;
   height: 42px;

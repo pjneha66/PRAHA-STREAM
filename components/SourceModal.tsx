@@ -24,6 +24,12 @@ const SourceModal: React.FC<{
   onClose: () => void;
   onOpenExtensions: () => void;
   onPlay: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
+  /**
+   * Kept mounted but inert while the video player is on top. The source list is
+   * expensive to build (every provider is queried again), so unmounting it when
+   * playback starts made closing the player feel like a reload.
+   */
+  suspended?: boolean;
 }> = ({
   media,
   initialSeason = 1,
@@ -38,6 +44,7 @@ const SourceModal: React.FC<{
   onClose,
   onOpenExtensions,
   onPlay,
+  suspended = false,
 }) => {
   const [season, setSeason] = useState(initialSeason);
   const [episode, setEpisode] = useState(initialEpisode);
@@ -249,11 +256,15 @@ const SourceModal: React.FC<{
   }, [media, season, episode, requestKey, addons, repositories, nuvioSettings]);
 
   useEffect(() => {
+    if (suspended) return;
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
     window.addEventListener('keydown', handler);
     document.body.classList.add('modal-open');
-    return () => { window.removeEventListener('keydown', handler); document.body.classList.remove('modal-open'); };
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      document.body.classList.remove('modal-open');
+    };
+  }, [onClose, suspended]);
 
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
@@ -262,7 +273,12 @@ const SourceModal: React.FC<{
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
 
   return (
-    <div className="modal-backdrop source-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className={`modal-backdrop source-backdrop ${suspended ? 'source-suspended' : ''}`}
+      onMouseDown={(event) => event.target === event.currentTarget && !suspended && onClose()}
+      aria-hidden={suspended || undefined}
+      inert={suspended || undefined}
+    >
       <section className="source-modal" role="dialog" aria-modal="true" aria-label={`Sources for ${media.title}`}>
         <SourcePanel
           media={media}

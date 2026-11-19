@@ -297,7 +297,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .profile-chip svg { color: var(--muted-2); }
 
 .main-column { min-width: 0; }
-.topbar { position: sticky; top: 0; z-index: 35; display: flex; align-items: center; gap: 14px; height: 78px; padding: 0 30px; border-bottom: 1px solid rgba(255,255,255,.035); background: rgba(9,10,12,.86); backdrop-filter: blur(2px); }
+.topbar { position: sticky; top: 0; z-index: 35; display: flex; align-items: center; gap: 14px; height: 78px; padding: 0 30px; border-bottom: 1px solid rgba(255,255,255,.035); background: rgba(9,10,12,.92); }
 .global-search { display: flex; align-items: center; gap: 10px; width: min(480px, 48vw); height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.035); color: var(--muted); transition: border .2s, background .2s; }
 .global-search:focus-within { border-color: rgba(var(--accent-rgb), .35); background: rgba(255,255,255,.05); }
 .global-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
@@ -1449,6 +1449,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .details-source-note svg { color: var(--accent); }
 
 .source-modal { display: flex; flex-direction: column; overflow: hidden; width: min(920px, 96vw); max-height: 91vh; border: 1px solid var(--line-strong); border-radius: 19px; background: #0f1115; box-shadow: 0 35px 100px rgba(0,0,0,.6); animation: modal-in .3s ease; }
+/* Kept mounted under the video player so closing playback returns instantly to
+   the same source list. It must not paint, animate or accept input meanwhile. */
+.source-backdrop.source-suspended { display: none !important; }
 .source-header { display: flex; align-items: center; gap: 14px; padding: 18px 21px; border-bottom: 1px solid var(--line); }
 .source-title-art { overflow: hidden; flex: 0 0 auto; width: 43px; height: 56px; border-radius: 7px; background: var(--surface); }
 .source-title-art > img, .source-title-art > .artwork-fallback { width: 100%; height: 100%; object-fit: cover; }
@@ -1718,9 +1721,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     padding: 4px;
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(18, 20, 24, 0.92);
-    backdrop-filter: blur(8px) saturate(120%);
-    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    /* A live backdrop-filter on a fixed, always-visible bar forces the WebView
+       to re-blur the whole scrolled page every frame — the single biggest cause
+       of scroll jank on this app. The background is opaque enough that dropping
+       the blur is visually identical while scrolling gets much cheaper. */
+    background: rgba(18, 20, 24, 0.97);
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.72), 0 0 1px rgba(255, 255, 255, 0.18);
   }
   .mobile-nav-btn {

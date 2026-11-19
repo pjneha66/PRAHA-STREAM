@@ -435,11 +435,13 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
             <div className="books-sheet-actions">
               {selected.identifier && (
                 <>
-                  <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
-                    <BookOpen size={14} /> Read online
-                  </button>
-                  <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
-                    <ExternalLink size={13} /> archive.org page
+                  {!selected.restricted && (
+                    <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
+                      <BookOpen size={14} /> Read online
+                    </button>
+                  )}
+                  <button type="button" className={selected.restricted ? 'button button-primary' : 'button button-secondary'} onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
+                    <ExternalLink size={13} /> {selected.restricted ? 'Borrow on archive.org' : 'archive.org page'}
                   </button>
                 </>
               )}

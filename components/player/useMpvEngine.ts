@@ -151,6 +151,12 @@ export function useMpvEngine({
   onProgressRef.current = onProgress;
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  // Subtitle tracks appear a moment after mount. Reading the count through a
+  // ref keeps the attach effect from re-running (and restarting the stream)
+  // every time the track list fills in — which is exactly what happened on
+  // open before, doubling the time from tap to video.
+  const subtitlesCountRef = useRef(subtitles.length);
+  subtitlesCountRef.current = subtitles.length;
 
   const [ready, setReady] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -727,7 +733,7 @@ export function useMpvEngine({
       let active = '';
       for (let index = 0; index < list.length; index += 1) {
         const track = list[index];
-        const hlsIndex = index - subtitles.length;
+        const hlsIndex = index - subtitlesCountRef.current;
         const isHls = hlsIndex >= 0 && hlsRef.current?.subtitleTracks.length ? hlsIndex : undefined;
         const lang = track.language || undefined;
         const langName = resolveLanguageName(lang);
@@ -739,7 +745,7 @@ export function useMpvEngine({
           language: lang,
           languageName: langName,
           hlsIndex: isHls,
-          isExternal: index < subtitles.length,
+          isExternal: index < subtitlesCountRef.current,
         });
         if (track.mode === 'showing') active = options[options.length - 1].id;
       }
@@ -889,7 +895,7 @@ export function useMpvEngine({
       video.textTracks.removeEventListener('change', syncTextTracks);
       window.removeEventListener('praha:vlc-tracks', onVlcTracks);
     };
-  }, [subtitles.length, initialTime]);
+  }, [initialTime]);
 
   const retry = useCallback(() => {
     const video = videoRef.current;
