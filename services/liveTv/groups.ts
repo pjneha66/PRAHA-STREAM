@@ -1,43 +1,30 @@
-// Xtream / M3U group trees for the Live TV browser.
-//
-// VyseTV keeps portal channels in categories and playlist channels in
-// `group-title` values; provider names frequently contain a nested path
-// ("US / Sports / Soccer"). These are pure builders — no I/O, no React — so a
-// later phase can feed the result straight into virtualised group chips.
+// Xtream / M3U group trees — port of the grouping logic in VyseTV's
+// `lib/services/iptv/iptv_controller.dart` (GPL-3.0-or-later). Provider
+// categories frequently contain a nested path ("US / Sports / Soccer"), so
+// these builders split it into a tree. Pure functions: no I/O, no React.
 
 export interface GroupTreeNode<T> {
-  /** Stable identity: lower-cased path joined with `\u0000`. */
+  /** Stable identity: lower-cased path joined with \u0000. */
   id: string;
   name: string;
-  /** Path segments from the root, excluding this node's own name. */
   path: string[];
   children: GroupTreeNode<T>[];
-  /** Items directly in this group (never includes descendants). */
   items: T[];
-  /** Items in this subtree, including descendants. */
   count: number;
 }
 
 export interface GroupTreeOptions {
-  /** Separators understood in a group name, longest first by preference. */
   separators?: readonly string[];
-  /** Name used when a channel has no group. */
   uncategorised?: string;
-  /** Sort sibling nodes and items by name (default true). */
   sort?: boolean;
 }
 
 const DEFAULT_SEPARATORS = [' / ', ' | ', ' > ', ' :: ', ' // ', ' - '] as const;
 
-/** Split a provider group label into nested path segments, trimming each one. */
-export function splitGroupPath(
-  label: string | undefined | null,
-  separators: readonly string[] = DEFAULT_SEPARATORS,
-): string[] {
+export function splitGroupPath(label: string | undefined | null, separators: readonly string[] = DEFAULT_SEPARATORS): string[] {
   if (!label || !label.trim()) return [];
   let rest = label.trim();
   const parts: string[] = [];
-  // Find the earliest separator at each level so mixed formats work.
   for (;;) {
     let bestIndex = -1;
     let bestLength = 0;
@@ -57,14 +44,7 @@ export function splitGroupPath(
 }
 
 function makeNode<T>(name: string, path: string[]): GroupTreeNode<T> {
-  return {
-    id: [...path, name].map((part) => part.toLowerCase()).join('\u0000'),
-    name,
-    path: [...path],
-    children: [],
-    items: [],
-    count: 0,
-  };
+  return { id: [...path, name].map((part) => part.toLowerCase()).join('\u0000'), name, path: [...path], children: [], items: [], count: 0 };
 }
 
 function finish<T>(node: GroupTreeNode<T>, sort: boolean, nameOf?: (item: T) => string): GroupTreeNode<T> {
@@ -78,10 +58,6 @@ function finish<T>(node: GroupTreeNode<T>, sort: boolean, nameOf?: (item: T) => 
   return node;
 }
 
-/**
- * Build a generic group tree. `pathOf` returns the nested path for one item.
- * The returned root holds ungrouped items directly and every group as a child.
- */
 export function buildGroupTree<T>(
   items: readonly T[],
   pathOf: (item: T) => string | readonly string[] | undefined | null,
@@ -92,7 +68,6 @@ export function buildGroupTree<T>(
   const sort = options.sort !== false;
   const root = makeNode<T>('All', []);
   const byId = new Map<string, GroupTreeNode<T>>([[root.id, root]]);
-
   for (const item of items || []) {
     const raw = pathOf(item);
     const segments = Array.isArray(raw)
@@ -114,27 +89,13 @@ export function buildGroupTree<T>(
     }
     parent.items.push(item);
   }
-
   return finish(root, sort);
 }
 
-/** Minimal shape shared by Xtream categories and M3U group headers. */
-export interface GroupCategory {
-  id: string;
-  name: string;
-}
+export interface GroupCategory { id: string; name: string; }
+export interface XtreamLikeStream { streamId: string; name: string; categoryId?: string; }
 
-export interface XtreamLikeStream {
-  streamId: string;
-  name: string;
-  categoryId?: string;
-}
-
-/**
- * Xtream portal tree: category → (nested label) → streams. Categories absent
- * from the category list land in "Other"; empty categories are kept so the UI
- * can show them with a zero count.
- */
+/** Xtream tree: category → nested label → streams. Empty categories are kept. */
 export function buildXtreamGroupTree(
   categories: readonly GroupCategory[],
   streams: readonly XtreamLikeStream[],
@@ -142,10 +103,7 @@ export function buildXtreamGroupTree(
 ): GroupTreeNode<XtreamLikeStream> {
   const root = buildGroupTree<XtreamLikeStream>(
     streams,
-    (stream) => {
-      const category = (categories || []).find((cat) => cat.id === stream.categoryId);
-      return category?.name || 'Other';
-    },
+    (stream) => (categories || []).find((cat) => cat.id === stream.categoryId)?.name || 'Other',
     options,
   );
   const byId = new Map(root.children.map((node) => [node.id, node]));
@@ -169,22 +127,11 @@ export function buildXtreamGroupTree(
   return finish(root, options.sort !== false, (stream) => stream.name);
 }
 
-export interface M3uLikeChannel {
-  name: string;
-  url: string;
-  group?: string;
-}
-
-export interface M3uLikePlaylist {
-  name: string;
-  channels: readonly M3uLikeChannel[];
-}
+export interface M3uLikeChannel { name: string; url: string; group?: string; }
+export interface M3uLikePlaylist { name: string; channels: readonly M3uLikeChannel[]; }
 
 /** M3U tree: one node per playlist, then nested `group-title` segments. */
-export function buildM3uGroupTree(
-  playlists: readonly M3uLikePlaylist[],
-  options: GroupTreeOptions = {},
-): GroupTreeNode<M3uLikeChannel> {
+export function buildM3uGroupTree(playlists: readonly M3uLikePlaylist[], options: GroupTreeOptions = {}): GroupTreeNode<M3uLikeChannel> {
   const root = makeNode<M3uLikeChannel>('All', []);
   const sort = options.sort !== false;
   const fallback = options.uncategorised ?? 'Uncategorised';
@@ -214,7 +161,6 @@ export function buildM3uGroupTree(
   return finish(root, sort);
 }
 
-/** Depth-first list of every non-root node, useful for flat chip lists. */
 export function flattenGroups<T>(node: GroupTreeNode<T>): GroupTreeNode<T>[] {
   const out: GroupTreeNode<T>[] = [];
   const walk = (current: GroupTreeNode<T>) => {
@@ -227,7 +173,6 @@ export function flattenGroups<T>(node: GroupTreeNode<T>): GroupTreeNode<T>[] {
   return out;
 }
 
-/** Find a node by its path segments (relative to the given root). */
 export function findGroup<T>(root: GroupTreeNode<T>, path: readonly string[]): GroupTreeNode<T> | null {
   let current = root;
   for (const segment of path) {

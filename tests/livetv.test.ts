@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest';
-import CryptoJS from 'crypto-js';
 import {
   M3uParser,
   IptvScraper,
@@ -8,13 +7,13 @@ import {
   IptvStore,
   IptvClient,
   IptvZapStore,
+  LiveTvPrefs,
   buildIptvPlayback,
   detectIptvFormat,
   formatIptvBadge,
   type IptvPortal,
   type M3uChannel,
 } from '../services/iptvService';
-import { LiveTvPrefs } from '../services/liveTvPrefs';
 
 describe('Live TV & IPTV Service Engine', () => {
   describe('M3U / M3U8 Playlist Parser', () => {
@@ -163,10 +162,15 @@ http://iptv.com:8080/get.php?username=dupuser&password=duppass
 
     it('accurately matches US Sports (ESPN, NBA, NFL)', () => {
       const espn = HardcodedChannels.byId('espn')!;
+      const espn2 = HardcodedChannels.byId('espn2')!;
       const nba = HardcodedChannels.byId('nba')!;
       const nfl = HardcodedChannels.byId('nfl')!;
 
-      expect(HardcodedChannels.matches('US: ESPN 2 LIVE HD', espn.keywords)).toBe(true);
+      // VyseTV keeps ESPN and ESPN2 as separate catalogue entries with an
+      // exclusion on the main channel, so ESPN 2 belongs to its own entry.
+      expect(HardcodedChannels.matches('US: ESPN HD LIVE', espn.keywords, espn.exclude)).toBe(true);
+      expect(HardcodedChannels.matches('US: ESPN 2 LIVE HD', espn2.keywords, espn2.exclude)).toBe(true);
+      expect(HardcodedChannels.matches('US: ESPN 2 LIVE HD', espn.keywords, espn.exclude)).toBe(false);
       expect(HardcodedChannels.matches('US: NBA TV HD LIVE', nba.keywords)).toBe(true);
       expect(HardcodedChannels.matches('US: NFL NETWORK 1080P', nfl.keywords)).toBe(true);
     });

@@ -1,9 +1,9 @@
-// Portal browser helpers: preview/Catalogue URL builders and per-portal favourites.
+// Portal browser helpers, favourites and paste-site discovery.
 //
-// Mirrors VyseTV's `xtreamUrl`, `LiveFavorites` and paste-site discovery
-// (`lib/data/live_tv/live_favorites.dart`, `lib/services/iptv/iptv_network.dart`),
-// GPL-3.0-or-later. PasteSh AES-CBC decryption itself is already implemented in
-// `services/iptvService.ts` (`PasteShDecryptor`) and is deliberately not copied.
+// Ported from VyseTV `lib/data/live_tv/live_favorites.dart`,
+// `lib/data/live_tv/portal_names.dart` and the URL helpers in
+// `lib/services/iptv/iptv_network.dart` (GPL-3.0-or-later). PasteSh AES
+// decryption lives in `pasteDecryptor.ts`.
 
 export type PortalSection = 'live' | 'vod' | 'series';
 
@@ -29,28 +29,25 @@ export interface FavoriteChannelEntry {
   title: string;
   url: string;
   logo?: string;
-  /** Portal or playlist name shown under the starred channel. */
   from?: string;
 }
 
 const FAVORITE_KEYS = 'praha.livetv.favoriteKeys.v1';
 const FAVORITE_LIST = 'praha.livetv.favoriteChannels.v1';
 
+export function normalizePortalUrl(url: string): string {
+  const trimmed = String(url || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
 /** Lower-cased identity used by both our store and VyseTV. */
 export function portalKey(portal: PortalRef): string {
   return `${normalizePortalUrl(portal.url)}|${portal.username}|${portal.password}`.toLowerCase();
 }
 
-/** Credentials alone identify a subscription across changed portal URLs. */
 export function portalCredentialKey(portal: PortalRef): string {
   return `${portal.username}|${portal.password}`.toLowerCase();
-}
-
-/** Trim trailing slashes and add a scheme when the pasted portal omitted one. */
-export function normalizePortalUrl(url: string): string {
-  const trimmed = String(url || '').trim().replace(/\/+$/, '');
-  if (!trimmed) return '';
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
 function extOf(stream: PortalStreamRef, section: PortalSection): string {
@@ -59,16 +56,8 @@ function extOf(stream: PortalStreamRef, section: PortalSection): string {
   return section === 'live' ? 'ts' : 'mp4';
 }
 
-/**
- * Xtream stream URL for the browser's inline preview/player. Credentials are
- * percent-encoded (VyseTV writes them raw), which keeps `@`, `/` and `:` in a
- * password from breaking the path.
- */
-export function buildPreviewUrl(
-  portal: PortalRef,
-  stream: PortalStreamRef,
-  section: PortalSection = 'live',
-): string {
+/** Xtream stream URL for the browser's inline preview/player. */
+export function buildPreviewUrl(portal: PortalRef, stream: PortalStreamRef, section: PortalSection = 'live'): string {
   const base = normalizePortalUrl(portal.url);
   if (!base || !stream?.streamId) return '';
   const folder = section === 'live' ? 'live' : section === 'vod' ? 'movie' : 'series';
@@ -77,7 +66,6 @@ export function buildPreviewUrl(
   return `${base}/${folder}/${user}/${pass}/${encodeURIComponent(stream.streamId)}.${extOf(stream, section)}`;
 }
 
-/** Short-EPG endpoint behind a live preview card. */
 export function buildEpgPreviewUrl(portal: PortalRef, streamId: string, limit = 2): string {
   const base = normalizePortalUrl(portal.url);
   if (!base || !streamId) return '';
@@ -91,7 +79,6 @@ export function buildEpgPreviewUrl(portal: PortalRef, streamId: string, limit = 
   return `${base}/player_api.php?${query.toString()}`;
 }
 
-/** Category endpoint used to populate the browser's left pane. */
 export function buildCategoryUrl(portal: PortalRef, section: PortalSection = 'live'): string {
   const base = normalizePortalUrl(portal.url);
   if (!base) return '';
@@ -100,7 +87,6 @@ export function buildCategoryUrl(portal: PortalRef, section: PortalSection = 'li
   return `${base}/player_api.php?${query.toString()}`;
 }
 
-/** Parse a `player_api.php` stream list into the small shape the browser needs. */
 export function parsePortalStreams(raw: unknown, section: PortalSection = 'live'): PortalStreamRef[] {
   if (!Array.isArray(raw)) return [];
   const out: PortalStreamRef[] = [];
@@ -122,9 +108,8 @@ export function parsePortalStreams(raw: unknown, section: PortalSection = 'live'
   return out;
 }
 
-// ── Per-portal favourites ─────────────────────────────────────────────────────
+// ── Per-portal favourites (LiveFavorites from Dart) ───────────────────────────
 
-/** Same channel on two portals is two favourites. */
 export function favoriteKey(portal: PortalRef, stream: PortalStreamRef): string {
   return `${portalKey(portal)}|${stream.streamId}`;
 }
@@ -134,25 +119,18 @@ export function m3uFavoriteKey(url: string): string {
 }
 
 export function isPortalFavorite(keys: readonly string[], portal: PortalRef, stream: PortalStreamRef): boolean {
-  const key = favoriteKey(portal, stream);
-  return keys.includes(key);
+  return keys.includes(favoriteKey(portal, stream));
 }
 
-/** Toggle a key immutably, so React can compare the returned set by identity. */
 export function toggleFavoriteKey(keys: readonly string[], key: string): string[] {
   if (!key) return [...keys];
   return keys.includes(key) ? keys.filter((entry) => entry !== key) : [...keys, key];
 }
 
-/**
- * Favourites starred before a portal was opened have only a key. Once its
- * stream list arrives, fill in name/logo/URL and join the saved list.
- */
 export function adoptFavoriteEntries(
   entries: readonly FavoriteChannelEntry[],
   portal: PortalRef,
   streams: readonly PortalStreamRef[],
-  /** Starred keys; keys without a saved entry get their details filled in. */
   keys: readonly string[] = entries.map((entry) => entry.key),
 ): FavoriteChannelEntry[] {
   const prefix = `${portalKey(portal)}|`;
@@ -172,11 +150,7 @@ export function adoptFavoriteEntries(
   return adopted.length ? [...entries, ...adopted] : [...entries];
 }
 
-/** Add/replace one saved favourite in the newest-first list. */
-export function toggleFavoriteEntry(
-  entries: readonly FavoriteChannelEntry[],
-  entry: FavoriteChannelEntry,
-): FavoriteChannelEntry[] {
+export function toggleFavoriteEntry(entries: readonly FavoriteChannelEntry[], entry: FavoriteChannelEntry): FavoriteChannelEntry[] {
   const without = entries.filter((item) => item.key !== entry.key);
   return entries.some((item) => item.key === entry.key) ? without : [entry, ...without];
 }
@@ -206,7 +180,6 @@ export function loadFavoriteState(): { keys: string[]; entries: FavoriteChannelE
   const entries = Array.isArray(rawEntries)
     ? rawEntries.filter((entry) => entry && typeof entry.key === 'string' && typeof entry.url === 'string' && entry.url)
     : [];
-  // Keep keys starred before the saved list existed.
   const have = new Set(entries.map((entry) => entry.key));
   return { keys: [...new Set([...keys, ...have])], entries };
 }
@@ -218,7 +191,7 @@ export function saveFavoriteState(keys: readonly string[], entries: readonly Fav
 
 // ── Paste-site discovery helpers ──────────────────────────────────────────────
 
-const PASTE_HOSTS = ['paste.sh', 'pastebin.com', 'justpaste.it', 'controlc.com', 'pastes.dev', 'text.is', 'rentry.co'];
+const PASTE_HOSTS = ['paste.sh', 'paste.ee', 'pastee.dev', 'pastebin.com', 'justpaste.it', 'controlc.com', 'pastes.dev', 'text.is', 'rentry.co'];
 
 export function isPasteSiteUrl(url: string): boolean {
   try {
@@ -229,7 +202,6 @@ export function isPasteSiteUrl(url: string): boolean {
   }
 }
 
-/** True for a paste.sh link carrying its AES key in the URL fragment. */
 export function isPasteShEncryptedUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -239,7 +211,6 @@ export function isPasteShEncryptedUrl(url: string): boolean {
   }
 }
 
-/** Raw-text URL for the paste hosts that expose one; `null` means use the URL as-is. */
 export function pasteRawUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -247,6 +218,11 @@ export function pasteRawUrl(url: string): string | null {
     const id = parsed.pathname.split('/').filter(Boolean).pop() || '';
     if (!id) return null;
     if (host === 'pastebin.com' && !parsed.pathname.includes('/raw/')) return `https://pastebin.com/raw/${id}`;
+    if (host === 'paste.ee' || host === 'pastee.dev') {
+      // Paste.ee exposes `/r/{id}` as raw text; `/d/{id}` is also accepted but
+      // adds a download disposition on some mirrors.
+      return `https://${host}/r/${id}`;
+    }
     if (host === 'pastes.dev') return `https://api.pastes.dev/${id}`;
     if (host === 'rentry.co' && !parsed.pathname.includes('/raw')) return `https://rentry.co/${id}/raw`;
     return null;

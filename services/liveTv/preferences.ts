@@ -1,11 +1,12 @@
-import type { M3uChannel } from './iptvService';
-import type { StreamHealthResult } from './streamHealth';
+// Local-only Live TV playback preferences.
+//
+// Ported from VyseTV `lib/services/iptv/iptv_settings.dart` and the PRAHA
+// preference layer that sat beside the hand-written service. It keeps the
+// health cache, recently played list and per-source playback mode in guarded
+// localStorage so the UI component only has to render.
 
-/**
- * Local-only Live TV preferences. Keeps the heavy LiveTvView component focused
- * on rendering by moving the small, persisted bits (channel health cache,
- * recently played, per-source playback mode) into one guarded store.
- */
+import type { StreamHealthResult } from '../streamHealth';
+import type { M3uChannel } from './models';
 
 const HEALTH_KEY = 'praha.iptv.health.v1';
 const LAST_PLAYED_KEY = 'praha.iptv.lastplayed.v1';
@@ -31,7 +32,7 @@ function readJson<T>(key: string, fallback: T): T {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as unknown;
-    return (parsed && typeof parsed === 'object') ? (parsed as T) : fallback;
+    return parsed && typeof parsed === 'object' ? (parsed as T) : fallback;
   } catch {
     return fallback;
   }
@@ -58,16 +59,13 @@ function channelTokens(name: string): string[] {
 }
 
 export const LiveTvPrefs = {
-  // ── Health cache ────────────────────────────────────────────────────────
   getHealth(url: string): CachedHealth | null {
     if (!url) return null;
-    const all = readJson<Record<string, CachedHealth>>(HEALTH_KEY, {});
-    const entry = all[url];
+    const entry = readJson<Record<string, CachedHealth>>(HEALTH_KEY, {})[url];
     if (!entry || !Number.isFinite(entry.at) || Date.now() - entry.at > HEALTH_TTL_MS) return null;
     return entry;
   },
 
-  /** All still-valid probes, used to hydrate card badges in one read. */
   getAllHealth(): Record<string, CachedHealth> {
     const all = readJson<Record<string, CachedHealth>>(HEALTH_KEY, {});
     const now = Date.now();
@@ -81,17 +79,13 @@ export const LiveTvPrefs = {
     const entry: CachedHealth = { ...result, at: Date.now() };
     const all = readJson<Record<string, CachedHealth>>(HEALTH_KEY, {});
     all[url] = entry;
-    // Drop expired entries first, then bound the map.
     const now = Date.now();
     const fresh = Object.entries(all).filter(([, value]) => value && now - value.at <= HEALTH_TTL_MS);
-    const bounded = fresh.length > HEALTH_MAX
-      ? fresh.sort((a, b) => b[1].at - a[1].at).slice(0, HEALTH_MAX)
-      : fresh;
+    const bounded = fresh.length > HEALTH_MAX ? fresh.sort((a, b) => b[1].at - a[1].at).slice(0, HEALTH_MAX) : fresh;
     writeJson(HEALTH_KEY, Object.fromEntries(bounded));
     return entry;
   },
 
-  // ── Recently played ─────────────────────────────────────────────────────
   getLastPlayed(): LastPlayedChannel[] {
     const list = readJson<LastPlayedChannel[]>(LAST_PLAYED_KEY, []);
     return Array.isArray(list) ? list.filter((entry) => entry && typeof entry.url === 'string') : [];
@@ -107,11 +101,10 @@ export const LiveTvPrefs = {
     return next;
   },
 
-  // ── Per-source playback mode ────────────────────────────────────────────
   getMode(url: string): PlaybackMode | null {
     if (!url) return null;
-    const all = readJson<Record<string, PlaybackMode>>(MODE_KEY, {});
-    return all[url] === 'external' || all[url] === 'internal' ? all[url] : null;
+    const mode = readJson<Record<string, PlaybackMode>>(MODE_KEY, {})[url];
+    return mode === 'external' || mode === 'internal' ? mode : null;
   },
 
   getAllModes(): Record<string, PlaybackMode> {
@@ -127,31 +120,25 @@ export const LiveTvPrefs = {
     writeJson(MODE_KEY, all);
   },
 
-  /**
-   * Same channel, different source: name-token similarity after stripping
-   * country prefixes and quality labels ("US: Sky Sports F1 HD" → "sky sports
-   * f1"). Bounded, synchronous and cheap enough to call from a card menu.
-   */
-  findAlternates(channels: M3uChannel[], target: Pick<M3uChannel, 'name' | 'url'>): M3uChannel[] {
+  findAlternates(channels: readonly M3uChannel[], target: Pick<M3uChannel, 'name' | 'url'>): M3uChannel[] {
     const targetTokens = channelTokens(target.name);
     if (!targetTokens.length) return [];
     const scored = channels
-      .filter((ch) => ch?.url && ch.url !== target.url)
-      .map((ch) => {
-        const tokens = channelTokens(ch.name);
+      .filter((channel) => channel?.url && channel.url !== target.url)
+      .map((channel) => {
+        const tokens = channelTokens(channel.name);
         const overlap = targetTokens.filter((token) => tokens.includes(token)).length;
         const score = tokens.length ? overlap / Math.min(targetTokens.length, tokens.length) : 0;
-        return { ch, score, overlap };
+        return { channel, score, overlap };
       })
       .filter((entry) => entry.score >= 0.7 && entry.overlap >= 2)
       .sort((a, b) => b.score - a.score);
-
     const seen = new Set<string>([target.url]);
     const result: M3uChannel[] = [];
     for (const entry of scored) {
-      if (seen.has(entry.ch.url)) continue;
-      seen.add(entry.ch.url);
-      result.push(entry.ch);
+      if (seen.has(entry.channel.url)) continue;
+      seen.add(entry.channel.url);
+      result.push(entry.channel);
       if (result.length >= 8) break;
     }
     return result;

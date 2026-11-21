@@ -2,25 +2,24 @@
 //
 // Ported from VyseTV `lib/data/live_tv/sports_schedule.dart` and
 // `lib/data/live_tv/match_finder.dart` (GPL-3.0-or-later), adapted to PRAHA's
-// existing `LiveMatchEvent` model and virtualised Live TV list. All network
-// calls go through `nativeFetchText`; the parsing/dedupe helpers are pure.
+// `LiveMatchEvent` model. All network calls go through nativeFetchText; the
+// parsing / matching helpers are pure and directly testable.
 
-import type { LiveMatchEvent } from '../iptvService';
-import { toEpochMs, type EpgProgram } from './epg';
+import type { LiveMatchEvent } from './models';
+import { toEpochMs, type EpgProgram } from './guide';
+import { getJson } from './http';
 
 export type SportKind = 'football' | 'basketball' | 'americanFootball' | 'hockey' | 'mma' | 'motorsport';
 
 export interface ScheduleLeague {
-  /** ESPN scoreboard path, e.g. `soccer/eng.1`. */
   path: string;
   name: string;
   sport: SportKind;
-  /** International rights holders as Live TV channel ids. */
   channels: string[];
-  /** Races and fight cards: one event, not two teams. */
   eventMode?: boolean;
 }
 
+/** ESPN's public scoreboard paths with international rights holders. */
 export const ESPN_LEAGUES: readonly ScheduleLeague[] = [
   { path: 'soccer/uefa.champions', name: 'Champions League', sport: 'football', channels: ['bein_sports', 'tnt_sports', 'cbs_sports', 'canal_plus_sport'] },
   { path: 'soccer/eng.1', name: 'Premier League', sport: 'football', channels: ['sky_sports', 'tnt_sports', 'bein_sports', 'nbc_sports'] },
@@ -41,12 +40,7 @@ export const ESPN_LEAGUES: readonly ScheduleLeague[] = [
 
 export type MatchState = 'upcoming' | 'live' | 'finished';
 
-export interface ScheduleTeam {
-  name: string;
-  short: string;
-  logo?: string;
-  score?: string;
-}
+export interface ScheduleTeam { name: string; short: string; logo?: string; score?: string; }
 
 export interface ScheduleMatch {
   id: string;
@@ -54,7 +48,6 @@ export interface ScheduleMatch {
   leaguePath: string;
   sport: SportKind;
   name: string;
-  /** Epoch millis, local kick-off converted by ESPN's ISO date. */
   start: number;
   state: MatchState;
   status: string;
@@ -66,12 +59,7 @@ export interface ScheduleMatch {
   eventMode: boolean;
 }
 
-/** Minimal channel shape used for broadcaster-name resolution. */
-export interface ChannelLike {
-  id: string;
-  name: string;
-  keywords?: string[];
-}
+export interface ChannelLike { id: string; name: string; keywords?: string[]; }
 
 const BROADCAST_ALIASES: Record<string, string> = {
   nbcsn: 'nbc_sports', peacock: 'nbc_sports', nbc: 'nbc_sports', 'usa net': 'nbc_sports',
@@ -92,10 +80,6 @@ export function normalizeBroadcastName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9+ ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * ESPN broadcast name → Live TV channel. Unknown names become a one-off
- * channel that still searches portals for the exact name.
- */
 export function resolveBroadcast(name: string, catalog: readonly ChannelLike[] = []): ChannelLike {
   const normalised = normalizeBroadcastName(name);
   const alias = BROADCAST_ALIASES[normalised];
@@ -116,14 +100,9 @@ export function resolveBroadcast(name: string, catalog: readonly ChannelLike[] =
       }
     }
   }
-  return best || {
-    id: `bc_${normalised}`,
-    name,
-    keywords: [normalised],
-  };
+  return best || { id: `bc_${normalised}`, name, keywords: [normalised] };
 }
 
-/** Every place to watch: ESPN's listings first, then the league's rights holders. */
 export function channelsForMatch(match: ScheduleMatch, catalog: readonly ChannelLike[] = []): ChannelLike[] {
   const seen = new Set<string>();
   const out: ChannelLike[] = [];
@@ -138,14 +117,13 @@ export function channelsForMatch(match: ScheduleMatch, catalog: readonly Channel
   return out;
 }
 
-/** Parse one ESPN scoreboard response. Malformed events are skipped, not thrown. */
+/** Parse one ESPN scoreboard response. Malformed events are skipped. */
 export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): ScheduleMatch[] {
   const root = asRecord(raw);
   const events = root && Array.isArray(root.events) ? root.events : [];
   const logos = root && Array.isArray(root.leagues) ? asRecord(root.leagues[0])?.logos : null;
   const leagueLogo = Array.isArray(logos) ? asRecord(logos[0])?.href : undefined;
   const out: ScheduleMatch[] = [];
-
   for (const rawEvent of events) {
     const event = asRecord(rawEvent);
     if (!event) continue;
@@ -158,7 +136,6 @@ export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): Sched
       const start = toEpochMs(String(event.date ?? ''));
       const id = String(event.id ?? '').trim();
       if (!id || start === null) continue;
-
       const parseTeam = (rawCompetitor: unknown): ScheduleTeam | null => {
         const competitor = asRecord(rawCompetitor);
         if (!competitor) return null;
@@ -174,17 +151,9 @@ export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): Sched
           score: state === 'upcoming' ? undefined : competitor.score == null ? undefined : String(competitor.score),
         };
       };
-
       const competitors = (Array.isArray(comp?.competitors) ? comp?.competitors : []) as unknown[];
-      const home = league.eventMode ? null : competitors.map(parseTeam).find((_, idx) => {
-        const c = asRecord(competitors[idx]);
-        return c?.homeAway === 'home';
-      });
-      const away = league.eventMode ? null : competitors.map(parseTeam).find((_, idx) => {
-        const c = asRecord(competitors[idx]);
-        return c?.homeAway === 'away';
-      });
-
+      const home = league.eventMode ? null : competitors.map(parseTeam).find((_, idx) => asRecord(competitors[idx])?.homeAway === 'home');
+      const away = league.eventMode ? null : competitors.map(parseTeam).find((_, idx) => asRecord(competitors[idx])?.homeAway === 'away');
       const broadcasts = new Set<string>();
       for (const rawBroadcast of Array.isArray(comp?.broadcasts) ? comp!.broadcasts : []) {
         const names = asRecord(rawBroadcast)?.names;
@@ -194,7 +163,7 @@ export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): Sched
         const media = asRecord(asRecord(rawGeo)?.media);
         if (typeof media?.shortName === 'string' && media.shortName) broadcasts.add(media.shortName);
       }
-
+      const venue = asRecord(comp?.venue)?.fullName;
       out.push({
         id: `${league.path}/${id}`,
         league: league.name,
@@ -207,7 +176,7 @@ export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): Sched
         home: home || undefined,
         away: away || undefined,
         broadcasts: [...broadcasts],
-        venue: asRecord(comp?.venue)?.fullName ? String(asRecord(comp!.venue)!.fullName) : undefined,
+        venue: venue ? String(venue) : undefined,
         eventMode: Boolean(league.eventMode),
         leagueLogo: leagueLogo ? String(leagueLogo) : undefined,
       });
@@ -219,7 +188,6 @@ export function parseEspnScoreboard(raw: unknown, league: ScheduleLeague): Sched
   return dedupeByKey(out, (match) => match.id);
 }
 
-/** Keep the first item for each key (first source wins), preserving order. */
 export function dedupeByKey<T>(items: readonly T[], keyOf: (item: T) => string): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -232,13 +200,11 @@ export function dedupeByKey<T>(items: readonly T[], keyOf: (item: T) => string):
   return out;
 }
 
-/** A fixture is the same event across sources when name, league and kick-off match. */
 export function liveMatchKey(match: Pick<LiveMatchEvent, 'title' | 'league'> & { startsAt?: number }): string {
   const start = Math.round((match.startsAt || 0) / 300) * 300;
   return `${normalizeBroadcastName(match.title)}|${normalizeBroadcastName(match.league)}|${start}`;
 }
 
-/** De-dupe the existing LiveMatchesScraper results against one another. */
 export function dedupeLiveMatches(matches: readonly LiveMatchEvent[]): LiveMatchEvent[] {
   return dedupeByKey(matches, (match) => liveMatchKey(match) || match.id);
 }
@@ -264,26 +230,16 @@ function guideClock(ms: number): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-/**
- * ESPN fixtures are merged AFTER the existing LiveMatchesScraper results:
- * Nuvio / Dami / PPV entries keep their playable streams when both carry the
- * same fixture. Uses the 5-minute kick-off bucket to tolerate source jitter.
- */
-export function mergeMatchSources(
-  existing: readonly LiveMatchEvent[],
-  schedule: readonly ScheduleMatch[],
-): LiveMatchEvent[] {
+/** ESPN fixtures are merged AFTER scraper results so playable streams survive. */
+export function mergeMatchSources(existing: readonly LiveMatchEvent[], schedule: readonly ScheduleMatch[]): LiveMatchEvent[] {
   return dedupeLiveMatches([...existing, ...schedule.map(scheduleMatchToLiveEvent)]);
 }
-
-// ── Match finder: pick the exact feed from each channel's EPG ─────────────────
 
 const GENERIC_TOKENS = new Set([
   'united', 'city', 'real', 'club', 'sporting', 'athletic', 'atletico', 'inter', 'state', 'university', 'town',
   'county', 'rovers', 'wanderers', 'olympique', 'racing', 'deportivo', 'sport', 'sports', 'team', 'new', 'saint',
 ]);
 
-/** Accent-insensitive lower-case fold used by VyseTV's match finder. */
 export function foldText(text: string): string {
   return String(text || '')
     .toLowerCase()
@@ -303,23 +259,13 @@ function mentionsTeam(text: string, tokens: readonly string[]): boolean {
   return tokens.some((token) => (token.length >= 6 ? padded.includes(token) : padded.includes(` ${token} `)));
 }
 
-/**
- * Of the guide rows around kick-off, find the one mentioning both sides (or
- * the event name). Window: 30 min before to 2 h 30 after, as in VyseTV.
- */
-export function bestEpgMatch(
-  match: Pick<ScheduleMatch, 'start' | 'name' | 'league' | 'home' | 'away'>,
-  guide: readonly EpgProgram[],
-): EpgProgram | null {
+/** Find the guide row mentioning both sides inside the kick-off window. */
+export function bestEpgMatch(match: Pick<ScheduleMatch, 'start' | 'name' | 'league' | 'home' | 'away'>, guide: readonly EpgProgram[]): EpgProgram | null {
   const from = match.start - 30 * 60 * 1000;
   const to = match.start + 2.5 * 60 * 60 * 1000;
   const sides: string[][] = match.home && match.away
-    ? [
-        [...matchTokens(`${match.home.name} ${match.home.short}`)],
-        [...matchTokens(`${match.away.name} ${match.away.short}`)],
-      ]
+    ? [[...matchTokens(`${match.home.name} ${match.home.short}`)], [...matchTokens(`${match.away.name} ${match.away.short}`)]]
     : [matchTokens(match.name), matchTokens(match.league)];
-
   let best: EpgProgram | null = null;
   let bestScore = 0;
   for (const entry of guide || []) {
@@ -350,7 +296,6 @@ export function hitGroupKey(streamName: string): string {
   return `${number}|${lang}`;
 }
 
-/** Group channel hits by feed so one guide lookup covers every portal copy. */
 export function groupHits<T>(hits: readonly T[], nameOf: (hit: T) => string): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const hit of hits || []) {
@@ -362,8 +307,6 @@ export function groupHits<T>(hits: readonly T[], nameOf: (hit: T) => string): Ma
   return groups;
 }
 
-// ── ESPN network access (nativeFetchText only) ────────────────────────────────
-
 const ESPN_ORIGIN = 'https://site.api.espn.com/apis/site/v2/sports';
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const scheduleCache = new Map<string, { at: number; matches: ScheduleMatch[] }>();
@@ -372,32 +315,14 @@ function ymd(day: Date): string {
   return `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, '0')}${String(day.getDate()).padStart(2, '0')}`;
 }
 
-async function getJson(url: string, timeoutMs: number): Promise<unknown | null> {
-  // Dynamic import keeps the pure helpers free of the native bridge graph.
-  const { nativeFetchText } = await import('../androidBridge');
-  const response = await nativeFetchText(url, {
-    headers: { Accept: 'application/json' },
-    timeoutMs,
-  });
-  if (!response.ok || !response.data) return null;
-  try {
-    return JSON.parse(response.data) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchLeague(league: ScheduleLeague, dates: string, timeoutMs: number): Promise<ScheduleMatch[]> {
-  const url = `${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${dates}`;
   try {
+    const url = `${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${dates}`;
     let bodies = [await getJson(url, timeoutMs)];
     if (!bodies[0]) {
-      // Some leagues only accept a single day: retry the three days separately.
       const [from, to] = dates.split('-');
       const middle = ymd(new Date(Number(from.slice(0, 4)), Number(from.slice(4, 6)) - 1, Number(from.slice(6, 8)) + 1));
-      bodies = await Promise.all([getJson(`${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${from}`, timeoutMs),
-        getJson(`${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${middle}`, timeoutMs),
-        getJson(`${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${to}`, timeoutMs)]);
+      bodies = await Promise.all([from, middle, to].map((day) => getJson(`${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${day}`, timeoutMs)));
     }
     return bodies.flatMap((body) => (body ? parseEspnScoreboard(body, league) : []));
   } catch {
@@ -406,14 +331,10 @@ async function fetchLeague(league: ScheduleLeague, dates: string, timeoutMs: num
 }
 
 /** All leagues' fixtures on `day` (local), soonest first. Cached for two minutes. */
-export async function fetchEspnSchedule(
-  day: Date = new Date(),
-  options: { refresh?: boolean; timeoutMs?: number } = {},
-): Promise<ScheduleMatch[]> {
+export async function fetchEspnSchedule(day: Date = new Date(), options: { refresh?: boolean; timeoutMs?: number } = {}): Promise<ScheduleMatch[]> {
   const key = ymd(day);
   const hit = scheduleCache.get(key);
   if (!options.refresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.matches;
-
   const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
   const end = start + 24 * 60 * 60 * 1000;
   const from = ymd(new Date(start - 24 * 60 * 60 * 1000));
@@ -424,14 +345,10 @@ export async function fetchEspnSchedule(
   const matches = results.flat().filter((match) => {
     if (seen.has(match.id)) return false;
     seen.add(match.id);
-    // ESPN days are US-centred; include the days either side and filter locally.
     if (match.eventMode) return match.start < end && match.start + 3 * 24 * 60 * 60 * 1000 > start;
     return match.start >= start && match.start < end;
   }).sort((a, b) => a.start - b.start);
-
   if (matches.length || hit) scheduleCache.set(key, { at: Date.now(), matches });
-  // Fallback: a failed/empty API answer keeps the last successful schedule (or
-  // an empty list) instead of throwing into the Live TV render path.
   return matches.length ? matches : hit?.matches || [];
 }
 

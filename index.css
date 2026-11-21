@@ -2681,6 +2681,16 @@ html.dpad-mode select:focus {
 .jellyfin-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .jellyfin-item a { display: inline-flex; align-items: center; gap: 5px; }
 .embed-modal { width: min(850px, 96vw); }
+.vyse-sources { margin: 0 20px 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.vyse-sources-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.vyse-sources-head h3 { margin: 3px 0; font-size: 14px; }
+.vyse-sources-head p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.vyse-sources-status { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.vyse-source-list { margin-top: 10px; max-height: 240px; overflow-y: auto; }
+.vyse-source-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.vyse-source-row strong, .vyse-source-row small { display: block; }
+.vyse-source-row strong { font-size: 12px; }
+.vyse-source-row small { color: var(--muted); font-size: 10px; margin-top: 3px; }
 .embed-warning, .embed-directory, .embed-frame-wrap p { margin: 12px 20px; color: var(--muted); line-height: 1.55; font-size: 12px; }
 .embed-episode, .embed-search { display: flex; gap: 14px; padding: 8px 20px; }
 .embed-episode label, .embed-search label, .embed-add label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }

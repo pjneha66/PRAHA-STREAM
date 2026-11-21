@@ -1,9 +1,6 @@
-// Live TV appearance settings persistence.
-//
-// Ported from VyseTV `lib/services/iptv/iptv_settings.dart`
-// (GPL-3.0-or-later): hero style, card density, portal/browser presentation and
-// the ordered category visibility list. PRAHA's global theme is untouched —
-// these values only style Live TV cards once a later phase wires them in.
+// Live TV appearance settings — port of VyseTV's `iptv_settings.dart`
+// (GPL-3.0-or-later). PRAHA persists these in localStorage instead of
+// SharedPreferences; enum names and default values are unchanged.
 
 export type HeroStyle = 'immersive' | 'compact' | 'minimalist';
 export type CardDensity = 'compact' | 'standard' | 'cinematic';
@@ -94,7 +91,7 @@ function numberIn(value: unknown, min: number, max: number, fallback: number): n
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
-/** Sanitise any persisted value: unknown enum strings and bad numbers fall back. */
+/** Sanitise persisted values; unknown enums and bad numbers fall back. */
 export function normalizeLiveTvAppearance(value: unknown): LiveTvAppearance {
   const raw = record(value) || {};
   const categories = Array.isArray(raw.visibleCategories)

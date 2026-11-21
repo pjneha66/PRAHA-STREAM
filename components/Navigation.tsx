@@ -51,11 +51,11 @@ const primaryMobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
-  { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
   { id: 'manga' as const, label: 'Manga', icon: BookOpen },
 ];
 
 const moreNavItems = [
+  { id: 'sanka' as const, label: 'Comics', icon: BookOpen, desc: 'Sanka & Comick catalogues' },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones, desc: '9 audiobook sources & player' },
   { id: 'books' as const, label: 'Books', icon: BookMarked, desc: 'Open Library, folkscanomy & archive.org' },

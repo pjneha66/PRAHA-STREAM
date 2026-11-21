@@ -1555,7 +1555,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} />}
+      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} onPlay={playStream} />}
 
       {sourceState && (
         <SourceModal

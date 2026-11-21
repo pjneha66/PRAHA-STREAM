@@ -1,7 +1,6 @@
-// Live TV guide helpers — pure EPG maths used by channel rows and the player.
-//
-// Ported from VyseTV's `lib/data/live_tv/live_guide.dart` (GPL-3.0-or-later).
-// Kept free of React / native dependencies so it can be tested directly.
+// Live TV guide helpers — port of VyseTV's `lib/data/live_tv/live_guide.dart`
+// (GPL-3.0-or-later). Pure EPG maths so channel rows and the player can compute
+// now/next without React or native dependencies.
 
 /** EPG timestamps arrive as epoch seconds, epoch millis, or an ISO-ish string. */
 export type EpgTime = number | string | Date;
@@ -11,7 +10,6 @@ export interface EpgProgram {
   description?: string;
   start: EpgTime;
   stop: EpgTime;
-  /** Extra portal fields (channel id, base64 raw text …) survive normalisation. */
   [key: string]: unknown;
 }
 
@@ -33,23 +31,16 @@ export function toEpochMs(value: EpgTime): number | null {
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
-    // Xtream's `start_timestamp` / `end_timestamp` are seconds. Anything above
-    // 1e11 is already millis (dates after year 5138 in seconds are irrelevant).
     return Math.abs(value) < 1e11 ? value * 1000 : value;
   }
   if (typeof value !== 'string' || !value.trim()) return null;
   const text = value.trim();
   if (/^-?\d+$/.test(text)) return toEpochMs(Number(text));
-  // "2026-11-21 20:00:00" is common in Xtream JSON; Date.parse handles the T
-  // form more reliably across engines.
   const parsed = Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text) ? text.replace(' ', 'T') : text);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/**
- * Sort a guide by start time and drop rows with an unusable window. Returns
- * new objects; callers' arrays (and the existing NSFW gating) are untouched.
- */
+/** Sort a guide by start time and drop rows with an unusable window. */
 export function normaliseGuide(guide: readonly EpgProgram[]): NormalisedEpgProgram[] {
   const out: NormalisedEpgProgram[] = [];
   for (const entry of guide || []) {
@@ -62,11 +53,7 @@ export function normaliseGuide(guide: readonly EpgProgram[]): NormalisedEpgProgr
   return out.sort((a, b) => a.startMs - b.startMs || a.stopMs - b.stopMs);
 }
 
-/**
- * The programme on now and the one after it, from a guide sorted by start.
- * A row ending exactly at `at` is already over; one starting exactly at `at`
- * is on now (VyseTV's `NowNext.of`).
- */
+/** The programme on now and the one after it (VyseTV's `NowNext.of`). */
 export function nowNext(guide: readonly EpgProgram[], at: number | Date = Date.now()): NowNext {
   const t = at instanceof Date ? at.getTime() : at;
   let now: NormalisedEpgProgram | null = null;
@@ -82,7 +69,7 @@ export function nowNext(guide: readonly EpgProgram[], at: number | Date = Date.n
   return { now, next };
 }
 
-/** How far through the current programme the clock is, clamped to 0…1. */
+/** How far through the current programme the clock is, 0…1. */
 export function epgProgress(current: NormalisedEpgProgram | null, at: number | Date = Date.now()): number {
   if (!current) return 0;
   const t = at instanceof Date ? at.getTime() : at;
@@ -99,12 +86,10 @@ export function guideTime(at: number | string | Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/** Compact "17:05 – 18:00" label for a now/next row. */
 export function guideWindow(entry: EpgProgram): string {
   return `${guideTime(entry.start)} – ${guideTime(entry.stop)}`;
 }
 
-/** True when a row has a programme on now at the supplied instant. */
 export function isProgramLive(entry: EpgProgram, at: number | Date = Date.now()): boolean {
   const t = at instanceof Date ? at.getTime() : at;
   const start = toEpochMs(entry.start);
@@ -112,8 +97,40 @@ export function isProgramLive(entry: EpgProgram, at: number | Date = Date.now())
   return start !== null && stop !== null && start <= t && stop > t;
 }
 
-/** Drop rows that ended before `at`; a refresh that fails can keep older data safely. */
+/** Drop rows that ended before `at`. */
 export function upcomingGuide(guide: readonly EpgProgram[], at: number | Date = Date.now()): NormalisedEpgProgram[] {
   const t = at instanceof Date ? at.getTime() : at;
   return normaliseGuide(guide).filter((entry) => entry.stopMs > t);
+}
+
+/** Decode a base64 field from Xtream's EPG response. */
+export function decodeEpgBase64(value: unknown): string {
+  if (!value) return '';
+  const text = String(value);
+  try {
+    // `atob` is available in jsdom, browsers and the app WebView.
+    return decodeURIComponent(Array.from(atob(text), (c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('')).trim();
+  } catch {
+    try {
+      return atob(text).trim();
+    } catch {
+      return text;
+    }
+  }
+}
+
+/** Map one Xtream `epg_listings` row into a normalised EPG program. */
+export function parseXtreamEpgRow(row: Record<string, unknown>): EpgProgram | null {
+  const rawStart = row.start_timestamp ?? row.start;
+  const rawStop = row.stop_timestamp ?? row.end;
+  const start = toEpochMs(rawStart as EpgTime);
+  const stop = toEpochMs(rawStop as EpgTime);
+  if (start === null || stop === null) return null;
+  return {
+    title: decodeEpgBase64(row.title),
+    description: decodeEpgBase64(row.description),
+    start,
+    stop,
+    epgChannelId: row.epg_channel_id,
+  };
 }

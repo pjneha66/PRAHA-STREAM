@@ -1,9 +1,11 @@
 // Multi-playlist / bulk source import with an explicit {added, skipped, failed}
 // result. Ported from VyseTV `iptv_controller.importFromJsonString` and
-// `M3uStore` (GPL-3.0-or-later), adapted to PRAHA's M3U model.
+// `M3uStore` (GPL-3.0-or-later), adapted to the PRAHA M3U model.
 //
-// The counting and parsing paths are pure and injectable; the default fetcher
-// routes every request through `nativeFetchText` (never bare `fetch`).
+// Counting and parsing are pure and injectable; the default fetcher routes
+// every request through nativeFetchText (never bare fetch).
+
+import { parseM3u } from './m3u';
 
 export interface ImportedChannel {
   name: string;
@@ -24,9 +26,7 @@ export interface ImportedPlaylist {
 
 export interface PlaylistInput {
   name?: string;
-  /** Remote M3U address. Ignored when `text` is supplied. */
   sourceUrl?: string;
-  /** Inline M3U body (paste-site import flows). */
   text?: string;
 }
 
@@ -49,46 +49,6 @@ export interface MultiPlaylistOptions {
 
 const DEFAULT_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 
-function attr(attributes: string, name: string): string {
-  const match = new RegExp(`(?:^|\\s)${name}="([^"]*)"`, 'i').exec(attributes);
-  return match ? match[1].trim() : '';
-}
-
-/** Small, synchronous M3U parser (same EXTINF/EXTGRP rules as PRAHA's worker). */
-export function parsePlaylistText(text: string): ImportedChannel[] {
-  if (!text || !text.trim()) return [];
-  const channels: ImportedChannel[] = [];
-  let pending: Partial<ImportedChannel> = {};
-  for (const raw of text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#EXTM3U')) continue;
-    if (line.startsWith('#EXTINF:')) {
-      const comma = line.indexOf(',');
-      const attributes = comma > 0 ? line.slice(8, comma) : line.slice(8);
-      const name = comma > 0 ? line.slice(comma + 1).trim() : '';
-      pending = {
-        name: name || attr(attributes, 'tvg-name') || 'Channel',
-        logo: attr(attributes, 'tvg-logo') || undefined,
-        // Some feeds emit #EXTGRP before #EXTINF; keep that group when the
-        // EXTINF line itself has no group-title attribute.
-        group: attr(attributes, 'group-title') || pending.group || undefined,
-        tvgId: attr(attributes, 'tvg-id') || undefined,
-        tvgName: attr(attributes, 'tvg-name') || undefined,
-      };
-      continue;
-    }
-    if (line.startsWith('#EXTGRP:')) {
-      pending.group = line.slice(8).trim();
-      continue;
-    }
-    if (line.startsWith('#')) continue;
-    if (!/^(https?:\/\/|[\w./-]+\.(m3u8|ts|mp4))/i.test(line)) continue;
-    channels.push({ name: pending.name || line, url: line, ...pending });
-    pending = {};
-  }
-  return channels;
-}
-
 function sourceKey(input: PlaylistInput): string {
   if (input.text) return `inline:${input.name || ''}`;
   return (input.sourceUrl || '').trim().replace(/\/+$/, '').toLowerCase();
@@ -104,8 +64,8 @@ function validUrl(url: string): boolean {
 }
 
 async function defaultFetcher(url: string): Promise<string> {
-  const { nativeFetchText } = await import('../androidBridge');
-  const response = await nativeFetchText(url, {
+  const { fetchText } = await import('./http');
+  const response = await fetchText(url, {
     headers: { 'User-Agent': DEFAULT_UA, Accept: 'application/vnd.apple.mpegurl, audio/mpegurl, text/plain, */*' },
     timeoutMs: 25000,
   });
@@ -113,15 +73,13 @@ async function defaultFetcher(url: string): Promise<string> {
   return response.data;
 }
 
-/**
- * Add several playlists in one pass. A source is skipped when its URL is
- * already stored or repeated in the batch; it is failed when it cannot be
- * fetched or yields no channels. Returned `playlists` contains only additions.
- */
-export async function importPlaylists(
-  inputs: readonly PlaylistInput[],
-  options: MultiPlaylistOptions = {},
-): Promise<MultiPlaylistResult> {
+/** Parse playlist text using the shared M3U parser. */
+export function parsePlaylistText(text: string): ImportedChannel[] {
+  return parseM3u(text);
+}
+
+/** Add several playlists: skip duplicates, fail unreadable/empty sources. */
+export async function importPlaylists(inputs: readonly PlaylistInput[], options: MultiPlaylistOptions = {}): Promise<MultiPlaylistResult> {
   const result: MultiPlaylistResult = { added: 0, skipped: 0, failed: 0, playlists: [], errors: [] };
   const seen = new Set<string>();
   for (const playlist of options.existing || []) {
@@ -129,7 +87,6 @@ export async function importPlaylists(
   }
   const now = options.now ?? Date.now();
   const fetchText = options.fetchText || defaultFetcher;
-
   for (let index = 0; index < (inputs || []).length; index += 1) {
     const input = inputs[index];
     if (!input) continue;
@@ -168,7 +125,6 @@ export async function importPlaylists(
   return result;
 }
 
-/** The compact shape the Live TV UI shows in its toast. */
 export function summarizeImport(result: MultiPlaylistResult): { added: number; skipped: number; failed: number } {
   return { added: result.added, skipped: result.skipped, failed: result.failed };
 }
@@ -190,11 +146,10 @@ export interface PortalImportResult {
   error?: string;
 }
 
-export function credentialKey(portal: Pick<PortalImportEntry, 'username' | 'password'>): string {
+export function portalImportCredentialKey(portal: Pick<PortalImportEntry, 'username' | 'password'>): string {
   return `${portal.username}|${portal.password}`.toLowerCase();
 }
 
-/** Accept either a flat JSON array or `{ "portals": [...] }`. */
 export function parsePortalImportJson(contents: string): { candidates: PortalImportEntry[]; error?: string } {
   let decoded: unknown;
   try {
@@ -223,14 +178,9 @@ export function parsePortalImportJson(contents: string): { candidates: PortalImp
 
 export type PortalVerifier = (portal: PortalImportEntry) => Promise<boolean>;
 
-/** Verify at most `concurrency` portals at a time, as VyseTV's importer does. */
 export async function importPortalsFromJson(
   contents: string,
-  options: {
-    existing?: readonly PortalImportEntry[];
-    verify?: PortalVerifier;
-    concurrency?: number;
-  } = {},
+  options: { existing?: readonly PortalImportEntry[]; verify?: PortalVerifier; concurrency?: number } = {},
 ): Promise<PortalImportResult> {
   const parsed = parsePortalImportJson(contents);
   if (parsed.error || !parsed.candidates.length) {
@@ -242,27 +192,20 @@ export async function importPortalsFromJson(
       error: parsed.error || 'No portal entries found.',
     };
   }
-  const seen = new Set((options.existing || []).map(credentialKey));
+  const seen = new Set((options.existing || []).map(portalImportCredentialKey));
   const queue: PortalImportEntry[] = [];
   for (const portal of parsed.candidates) {
-    const key = credentialKey(portal);
+    const key = portalImportCredentialKey(portal);
     if (seen.has(key)) continue;
     seen.add(key);
     queue.push(portal);
   }
   const skipped = parsed.candidates.length - queue.length;
   const result: PortalImportResult = { added: 0, skipped, failed: 0, portals: [] };
-
   const verify: PortalVerifier = options.verify || (async (portal) => {
-    const { IptvClient } = await import('../iptvService');
-    return Boolean(await IptvClient.verifyOrNull({
-      url: portal.url,
-      username: portal.username,
-      password: portal.password,
-      source: portal.source,
-    }));
+    const { IptvClient } = await import('./network');
+    return Boolean(await IptvClient.verifyOrNull(portal));
   });
-
   let cursor = 0;
   const worker = async () => {
     for (;;) {

@@ -1,26 +1,22 @@
-// Phase 6 Live TV helpers — side-effect-free modules awaiting UI wiring.
+// Public barrel for the VyseTV Live TV port.
 //
-// Integration map for a later phase (this barrel deliberately changes nothing
-// outside services/liveTv/):
-//   • components/LiveTvView.tsx — KEEP its virtualised channel list and its NSFW
-//     gating. Call buildXtreamGroupTree / buildM3uGroupTree for group chips,
-//     nowNext / epgProgress / guideTime for channel EPG rows, buildPreviewUrl +
-//     buildEpgPreviewUrl for portal previews, favoriteKey / toggleFavoriteKey for
-//     stars, importPlaylists for multi-playlist adds, mergeMatchSources for the
-//     matches tab, and loadLiveTvAppearance for card styling.
-//   • components/SettingsView.tsx (owned by another agent) — call
-//     updateLiveTvAppearance / resetLiveTvAppearance / toggleVisibleCategory for
-//     a Live TV appearance card.
-//   • services/iptvService.ts — leave PasteShDecryptor, the 84 hardcoded
-//     channels, its scrapers and isAdultChannel() exactly as they are; the
-//     paste helpers here only normalise URLs before delegating to it.
-//   • VyseTV's scroll-aware GuideLoader and MatchFinder EPG pump are not
-//     reimplemented: their pure logic (nowNext, groupHits, bestEpgMatch) is
-//     here; the request scheduling belongs to a later UI phase.
+// Every module here is a TypeScript translation of the matching Dart file
+// (GPL-3.0-or-later). The barrel is the single integration point used by
+// `services/iptvService.ts`, `components/LiveTvView.tsx` and the tests.
 
-export * from './appearance';
-export * from './epg';
-export * from './groupTree';
-export * from './matchFinder';
+export * from './models';
+export * from './http';
+export * from './settings';
+export * from './guide';
+export * from './groups';
+export * from './sports';
+export * from './m3u';
 export * from './multiPlaylist';
-export * from './portalBrowser';
+export * from './portal';
+export * from './pasteDecryptor';
+export * from './storage';
+export * from './hardcodedChannels';
+export * from './network';
+export * from './controller';
+export * from './playback';
+export * from './preferences';

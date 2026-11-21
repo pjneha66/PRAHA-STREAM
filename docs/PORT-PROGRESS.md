@@ -182,6 +182,18 @@ Audiobook port note: the earlier `AudiobookItem` helpers were renamed with a
 - Final QA: `tsc --noEmit` = 0 errors; 31 test files / 288 tests green in six
   batches (`tests/player-controls.test.tsx` excluded — pre-existing hang).
 
+### Post-release refinements — embed sources & navigation
+
+- `components/EmbedModal.tsx` now runs `scrapeFilmSources(filmQueryFromMedia(...))`
+  and renders a **VyseTV sources** panel (39 scrapers, Retry) above the embed-site
+  list. Each result has a Play button wired through a new optional `onPlay`
+  prop; `App.tsx` passes `playStream`, so direct scraper streams open in the
+  real player instead of an iframe. EmbedModal is now only a last resort for
+  *embed sites*.
+- Mobile navigation: **Comics** moved out of the 5 primary tabs and into the
+  **More** hub (`moreNavItems`), leaving Home / Live TV / Anime / Manga as the
+  primary tabs. Comics remains in the desktop sidebar (`mainNav`).
+
 ## Not done yet
 
 - Phase 14.5 — install on a device and run the full interactive smoke test

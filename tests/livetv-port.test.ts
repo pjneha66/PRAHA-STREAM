@@ -291,5 +291,7 @@ describe('portal browser helpers', () => {
     expect(isPasteShEncryptedUrl('https://paste.sh/abc#key')).toBe(true);
     expect(pasteRawUrl('https://pastebin.com/abc123')).toBe('https://pastebin.com/raw/abc123');
     expect(pasteRawUrl('https://pastes.dev/xyz')).toBe('https://api.pastes.dev/xyz');
+    expect(pasteRawUrl('https://paste.ee/p/AbCDe')).toBe('https://paste.ee/r/AbCDe');
+    expect(pasteRawUrl('https://pastee.dev/d/AbCDe')).toBe('https://pastee.dev/r/AbCDe');
   });
 });

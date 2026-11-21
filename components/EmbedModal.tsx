@@ -1,13 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { ExternalLink, Play, Trash2, X } from 'lucide-react';
-import type { MediaItem } from '../types';
+import { ExternalLink, LoaderCircle, Play, RefreshCw, Trash2, X } from 'lucide-react';
+import type { MediaItem, StreamResult } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openProtectedEmbed, openSafeExternalUrl } from '../services/androidBridge';
 import { EMBED_PRESETS, applyEmbedOverrides, buildEmbedUrl, validateEmbedTemplate, type EmbedProvider } from '../services/embedProviders';
 import { tmdbService } from '../services/tmdbService';
 import { DEFAULT_EMBED_UPDATE_URL, EMBED_UPDATE_INTERVAL, fetchEmbedUpdate, validateUpdateUrl, type TemplateOverrides } from '../services/embedUpdates';
+import { filmQueryFromMedia, scrapeFilmSources } from '../services/sourceOrchestrator';
 
-const EmbedModal: React.FC<{ media: MediaItem; initialSeason?: number; initialEpisode?: number; onClose: () => void }> = ({ media, initialSeason = 1, initialEpisode = 1, onClose }) => {
+interface EmbedModalProps {
+  media: MediaItem;
+  initialSeason?: number;
+  initialEpisode?: number;
+  onClose: () => void;
+  /** Hands a VyseTV scraper result to the real player instead of an iframe. */
+  onPlay?: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
+}
+
+const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, onClose, onPlay }) => {
   const [custom, setCustom] = usePersistentState<EmbedProvider[]>('praha.v2.embed-providers', []);
   const [overrides, setOverrides] = usePersistentState<Record<string, { movie: string; series: string }>>('praha.v2.embed-overrides', {});
   const [updateConfig, setUpdateConfig] = usePersistentState<{ enabled: boolean; url: string }>('praha.v2.embed-update-config', { enabled: true, url: DEFAULT_EMBED_UPDATE_URL });
@@ -29,6 +39,31 @@ const EmbedModal: React.FC<{ media: MediaItem; initialSeason?: number; initialEp
   const [movie, setMovie] = useState('');
   const [series, setSeries] = useState('');
   const [query, setQuery] = useState('');
+
+  // VyseTV's 39 scrapers are the preferred sources. Show their results here
+  // too, so this screen is a last resort for *embed sites* only — direct
+  // streams found by the scrapers can be played straight from this list.
+  const [vyseStreams, setVyseStreams] = useState<StreamResult[]>([]);
+  const [vyseLoading, setVyseLoading] = useState(false);
+  const [vyseFailures, setVyseFailures] = useState(0);
+  const [vyseKey, setVyseKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setVyseLoading(true);
+    setVyseStreams([]);
+    setVyseFailures(0);
+    const filmQuery = filmQueryFromMedia(media, media.type === 'series' ? season : undefined, media.type === 'series' ? episode : undefined);
+    scrapeFilmSources(filmQuery)
+      .then((result) => {
+        if (!active) return;
+        setVyseStreams(result.streams);
+        setVyseFailures(result.failures.length);
+      })
+      .catch(() => { if (active) setVyseFailures(1); })
+      .finally(() => { if (active) setVyseLoading(false); });
+    return () => { active = false; };
+  }, [media, season, episode, vyseKey]);
 
   useEffect(() => { setFeedDraft(updateConfig.url || ''); }, [updateConfig.url]);
   useEffect(() => {
@@ -142,6 +177,36 @@ const EmbedModal: React.FC<{ media: MediaItem; initialSeason?: number; initialEp
       {frame ? <div className="embed-frame-wrap"><div className="embed-frame-toolbar"><strong>{frame.name}</strong><button className="button button-secondary button-small" onClick={() => setFrame(null)}>Choose another</button><button className="button button-secondary button-small" onClick={() => { if (!openSafeExternalUrl(frame.url)) setError('Could not open the browser.'); }}>Open in browser <ExternalLink size={14} /></button></div>
         <iframe src={frame.url} title={`${frame.name} player`} sandbox="allow-scripts allow-forms allow-presentation" referrerPolicy="no-referrer" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />
         <p>Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p></div> : <>
+        <section className="vyse-sources" aria-label="VyseTV scraper sources">
+          <div className="vyse-sources-head">
+            <div>
+              <span className="page-kicker">PREFERRED · 39 SCRAPERS</span>
+              <h3>VyseTV sources · {media.title}</h3>
+              <p>Direct streams found by the VyseTV scrapers. Play these here before falling back to the embed sites below.</p>
+            </div>
+            <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Retry VyseTV sources">
+              <RefreshCw size={14} className={vyseLoading ? 'spin' : undefined} /> Retry
+            </button>
+          </div>
+          {vyseLoading && <p className="vyse-sources-status"><LoaderCircle size={15} className="spin" /> Searching 39 sources…</p>}
+          {!vyseLoading && !vyseStreams.length && <p className="vyse-sources-status">No direct streams found{vyseFailures ? ` · ${vyseFailures} sources failed` : ''}. You can still try the embed sites below.</p>}
+          {Boolean(vyseStreams.length) && (
+            <div className="vyse-source-list">
+              {vyseStreams.slice(0, 40).map((stream, index) => (
+                <div className="vyse-source-row" key={`${stream.sourceName}-${stream.url}-${index}`}>
+                  <div>
+                    <strong>{stream.title}</strong>
+                    <small>{stream.sourceName}{stream.quality ? ` · ${stream.quality}` : ''}{stream.language ? ` · ${stream.language}` : ''}</small>
+                  </div>
+                  <button type="button" className="button button-primary button-small" onClick={() => {
+                    if (!onPlay) { setError('Playback is not available from this screen. Close it and use the source list instead.'); return; }
+                    onPlay(stream, media.type === 'series' ? season : undefined, media.type === 'series' ? episode : undefined, undefined, vyseStreams.slice(index + 1));
+                  }}><Play size={14} /> Play</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
         <p className="embed-warning">These websites may show ads or track visits. The protected Android player blocks known ad/tracker hosts and pop-ups, but is not uBlock Origin and cannot block every ad. Browser mode is unfiltered. On the web the sandbox blocks pop-ups but does not filter network ads. Availability, legality, and compatibility are not verified. Only use sites and content you are authorized to access. {isAndroidApp() ? 'Protected player runs separately from the app bridge. Some sites may not play.' : 'In-app embeds are restricted and may not work; you can open them in your browser instead.'}</p>
         {media.type === 'series' && <div className="embed-episode"><label>Season <input type="number" min="1" value={season} onChange={(e) => setSeason(Number(e.target.value))} /></label><label>Episode <input type="number" min="1" value={episode} onChange={(e) => setEpisode(Number(e.target.value))} /></label></div>}
         <div className="embed-search"><label>Search players <input type="search" placeholder="Provider name" value={query} onChange={(e) => setQuery(e.target.value)} /></label></div>
