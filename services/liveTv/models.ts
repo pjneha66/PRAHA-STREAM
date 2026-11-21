@@ -38,12 +38,19 @@ export interface IptvStream {
   epgChannelId?: string;
 }
 
-/** One EPG row. Timestamps keep the provider's original shape. */
+/**
+ * One EPG row. Timestamps keep the provider's original shape.
+ *
+ * The index signature is what lets a provider row be handed straight to the
+ * guide helpers, whose `EpgProgram` carries one so callers can keep whatever
+ * extra columns the provider sent.
+ */
 export interface EpgEntry {
   title: string;
   description: string;
   start: number | string;
   stop: number | string;
+  [key: string]: unknown;
 }
 
 export interface IptvEpisode {

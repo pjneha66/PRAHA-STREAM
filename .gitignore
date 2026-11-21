@@ -35,6 +35,8 @@ dist-ssr
 
 # Local agent workspace data (memory, caches) — not project source
 .workbuddy-ai/
+.mimosa/
+.v2c/
 
 # Android
 dist-apk/
@@ -42,6 +44,8 @@ android/local.properties
 android/.gradle/
 android/build/
 android/app/build/
+android/.kotlin/
+android/.mimosa/
 android/capacitor-cordova-android-plugins/build/
 android/app/release.keystore
 

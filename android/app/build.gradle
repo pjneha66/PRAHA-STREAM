@@ -16,8 +16,8 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 40
-        versionName "2.11.15"
+        versionCode 41
+        versionName "2.11.16"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -235,10 +235,26 @@ tasks.register('copyApkToDist') {
     }
 }
 
-/** Works out which APK this is from its path: `.../arm64-v8a/app-release.apk` etc. */
+/**
+ * Works out which APK this is.
+ *
+ * AGP used to put each ABI split in its own directory (`.../arm64-v8a/app-release.apk`),
+ * so the parent folder named it. Current AGP writes every split into one folder with
+ * the ABI in the *filename* (`.../debug/app-arm64-v8a-debug.apk`) and the universal
+ * build as `app-universal-debug.apk`. Reading only the parent therefore labelled all
+ * four as "universal" and they overwrote each other in dist-apk — the 52 MB arm64
+ * APK silently replaced the 138 MB universal one. Check the filename first, then
+ * fall back to the directory for older layouts.
+ */
 def apkSuffix(File apk) {
+    def abis = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86']
+    def name = apk.name
+    for (abi in abis) {
+        if (name.contains(abi)) return abi
+    }
+    if (name.contains('universal')) return 'universal'
     def parent = apk.parentFile?.name ?: ''
-    if (parent in ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86']) return parent
+    if (parent in abis) return parent
     return 'universal'
 }
 

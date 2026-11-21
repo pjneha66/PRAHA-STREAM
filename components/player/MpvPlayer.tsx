@@ -98,12 +98,21 @@ interface MpvPlayerProps {
   onFindSources?: () => void;
 }
 
+// Shared empty defaults. A `= []` default in the destructuring below allocates
+// a fresh array on every render, which is harmless for `introSegments` but not
+// for `externalSubtitles`: it feeds the `rawSubtitles` memo, which feeds the
+// subtitle-conversion effect, which calls `setPreparedSubtitles(...)`. A new
+// identity each render keeps that chain dirty and re-renders forever — the
+// player never paints. Hoisting the constants keeps identity stable.
+const NO_SUBTITLES: StreamSubtitle[] = [];
+const NO_INTRO_SEGMENTS: IntroSegment[] = [];
+
 const MpvPlayer: React.FC<MpvPlayerProps> = ({
   stream,
   effectiveUrl,
   forceWebEngine = false,
-  externalSubtitles = [],
-  introSegments = [],
+  externalSubtitles = NO_SUBTITLES,
+  introSegments = NO_INTRO_SEGMENTS,
   initialTime = 0,
   media,
   season,

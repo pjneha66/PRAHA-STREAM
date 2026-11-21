@@ -22,6 +22,17 @@ function seedPlaylist() {
   }]));
 }
 
+/**
+ * Live TV lands on Matches when nothing is starred (VyseTV's rule), so a test
+ * that wants the channel list has to pick that tab first.
+ */
+function openChannelsTab(container: HTMLElement) {
+  const tabs = [...container.querySelectorAll('.ltv-tab')] as HTMLButtonElement[];
+  const channels = tabs.find((tab) => (tab.textContent || '').trim().startsWith('Channels'));
+  if (!channels) throw new Error('Channels tab not found');
+  channels.click();
+}
+
 describe('Live TV port UI', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -34,9 +45,18 @@ describe('Live TV port UI', () => {
     cleanup();
   });
 
+  it('lands on Matches when nothing is starred, like VyseTV', async () => {
+    const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
+    await waitFor(() => expect(container.textContent).toContain('Fixtures from ESPN'));
+    const active = container.querySelector('.ltv-tab.active');
+    expect((active?.textContent || '').trim()).toBe('Matches');
+  });
+
   it('mounts only a small window of rows for a 5,000-channel playlist', async () => {
     const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
     await waitFor(() => expect(container.textContent).toContain('5,000 channels'));
+    openChannelsTab(container);
+    await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
     const mounted = container.querySelectorAll('.ltv-channel').length;
     expect(mounted).toBeGreaterThan(0);
     expect(mounted).toBeLessThan(40);
@@ -46,6 +66,7 @@ describe('Live TV port UI', () => {
   it('exposes five mobile tabs and a channel action sheet', async () => {
     const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
     expect(container.querySelectorAll('.ltv-tab').length).toBe(5);
+    openChannelsTab(container);
     await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
     const more = container.querySelector('.ltv-actions button:last-child') as HTMLButtonElement;
     expect(more).not.toBeNull();
@@ -59,6 +80,7 @@ describe('Live TV port UI', () => {
   it('plays a channel through the unchanged onPlayStream contract', async () => {
     const onPlay = vi.fn();
     const { container } = render(<LiveTvView onPlayStream={onPlay} />);
+    openChannelsTab(container);
     await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
     const play = container.querySelector('.ltv-card-main') as HTMLButtonElement;
     play.click();
