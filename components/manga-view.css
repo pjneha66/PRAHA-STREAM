@@ -1,0 +1,241 @@
+/* Manga tab — WeebCentral catalogue shell. Uses the existing comic-grid token
+   so cards look native on both phone and TV. */
+
+.manga-page {
+  padding: 18px 20px 48px;
+}
+
+.manga-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.manga-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.manga-heading h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.manga-heading p {
+  margin: 2px 0 0;
+  color: var(--text-muted, #8b949e);
+  font-size: 12.5px;
+}
+
+.manga-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 680px;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 12px;
+  background: var(--surface, #161b22);
+}
+
+.manga-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+
+.manga-results-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 22px 0 12px;
+}
+
+.manga-results-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.manga-results-heading span {
+  color: var(--text-muted, #8b949e);
+  font-size: 12px;
+}
+
+.manga-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0;
+  color: var(--text-muted, #8b949e);
+}
+
+.manga-empty {
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.manga-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.manga-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-cover {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #21262d;
+}
+
+.manga-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.manga-cover > span {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #8b949e;
+}
+
+.manga-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.manga-card-meta strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manga-card-meta span {
+  color: var(--text-muted, #8b949e);
+  font-size: 11.5px;
+}
+
+.manga-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.manga-detail {
+  position: relative;
+  width: min(720px, 94vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  margin: auto;
+  padding: 22px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 16px;
+  background: var(--surface, #161b22);
+}
+
+.manga-detail-top {
+  display: flex;
+  gap: 18px;
+  padding-right: 28px;
+}
+
+.manga-detail-top img {
+  width: 150px;
+  height: 220px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.manga-detail-top h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.manga-detail-top p {
+  margin: 0 0 8px;
+  color: var(--text-muted, #8b949e);
+  font-size: 12.5px;
+}
+
+.manga-synopsis {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-height: 1.55;
+}
+
+.manga-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.manga-tags span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #21262d;
+  font-size: 11px;
+}
+
+.manga-detail h3 {
+  margin: 22px 0 10px;
+  font-size: 16px;
+}
+
+.manga-chapters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.manga-chapter {
+  padding: 10px 12px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  background: #21262d;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.manga-chapter:hover {
+  border-color: #f5c518;
+}
+
+@media (max-width: 640px) {
+  .manga-detail-top {
+    flex-direction: column;
+  }
+
+  .manga-detail-top img {
+    width: 110px;
+    height: 160px;
+  }
+}

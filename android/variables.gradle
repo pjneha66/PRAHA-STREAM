@@ -1,5 +1,9 @@
 ext {
-    minSdkVersion = 24
+    // mpv (libmpv AAR) wants API 25 or newer. Note: this host is aarch64 and
+    // Google's NDK only ships an x86_64 host toolchain, so nothing here may use
+    // externalNativeBuild — every native library comes prebuilt. See
+    // docs/NATIVE-BUILD-CONSTRAINTS.md.
+    minSdkVersion = 25
     compileSdkVersion = 36
     targetSdkVersion = 36
     androidxActivityVersion = '1.11.0'
@@ -13,4 +17,15 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+
+    // Native toolchain: Kotlin only. No CMake/NDK — see NATIVE-BUILD-CONSTRAINTS.md.
+    kotlinVersion = '2.4.0'
+    coroutinesVersion = '1.10.2'
+
+    // Playback engines (all prebuilt artifacts).
+    media3Version = '1.11.0'
+    cronetVersion = '143.7445.0'
+    mpvVersion = 'd633bbc71269'
+    mpvAarSha256 = '4bf8a9720bfdec00cb854fc73095ee3d322afc3caaa66d6322ad1dd4abc69df7'
+    mpvAarUrl = 'https://github.com/edde746/mpv-build/releases/download/binaries-f78e66727714'
 }

@@ -1,3 +1,20 @@
+/**
+ * Audiobook service.
+ *
+ * Two layers live in this module:
+ *
+ *  1. The original "classic" aggregator (`searchAllAudiobooks`,
+ *     `getAudiobookChapters`, `CURATED_FEATURED_AUDIOBOOKS`) — unchanged, and
+ *     still the default path in `components/AudiobooksView.tsx`.
+ *  2. A faithful port of VyseTV's `AudiobookScraperService`
+ *     (`searchAudiobooks`, `getChapters`, `Audiobook`) covering the 8 live
+ *     scrapers with the exact URL patterns, per-source chapter extraction and
+ *     `RelevanceScorer` ordering from the Dart original.
+ *
+ * Shared-file note: no change to `types.ts`, `App.tsx` or `data/defaults.ts`
+ * is required by this port. `AudiobookChapter` gained one optional field
+ * (`httpHeaders`) in this file only, so existing callers are unaffected.
+ */
 import { nativeFetchText } from './androidBridge';
 
 export interface AudiobookItem {
@@ -17,6 +34,13 @@ export interface AudiobookChapter {
   url: string;
   headers?: Record<string, string>;
   duration?: number;
+  /**
+   * Per-chapter playback headers produced by the ported VyseTV scraper
+   * (`Referer` + desktop Chrome `User-Agent`). Kept separate from `headers`
+   * so existing callers keep their current shape; the audiobook view maps
+   * `httpHeaders` → `headers` when it hands a chapter to the player.
+   */
+  httpHeaders?: Record<string, string>;
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -201,7 +225,7 @@ async function searchAudiobookBay(query: string): Promise<AudiobookItem[]> {
 
 // ── 2. BookAudiobooks ───────────────────────────────────────────────────────
 
-async function searchBookAudio(query: string): Promise<AudiobookItem[]> {
+async function searchBookAudioLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://bookaudiobooks.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'bookaudiobooks', 'BookAudio', 'book');
@@ -212,7 +236,7 @@ async function searchBookAudio(query: string): Promise<AudiobookItem[]> {
 
 // ── 3. GoldenAudiobooks ─────────────────────────────────────────────────────
 
-async function searchGolden(query: string): Promise<AudiobookItem[]> {
+async function searchGoldenLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://goldenaudiobooks.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'goldenaudiobooks', 'Golden Audiobooks', 'golden');
@@ -223,7 +247,7 @@ async function searchGolden(query: string): Promise<AudiobookItem[]> {
 
 // ── 4. FullLengthAudiobooks ─────────────────────────────────────────────────
 
-async function searchFullLength(query: string): Promise<AudiobookItem[]> {
+async function searchFullLengthLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://fulllengthaudiobooks.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'fulllengthaudiobooks', 'Full Length Audiobooks', 'full');
@@ -234,7 +258,7 @@ async function searchFullLength(query: string): Promise<AudiobookItem[]> {
 
 // ── 5. HotAudiobooks ────────────────────────────────────────────────────────
 
-async function searchHot(query: string): Promise<AudiobookItem[]> {
+async function searchHotLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://hotaudiobooks.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'hotaudiobooks', 'Hot Audiobooks', 'hot');
@@ -245,7 +269,7 @@ async function searchHot(query: string): Promise<AudiobookItem[]> {
 
 // ── 6. Audiozaic ────────────────────────────────────────────────────────────
 
-async function searchAudiozaic(query: string): Promise<AudiobookItem[]> {
+async function searchAudiozaicLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://audiozaic.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'audiozaic', 'Audiozaic', 'zaic');
@@ -256,7 +280,7 @@ async function searchAudiozaic(query: string): Promise<AudiobookItem[]> {
 
 // ── 7. AudioAZ ──────────────────────────────────────────────────────────────
 
-async function searchAudioAZ(query: string): Promise<AudiobookItem[]> {
+async function searchAudioAZLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://audioaz.com/en/search?q=${encodeURIComponent(query)}`);
     const regex = /href="(\/en\/(?:audiobook|archive)\/[^"]+)"[^>]*title="([^"]+)"/gi;
@@ -280,7 +304,7 @@ async function searchAudioAZ(query: string): Promise<AudiobookItem[]> {
 
 // ── 8. Audiobooks4Soul ──────────────────────────────────────────────────────
 
-async function searchAudiobooks4Soul(query: string): Promise<AudiobookItem[]> {
+async function searchAudiobooks4SoulLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const html = await fetchHtml(`https://audiobooks4soul.com/?s=${encodeURIComponent(query)}`);
     return parseWpResults(html, 'audiobooks4soul', 'Audiobooks4Soul', 'soul');
@@ -291,7 +315,7 @@ async function searchAudiobooks4Soul(query: string): Promise<AudiobookItem[]> {
 
 // ── 9. Audionest ────────────────────────────────────────────────────────────
 
-async function searchAudionest(query: string): Promise<AudiobookItem[]> {
+async function searchAudionestLegacy(query: string): Promise<AudiobookItem[]> {
   try {
     const res = await nativeFetchText('https://search.audionestapp.com/indexes/trackfiles/search', {
       method: 'POST',
@@ -384,14 +408,14 @@ export async function searchAllAudiobooks(query: string): Promise<AudiobookItem[
 
   const scrapers = [
     searchAudiobookBay(trimmed),
-    searchGolden(trimmed),
-    searchBookAudio(trimmed),
-    searchFullLength(trimmed),
-    searchHot(trimmed),
-    searchAudiozaic(trimmed),
-    searchAudioAZ(trimmed),
-    searchAudiobooks4Soul(trimmed),
-    searchAudionest(trimmed),
+    searchGoldenLegacy(trimmed),
+    searchBookAudioLegacy(trimmed),
+    searchFullLengthLegacy(trimmed),
+    searchHotLegacy(trimmed),
+    searchAudiozaicLegacy(trimmed),
+    searchAudioAZLegacy(trimmed),
+    searchAudiobooks4SoulLegacy(trimmed),
+    searchAudionestLegacy(trimmed),
     searchArchiveAudiobooks(trimmed),
   ];
 
@@ -598,5 +622,621 @@ export async function getAudiobookChapters(book: AudiobookItem): Promise<Audiobo
     // Return empty on failure
   }
   return [];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// VyseTV port — `AudiobookScraperService`
+//
+// Faithful TypeScript port of lib/services/audiobook/audiobook_scraper_service.dart
+// (8 live sources) plus lib/utils/search/relevance_scorer.dart. The classic
+// aggregator above is untouched; everything below is additive.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** A book row as returned by the VyseTV scrapers (models/audiobook/audiobook_model.dart). */
+export interface Audiobook {
+  uuid: string;
+  audioBookId: string;
+  dynamicSlugId: string;
+  title: string;
+  author?: string;
+  coverImage: string;
+  source: string;
+  pageUrl: string;
+}
+
+export type AudiobookSourceId =
+  | 'bookaudiobooks'
+  | 'goldenaudiobooks'
+  | 'fulllengthaudiobooks'
+  | 'hotaudiobooks'
+  | 'audiozaic'
+  | 'audioaz'
+  | 'audiobooks4soul'
+  | 'audionest';
+
+/** Human labels for the 8 ported sources. */
+export const AUDIOBOOK_SOURCE_NAMES: Record<AudiobookSourceId, string> = {
+  bookaudiobooks: 'BookAudio',
+  goldenaudiobooks: 'Golden Audiobooks',
+  fulllengthaudiobooks: 'Full Length Audiobooks',
+  hotaudiobooks: 'Hot Audiobooks',
+  audiozaic: 'Audiozaic',
+  audioaz: 'AudioAZ',
+  audiobooks4soul: 'Audiobooks4Soul',
+  audionest: 'Audionest',
+};
+
+/** Per-source search timeout (the Dart original uses 5s). */
+export const AUDIOBOOK_SEARCH_TIMEOUT_MS = 5000;
+
+const DESKTOP_CHROME_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+/** Shorter UA the Dart original attaches to chapter playback headers. */
+const CHAPTER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+
+const AUDIONEST_SEARCH_URL = 'https://search.audionestapp.com/indexes/trackfiles/search';
+const AUDIONEST_SEARCH_KEY = 'MWJiNWM0MjA2N2ZkM2RiMDNhNWFmNGNk';
+const AUDIONEST_FIRESTORE_URL =
+  'https://firestore.googleapis.com/v1/projects/learningfirebase-ae02f/databases/(default)/documents:runQuery';
+const AUDIONEST_API_KEY = 'AIzaSyAG-z_yl0_55NEYTEKGoVJyixtHG-FhnfA';
+
+/** Builds the `Referer: https://{host}/` every source request needs. */
+function refererFor(url: string): string {
+  try {
+    return `https://${new URL(url).host}/`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Races `task` against a timer, resolving with `fallback` on timeout or
+ * rejection. The timer is always cleared, so no handle is left behind.
+ */
+function withTimeout<T>(task: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+    const finish = (value: T): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    task.then(finish, () => finish(fallback));
+  });
+}
+
+/** GETs a page through the native bridge with the desktop UA + host Referer. */
+async function fetchSourceHtml(url: string, timeoutMs = AUDIOBOOK_SEARCH_TIMEOUT_MS): Promise<string> {
+  const res = await nativeFetchText(url, {
+    headers: { 'User-Agent': DESKTOP_CHROME_UA, Referer: refererFor(url) },
+    timeoutMs,
+  });
+  return res.data || '';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    return asRecord(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonArray(raw: string): unknown[] | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Port of `_extractWpAudio`: every `<source ... src="...">` in a book page. */
+function extractWpSourceUrls(html: string): string[] {
+  const urls: string[] = [];
+  const regex = /<source[^>]*src="([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html)) !== null) {
+    if (match[1] && !urls.includes(match[1])) urls.push(match[1]);
+  }
+  return urls;
+}
+
+/** Port of `_cleanAudiobookTitle`. */
+function cleanAudiobookTitle(rawTitle: string): string {
+  let title = rawTitle
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8216;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
+  title = title.replace(/\[\s*(?:Listen|Download|Audiobook|Stream|MP3|Free)\s*\]/gi, '');
+
+  const quoteMatch = title.match(/["“”]([^"“”]+)["“”]/);
+  if (quoteMatch && quoteMatch[1].trim()) {
+    title = quoteMatch[1];
+  }
+
+  const cleaned = title
+    .replace(/["“”„‘’]/g, '')
+    .replace(/\s*Audiobook\s*/gi, ' ')
+    .replace(/[,:\-–—\s]+$/, '')
+    .replace(/^[,:\-–—\s]+/, '')
+    .trim();
+
+  return cleaned || rawTitle.trim();
+}
+
+/** Port of `_parseWordPressResults` (block → `h2/h3 > a` → cover image). */
+function parseWordPressResults(html: string, source: string, prefix: string): Audiobook[] {
+  const books: Audiobook[] = [];
+  if (!html) return books;
+
+  const blockExp =
+    /(?:<article[^>]*>|<div[^>]*class="[^"]*post[^"]*"[^>]*>|<li[^>]*class="[^"]*post[^"]*"[^>]*>)([\s\S]*?)(?:<\/article>|div<!-- end .post -->|<\/div>\s*<\/article>|<\/li>)/gi;
+  const blocks: string[] = [];
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = blockExp.exec(html)) !== null) {
+    blocks.push(blockMatch[1] ?? '');
+  }
+  const candidates = blocks.length > 0 ? blocks : [html];
+
+  for (const block of candidates) {
+    const titleMatch = block.match(/<h[23][^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/i);
+    if (!titleMatch) continue;
+
+    const url = titleMatch[1];
+    const title = cleanAudiobookTitle(titleMatch[2]);
+    if (!url || !title) continue;
+
+    let coverImage = '';
+    const imgMatch = block.match(/<img[^>]+>/i);
+    if (imgMatch) {
+      const imgTag = imgMatch[0];
+      for (const attr of ['data-lazy-src', 'data-src', 'src']) {
+        const attrMatch = imgTag.match(new RegExp(`${attr}="([^"]+)"`, 'i'));
+        if (!attrMatch) continue;
+        const value = attrMatch[1];
+        if (
+          !value.startsWith('data:image') &&
+          !value.includes('histats.com') &&
+          !value.includes('yandex.ru')
+        ) {
+          coverImage = value;
+          break;
+        }
+      }
+    }
+
+    books.push({
+      uuid: `${prefix}_${url}`,
+      audioBookId: url,
+      dynamicSlugId: url,
+      title,
+      coverImage: coverImage.trim(),
+      source,
+      pageUrl: url,
+    });
+  }
+  return books;
+}
+
+// ── Per-source searches ─────────────────────────────────────────────────────
+
+async function searchBookAudio(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://bookaudiobooks.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'bookaudiobooks', 'book');
+}
+
+async function searchGolden(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://goldenaudiobooks.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'goldenaudiobooks', 'golden');
+}
+
+async function searchFullLength(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://fulllengthaudiobooks.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'fulllengthaudiobooks', 'full');
+}
+
+async function searchHot(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://hotaudiobooks.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'hotaudiobooks', 'hot');
+}
+
+async function searchAudiozaic(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://audiozaic.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'audiozaic', 'zaic');
+}
+
+async function searchAudioAZ(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://audioaz.com/en/search?q=${encodeURIComponent(query)}`);
+  const books: Audiobook[] = [];
+  const regex = /href="(\/en\/(?:audiobook|archive)\/[^"]+)"[^>]*title="([^"]+)"/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html)) !== null) {
+    const path = match[1];
+    const pageUrl = `https://audioaz.com${path}`;
+    books.push({
+      uuid: `az_${path}`,
+      audioBookId: pageUrl,
+      dynamicSlugId: pageUrl,
+      title: cleanAudiobookTitle(match[2]).trim(),
+      coverImage: '',
+      source: 'audioaz',
+      pageUrl,
+    });
+  }
+  return books;
+}
+
+async function searchAudiobooks4Soul(query: string): Promise<Audiobook[]> {
+  const html = await fetchSourceHtml(`https://audiobooks4soul.com/?s=${encodeURIComponent(query)}`);
+  return parseWordPressResults(html, 'audiobooks4soul', 'soul');
+}
+
+async function searchAudionest(query: string): Promise<Audiobook[]> {
+  const res = await nativeFetchText(AUDIONEST_SEARCH_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${AUDIONEST_SEARCH_KEY}`,
+      'Content-Type': 'application/json',
+      'User-Agent': DESKTOP_CHROME_UA,
+      Referer: 'https://search.audionestapp.com/',
+    },
+    body: JSON.stringify({ q: query, limit: 30 }),
+    timeoutMs: AUDIOBOOK_SEARCH_TIMEOUT_MS,
+  });
+  if (!res.ok) return [];
+
+  const data = parseJsonObject(res.data);
+  if (!data) return [];
+
+  const books: Audiobook[] = [];
+  for (const rawHit of asArray(data.hits)) {
+    const hit = asRecord(rawHit);
+    if (!hit) continue;
+    const id = hit.id === undefined || hit.id === null ? '' : String(hit.id);
+    if (!id) continue;
+    const cover = asString(hit.thumbnailUrl) || asString(hit.img_prefix);
+    books.push({
+      uuid: `nest_${id}`,
+      audioBookId: id,
+      dynamicSlugId: id,
+      title: asString(hit.title),
+      coverImage: cover.trim(),
+      source: 'audionest',
+      pageUrl: id,
+    });
+  }
+  return books;
+}
+
+// ── Relevance (port of RelevanceScorer) ─────────────────────────────────────
+
+function normalizeForScore(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripArticles(value: string): string {
+  return value.replace(/^(?:the|a|an)\s+/i, '').trim();
+}
+
+/**
+ * Port of VyseTV's `RelevanceScorer.score`. Higher is better; an exact title
+ * match (with or without a leading article) scores 10000.
+ */
+export function audiobookRelevanceScore(title: string, query: string): number {
+  const cleanTitle = normalizeForScore(title);
+  const cleanQuery = normalizeForScore(query);
+  if (!cleanTitle || !cleanQuery) return 0;
+
+  const strippedTitle = stripArticles(cleanTitle);
+  const strippedQuery = stripArticles(cleanQuery);
+
+  if (cleanTitle === cleanQuery || strippedTitle === strippedQuery) return 10000;
+
+  let total = 0;
+
+  if (cleanTitle.includes(cleanQuery) || strippedTitle.includes(strippedQuery)) total += 5000;
+  if (cleanTitle.startsWith(cleanQuery) || strippedTitle.startsWith(strippedQuery)) total += 3000;
+
+  const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
+  const titleTokens = new Set(cleanTitle.split(/\s+/).filter(Boolean));
+
+  if (queryTokens.length > 0) {
+    let matched = 0;
+    for (const qToken of queryTokens) {
+      if (titleTokens.has(qToken)) {
+        matched += 1;
+        continue;
+      }
+      const partial = Array.from(titleTokens).some((t) => t.includes(qToken) || qToken.includes(t));
+      if (partial) matched += 1;
+    }
+    const ratio = matched / queryTokens.length;
+    if (queryTokens.length > 1 && ratio < 1) {
+      // Multi-word query that misses a term is capped hard, exactly as in Dart.
+      total = (total + ratio * 200) * 0.1;
+    } else {
+      total += ratio * 1000;
+      if (ratio === 1) total += 2000;
+    }
+  }
+
+  return total;
+}
+
+const SEARCH_SCRAPERS: ReadonlyArray<(query: string) => Promise<Audiobook[]>> = [
+  searchBookAudio,
+  searchGolden,
+  searchFullLength,
+  searchHot,
+  searchAudiozaic,
+  searchAudioAZ,
+  searchAudiobooks4Soul,
+  searchAudionest,
+];
+
+/**
+ * Searches all 8 ported sources in parallel (bounded: exactly one request per
+ * source, `Promise.allSettled`, 5s timeout each) and returns the merged list
+ * ordered by relevance to `query`.
+ */
+export async function searchAudiobooks(query: string): Promise<Audiobook[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const settled = await Promise.allSettled(
+    SEARCH_SCRAPERS.map((scraper) =>
+      withTimeout(scraper(trimmed), AUDIOBOOK_SEARCH_TIMEOUT_MS, [] as Audiobook[]),
+    ),
+  );
+
+  const all: Audiobook[] = [];
+  for (const result of settled) {
+    if (result.status === 'fulfilled') all.push(...result.value);
+  }
+
+  return all
+    .map((book, index) => ({ book, index, score: audiobookRelevanceScore(book.title, trimmed) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((entry) => entry.book);
+}
+
+// ── Chapter extraction ──────────────────────────────────────────────────────
+
+function buildChapters(prefix: string, urls: string[], referer: string, titles?: string[]): AudiobookChapter[] {
+  return urls.map((url, index) => ({
+    id: `${prefix}-ch-${index + 1}`,
+    title: titles?.[index] ?? `Chapter ${index + 1}`,
+    url,
+    httpHeaders: { Referer: referer, 'User-Agent': CHAPTER_UA },
+  }));
+}
+
+/** WordPress sources: chapters are the `<source src>` tags on the book page. */
+async function getStandardWpChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  const html = await fetchSourceHtml(book.pageUrl);
+  const streams = extractWpSourceUrls(html);
+  return buildChapters(book.source, streams, refererFor(book.pageUrl));
+}
+
+async function getAudiozaicChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  const html = await fetchSourceHtml(book.pageUrl);
+  const match = html.match(/window\.open\('([^']+)'/);
+  if (!match) return [];
+
+  let listenUrl = match[1];
+  if (listenUrl.startsWith('/')) listenUrl = `https://audiozaic.com${listenUrl}`;
+
+  const audioPage = await fetchSourceHtml(listenUrl);
+  const streams = extractWpSourceUrls(audioPage);
+  return buildChapters('audiozaic', streams, 'https://audiozaic.com/');
+}
+
+async function getAudioAZChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  const html = await fetchSourceHtml(book.pageUrl);
+  const streams = extractWpSourceUrls(html);
+  const titles = streams.map((_url, index) => (streams.length === 1 ? 'Full Audiobook' : `Part ${index + 1}`));
+  return buildChapters('audioaz', streams, 'https://audioaz.com/', titles);
+}
+
+async function getAudiobooks4SoulChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  const html = await fetchSourceHtml(book.pageUrl);
+  const playlistMatch = html.match(/<div[^>]*class="[^"]*simp-playlist[^"]*"[\s\S]*?<\/div>/i);
+  if (!playlistMatch) return [];
+
+  const blobs: string[] = [];
+  const dataSrcExp = /data-src=(?:'|")([^'"]+)(?:'|")/g;
+  let match: RegExpExecArray | null;
+  while ((match = dataSrcExp.exec(playlistMatch[0])) !== null) {
+    blobs.push(match[1]);
+  }
+
+  const chapters: AudiobookChapter[] = [];
+  let chapterNum = 1;
+  for (const blob of blobs) {
+    try {
+      const decryptUrl =
+        'https://audiobooks4soul.com/wp-content/plugins/custom-story-audio/inc/security/decrypt.php' +
+        `?encrypted=${encodeURIComponent(blob)}`;
+      const res = await nativeFetchText(decryptUrl, {
+        headers: { 'User-Agent': DESKTOP_CHROME_UA, Referer: 'https://audiobooks4soul.com/' },
+        timeoutMs: AUDIOBOOK_SEARCH_TIMEOUT_MS,
+      });
+      const body = (res.data || '').trim();
+      if (res.status !== 200 || !body.startsWith('http')) continue;
+      if (body.includes('Soulful_Exploration')) continue;
+      chapters.push({
+        id: `audiobooks4soul-ch-${chapterNum}`,
+        title: `Chapter ${chapterNum}`,
+        url: body,
+        httpHeaders: { Referer: 'https://audiobooks4soul.com/', 'User-Agent': CHAPTER_UA },
+      });
+      chapterNum += 1;
+    } catch {
+      // Skip a chapter that will not decrypt; the rest still play.
+    }
+  }
+  return chapters;
+}
+
+let audionestIdToken: string | null = null;
+let audionestTokenExpiry = 0;
+
+async function audionestEnsureToken(force = false): Promise<string | null> {
+  if (!force && audionestIdToken && Date.now() < audionestTokenExpiry) return audionestIdToken;
+  try {
+    const res = await nativeFetchText(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${AUDIONEST_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnSecureToken: true }),
+        timeoutMs: AUDIOBOOK_SEARCH_TIMEOUT_MS,
+      },
+    );
+    if (res.status !== 200) return null;
+    const data = parseJsonObject(res.data);
+    if (!data) return null;
+    const token = asString(data.idToken);
+    if (!token) return null;
+    const expiresIn = Number.parseInt(asString(data.expiresIn) || '3600', 10) || 3600;
+    audionestIdToken = token;
+    audionestTokenExpiry = Date.now() + Math.max(0, expiresIn - 60) * 1000;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/** Reads `document.fields.urlLink.arrayValue.values[].stringValue` from runQuery. */
+function parseFirestoreUrlLinks(raw: string): string[] {
+  const entries = parseJsonArray(raw);
+  if (!entries) return [];
+  for (const entry of entries) {
+    const row = asRecord(entry);
+    if (!row) continue;
+    const document = asRecord(row.document);
+    if (!document) continue;
+    const fields = asRecord(document.fields);
+    if (!fields) continue;
+    const urlLink = asRecord(fields.urlLink);
+    const arrayValue = urlLink ? asRecord(urlLink.arrayValue) : null;
+    const values = arrayValue ? asArray(arrayValue.values) : [];
+    const urls: string[] = [];
+    for (const value of values) {
+      const record = asRecord(value);
+      const stringValue = record ? asString(record.stringValue) : '';
+      if (stringValue) urls.push(stringValue);
+    }
+    if (urls.length > 0) return urls;
+  }
+  return [];
+}
+
+async function getAudionestChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  let token = await audionestEnsureToken();
+  if (!token) return [];
+
+  const body = JSON.stringify({
+    structuredQuery: {
+      from: [{ collectionId: 'TrackFiles' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'book_id' },
+          op: 'EQUAL',
+          value: { integerValue: book.audioBookId },
+        },
+      },
+      limit: 1,
+    },
+  });
+
+  const runQuery = (idToken: string): Promise<{ ok: boolean; status: number; data: string }> =>
+    nativeFetchText(AUDIONEST_FIRESTORE_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent': DESKTOP_CHROME_UA,
+        Referer: 'https://firestore.googleapis.com/',
+      },
+      body,
+      timeoutMs: AUDIOBOOK_SEARCH_TIMEOUT_MS,
+    });
+
+  let res = await runQuery(token);
+  if (res.status === 401 || res.status === 403) {
+    const refreshed = await audionestEnsureToken(true);
+    if (!refreshed) return [];
+    token = refreshed;
+    res = await runQuery(token);
+  }
+  if (res.status !== 200) return [];
+
+  const urls = parseFirestoreUrlLinks(res.data);
+  const titles = urls.map((_url, index) => (urls.length === 1 ? 'Full Audiobook' : `Chapter ${index + 1}`));
+  return urls.map((url, index) => ({
+    id: `audionest-ch-${index + 1}`,
+    title: titles[index],
+    url,
+  }));
+}
+
+/**
+ * Resolves the playable chapter list for a book produced by
+ * {@link searchAudiobooks}. Never throws: a failing source yields `[]`.
+ */
+export async function getChapters(book: Audiobook): Promise<AudiobookChapter[]> {
+  try {
+    switch (book.source) {
+      case 'goldenaudiobooks':
+      case 'fulllengthaudiobooks':
+      case 'hotaudiobooks':
+      case 'bookaudiobooks':
+      case 'audiobooks4soul':
+        return book.source === 'audiobooks4soul'
+          ? await getAudiobooks4SoulChapters(book)
+          : await getStandardWpChapters(book);
+      case 'audiozaic':
+        return await getAudiozaicChapters(book);
+      case 'audioaz':
+        return await getAudioAZChapters(book);
+      case 'audionest':
+        return await getAudionestChapters(book);
+      default:
+        return [];
+    }
+  } catch {
+    return [];
+  }
 }
 

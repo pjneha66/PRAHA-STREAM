@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { MonitorPlay } from 'lucide-react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
 import { findNuvioStreams } from '../services/nuvioService';
 import { findPlayTorrioStreams } from '../services/playtorrioScrapers';
+import { filmQueryFromMedia, rankStreams, scrapeFilmSources } from '../services/sourceOrchestrator';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
 import type {
@@ -22,6 +24,8 @@ const SourceModal: React.FC<{
   preferredSource: string;
   onPreferredSourceChange: (key: string) => void;
   onClose: () => void;
+  /** Last resort only — opens the iframe aggregator when every source failed. */
+  onOpenEmbedded?: () => void;
   onOpenExtensions: () => void;
   onPlay: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
   /**
@@ -42,6 +46,7 @@ const SourceModal: React.FC<{
   preferredSource,
   onPreferredSourceChange,
   onClose,
+  onOpenEmbedded,
   onOpenExtensions,
   onPlay,
   suspended = false,
@@ -143,6 +148,7 @@ const SourceModal: React.FC<{
     const scrapers = repositories.filter((repo) => repo.enabled).flatMap((repo) =>
       repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
     setHealth([
+      { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
       { id: 'playtorrio:4khd', name: '4KHDHub & PlayTorrio VOD (4K UHD)', status: 'searching' as const },
       ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
       ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
@@ -179,7 +185,9 @@ const SourceModal: React.FC<{
           if (cancelled) return;
           setStreams((current) => {
             const seen = new Set<string>();
-            return [...current, ...result.streams].filter((stream) => {
+            // rankStreams puts VyseTV scrapers first, then debrid, TorrServer,
+            // addons and finally the older PlayTorrio scrapers.
+            return rankStreams([...current, ...result.streams]).filter((stream) => {
               const key = stream.url || (stream.ytId ? `youtube:${stream.ytId}` : stream.id);
               if (seen.has(key)) return false;
               seen.add(key);
@@ -191,6 +199,21 @@ const SourceModal: React.FC<{
         };
         const knownImdb = media.imdbId || (media.id.startsWith('tt') ? media.id : undefined);
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
+
+        // Stage 1 — the 39 VyseTV scrapers + Movy. They publish as they finish
+        // in waves, and rankStreams keeps them at the top of the list.
+        const filmJob = runProvider('vysetv:scrapers', async () => {
+          const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep));
+          return {
+            streams: result.streams,
+            errors: result.streams.length
+              ? []
+              : result.failures.slice(0, 2).map((failure) => ({
+                  sourceName: failure.source, message: failure.message,
+                })),
+          };
+        }, publish);
+
         const stremioJob = (async () => {
           const imdbId = knownImdb || (await idJob).imdbId;
           const resolved = { ...media, imdbId: imdbId || media.imdbId };
@@ -243,7 +266,7 @@ const SourceModal: React.FC<{
             if (result.streams.length) clearLoading();
           });
         })();
-        const jobs = [playtorrioJob, stremioJob, nuvioJob];
+        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
@@ -308,6 +331,14 @@ const SourceModal: React.FC<{
           showClose
           onClose={onClose}
         />
+        {onOpenEmbedded && (
+          <div className="source-embed-fallback">
+            <p>None of the sources above playable? Embedded player sites are a last resort — they run third-party iframes and are slower and less reliable.</p>
+            <button type="button" className="button button-secondary" onClick={onOpenEmbedded}>
+              <MonitorPlay size={15} /> Try embedded players
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );

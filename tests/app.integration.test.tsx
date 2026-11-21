@@ -172,7 +172,7 @@ describe('Netflix-style Who is watching gate & Anime/Comics in the app shell', (
     expect(await screen.findByRole('dialog', { name: 'Who’s watching?' })).toBeTruthy();
   }, 15000);
 
-  it('opens the Manga & Comics tab and renders only manga & comics (without an Anime sub-tab)', async () => {
+  it('opens the Comics tab and renders Sanka/Comick comics (without an Anime sub-tab)', async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -185,7 +185,10 @@ describe('Netflix-style Who is watching gate & Anime/Comics in the app shell', (
       return json({});
     });
     render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Manga & Comics' })[0]);
+    // The port splits the old combined tab: Comics keeps Sanka/Comick, Manga
+    // is a separate WeebCentral tab. Both must be reachable from the nav.
+    expect(screen.getAllByRole('button', { name: 'Manga' }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Comics' })[0]);
 
     expect(await screen.findByText('Solo Leveling')).toBeTruthy();
     expect(screen.queryByRole('tab', { name: /Anime/i })).toBeNull();

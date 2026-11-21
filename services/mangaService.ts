@@ -1,4 +1,5 @@
 import { nativeFetchText } from './androidBridge';
+import { currentWeebCentralAdultParam } from './nsfwGate';
 
 const BASE_URL = 'https://weebcentral.com';
 const COVER_CDN = 'https://temp.compsci88.com/cover';
@@ -31,6 +32,10 @@ async function fetchHtml(url: string): Promise<string> {
       'User-Agent': USER_AGENT,
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
+      // WeebCentral is an htmx app: /search/data answers 307 to /400 without this
+      // marker, which reads as a bot block. Verified live 2026-11-20.
+      'HX-Request': 'true',
+      Referer: `${BASE_URL}/search`,
     },
     timeoutMs: 12000,
   });
@@ -54,7 +59,7 @@ export class MangaService {
   static async getManga(page = 1, tag?: string): Promise<MangaItem[]> {
     try {
       const offset = (page - 1) * 32;
-      let url = `${BASE_URL}/search/data?text=&display_mode=Full+Display&sort=Popularity&order=Descending&official=Any&adult=False&offset=${offset}`;
+      let url = `${BASE_URL}/search/data?text=&display_mode=Full+Display&sort=Popularity&order=Descending&official=Any&adult=${currentWeebCentralAdultParam()}&offset=${offset}`;
       if (tag) {
         url += `&included_tag=${encodeURIComponent(tag)}`;
       }
@@ -71,7 +76,7 @@ export class MangaService {
   static async searchManga(query: string, page = 1): Promise<MangaItem[]> {
     try {
       const offset = (page - 1) * 32;
-      const url = `${BASE_URL}/search/data?text=${encodeURIComponent(query)}&display_mode=Full+Display&sort=Best+Match&order=Descending&official=Any&adult=False&offset=${offset}`;
+      const url = `${BASE_URL}/search/data?text=${encodeURIComponent(query)}&display_mode=Full+Display&sort=Best+Match&order=Descending&official=Any&adult=${currentWeebCentralAdultParam()}&offset=${offset}`;
       const html = await fetchHtml(url);
       return this.parseSearchResults(html);
     } catch {

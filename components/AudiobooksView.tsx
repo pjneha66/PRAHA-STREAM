@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import {
   searchAllAudiobooks, getAudiobookChapters, CURATED_FEATURED_AUDIOBOOKS,
-  type AudiobookItem, type AudiobookChapter,
+  searchAudiobooks, getChapters, AUDIOBOOK_SOURCE_NAMES,
+  type AudiobookItem, type AudiobookChapter, type Audiobook as ScrapedAudiobook,
 } from '../services/audiobookService';
 import ContinueShelf from './ContinueShelf';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
@@ -22,11 +23,36 @@ const ARCHIVE_BROWSE_TERMS = [
   'Walt Whitman', 'Jane Austen', 'Mark Twain',
 ];
 
+/**
+ * Adapts a VyseTV-port `Audiobook` record to the view's `AudiobookItem` shape.
+ * The `uuid` is preserved as `id` so `openBook` can find the raw record back.
+ */
+function toViewBook(book: ScrapedAudiobook): AudiobookItem {
+  const sourceName =
+    AUDIOBOOK_SOURCE_NAMES[book.source as keyof typeof AUDIOBOOK_SOURCE_NAMES] || book.source;
+  return {
+    id: book.uuid,
+    title: book.title,
+    author: book.author,
+    coverImage: book.coverImage,
+    source: book.source,
+    sourceName,
+    pageUrl: book.pageUrl,
+  };
+}
+
 const AudiobooksView: React.FC = () => {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [books, setBooks] = useState<AudiobookItem[]>(CURATED_FEATURED_AUDIOBOOKS);
   const [error, setError] = useState('');
+
+  // Live source mode. `classic` is the original aggregator (unchanged default);
+  // `vyse` is the ported VyseTV 8-source scraper.
+  const [sourceMode, setSourceMode] = useState<'classic' | 'vyse'>('classic');
+  // Books returned by the ported scraper, keyed by their uuid, so chapter
+  // resolution can hand the original `Audiobook` record to `getChapters`.
+  const scrapedBooksRef = useRef<Map<string, ScrapedAudiobook>>(new Map());
 
   // Selected book & chapters
   const [selectedBook, setSelectedBook] = useState<AudiobookItem | null>(null);
@@ -53,6 +79,21 @@ const AudiobooksView: React.FC = () => {
     setLoading(true);
     setError('');
     try {
+      if (sourceMode === 'vyse') {
+        const scraped = await searchAudiobooks(trimmed);
+        if (searchIdRef.current !== currentId) return;
+        if (scraped.length > 0) {
+          // Keep the raw records so chapter resolution uses the exact source id.
+          const registry = new Map<string, ScrapedAudiobook>();
+          scraped.forEach((book) => registry.set(book.uuid, book));
+          scrapedBooksRef.current = registry;
+          setBooks(scraped.map((book) => toViewBook(book)));
+        } else {
+          setError('No audiobooks found across the 8 live scrapers. Showing featured collection.');
+        }
+        return;
+      }
+
       const results = await searchAllAudiobooks(trimmed);
       if (searchIdRef.current !== currentId) return;
       if (results.length > 0) {
@@ -91,7 +132,8 @@ const AudiobooksView: React.FC = () => {
     setChapters([]);
     setCurrentChapterIndex(0);
     try {
-      const fetched = await getAudiobookChapters(book);
+      const scraped = scrapedBooksRef.current.get(book.id);
+      const fetched = scraped ? await getChapters(scraped) : await getAudiobookChapters(book);
       setChapters(fetched);
     } catch {
       // Ignored
@@ -215,12 +257,14 @@ const AudiobooksView: React.FC = () => {
 
   const streamAudioUrl = React.useMemo(() => {
     if (!activeChapter?.url) return '';
-    if (activeChapter.headers && Object.keys(activeChapter.headers).length > 0) {
+    // Ported VyseTV chapters carry `httpHeaders`; classic ones carry `headers`.
+    const chapterHeaders = activeChapter.headers ?? activeChapter.httpHeaders;
+    if (chapterHeaders && Object.keys(chapterHeaders).length > 0) {
       return resolvePlayableStreamUrl({
         id: activeChapter.id,
         title: activeChapter.title,
         url: activeChapter.url,
-        headers: activeChapter.headers,
+        headers: chapterHeaders,
         sourceName: selectedBook?.sourceName || 'Audiobook',
         sourceType: 'playtorrio',
         quality: 'Auto',
@@ -320,6 +364,33 @@ const AudiobooksView: React.FC = () => {
           </button>
         </div>
 
+        {/* Source engine toggle: classic aggregator (default) vs. the 8 live scrapers */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+          <span style={{ fontSize: '0.78rem', color: '#8a8a8a', fontWeight: 700, letterSpacing: '0.4px' }}>ENGINE:</span>
+          {([
+            { id: 'classic' as const, label: 'Classic · 9 sources + Archive' },
+            { id: 'vyse' as const, label: 'Live · 8 scrapers' },
+          ]).map((option) => (
+            <button
+              key={option.id}
+              onClick={() => setSourceMode(option.id)}
+              aria-pressed={sourceMode === option.id}
+              style={{
+                background: sourceMode === option.id ? 'rgba(229,9,20,0.18)' : 'rgba(255,255,255,0.06)',
+                border: sourceMode === option.id ? '1px solid rgba(229,9,20,0.5)' : '1px solid rgba(255,255,255,0.1)',
+                color: '#fff',
+                padding: '0.35rem 0.8rem',
+                borderRadius: '20px',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+                fontWeight: sourceMode === option.id ? 700 : 400,
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
         {/* Quick Suggestion Pills */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.6rem' }}>
           {TRENDING_SUGGESTIONS.map((tag) => (
@@ -376,7 +447,11 @@ const AudiobooksView: React.FC = () => {
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '5rem 0', gap: '1rem' }}>
           <LoaderCircle size={36} className="spin" color="#e50914" />
-          <p style={{ color: '#aaa' }}>Searching all 9 audiobook repositories in parallel…</p>
+          <p style={{ color: '#aaa' }}>
+            {sourceMode === 'vyse'
+              ? 'Searching the 8 live audiobook scrapers in parallel…'
+              : 'Searching all 9 audiobook repositories in parallel…'}
+          </p>
         </div>
       ) : books.length > 0 ? (
         <div style={{

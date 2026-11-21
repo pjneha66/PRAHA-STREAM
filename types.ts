@@ -1,9 +1,16 @@
 export const APP_VERSION = '2.11.15';
 
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
+
+/**
+ * Adult content shown across manga, comics, anime and the TMDB catalog.
+ * `off` hides it, `on` mixes it into normal results, `only` shows nothing else.
+ * A Kids profile is always `off` regardless of what is saved here.
+ */
+export type NsfwMode = 'off' | 'on' | 'only';
 
 export interface MediaCastMember {
   id: number;
@@ -240,7 +247,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv';
+  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed';
   quality?: string;
   size?: string;
   language?: string;
@@ -409,6 +416,11 @@ export interface AppSettings {
   askProfileOnStartup: boolean;
   /** Route header-protected streams through native Android proxy when running in APK. */
   preferNativeProxy: boolean;
+  /**
+   * Adult content across manga, comics, anime, Live TV and the TMDB catalog.
+   * `off` (default) hides it, `on` mixes it in, `only` shows nothing else.
+   */
+  nsfw: NsfwMode;
   /** DNS over HTTPS provider for app network requests. */
   dnsProvider?: string;
   /** Fall back to system DNS when DoH resolver is slow or blocked. */

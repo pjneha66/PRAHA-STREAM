@@ -35,14 +35,14 @@ import androidx.webkit.WebViewFeature;
 import androidx.webkit.WebViewCompat.WebMessageListener;
 
 import com.getcapacitor.BridgeActivity;
+import com.praha.stream.mpv.PrahaMpvPlugin;
+import com.praha.stream.media3.PrahaMedia3Plugin;
+import com.praha.stream.torr.PrahaTorrServerPlugin;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.videolan.libvlc.util.VLCVideoLayout;
 
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.FrameLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -77,8 +77,6 @@ public class MainActivity extends BridgeActivity {
             6, 6, 30L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<Runnable>(96),
             new ThreadPoolExecutor.AbortPolicy());
-    private PrahaVlcPlayer vlcPlayer;
-    private VLCVideoLayout vlcVideoLayout;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
 
     /**
@@ -136,6 +134,12 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // The mpv engine is a Capacitor plugin but is not installed by npm, so
+        // Capacitor's automatic scanning never sees it. Registering it here is
+        // what puts `Capacitor.Plugins.PrahaMpv` on the JS side.
+        registerPlugin(PrahaMpvPlugin.class);
+        registerPlugin(PrahaMedia3Plugin.class);
+        registerPlugin(PrahaTorrServerPlugin.class);
         streamProxy.start();
 
         subtitlePickerLauncher = registerForActivityResult(
@@ -149,9 +153,6 @@ public class MainActivity extends BridgeActivity {
                                 final int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION);
                                 getContentResolver().takePersistableUriPermission(uri, takeFlags);
                             } catch (Exception ignored) {}
-                            if (vlcPlayer != null) {
-                                vlcPlayer.addSlave(0, uri.toString(), true);
-                            }
                             if (getBridge() != null && getBridge().getWebView() != null) {
                                 try {
                                     JSONObject obj = new JSONObject();
@@ -207,18 +208,6 @@ public class MainActivity extends BridgeActivity {
                 webView.addJavascriptInterface(new PrahaJsBridge(), "PrahaNative");
             }
 
-            FrameLayout root = findViewById(android.R.id.content);
-            if (root != null) {
-                vlcVideoLayout = new VLCVideoLayout(this);
-                vlcVideoLayout.setLayoutParams(new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                ));
-                vlcVideoLayout.setVisibility(View.GONE);
-                root.addView(vlcVideoLayout, 0);
-                vlcPlayer = new PrahaVlcPlayer(this);
-                vlcPlayer.init(vlcVideoLayout, webView);
-            }
         }
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -236,20 +225,9 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    /** VLC PiP lifecycle (audit M-open): auto-pause must not fire in PiP. */
-    @Override
-    public void onPause() {
-        super.onPause();
-        if (vlcPlayer != null && vlcPlayer.isPlaying() && !isInPictureInPictureMode()) {
-            vlcPlayer.pause();
-        }
-    }
 
     @Override
     public void onDestroy() {
-        if (vlcPlayer != null) {
-            vlcPlayer.release();
-        }
         streamProxy.stop();
         httpExecutor.shutdownNow();
         super.onDestroy();
@@ -760,68 +738,57 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public String getAllAudioTracks() {
-            if (vlcPlayer == null) return "[]";
-            return vlcPlayer.getAllAudioTracks();
+            return "[]";
         }
 
         @JavascriptInterface
         public int getSelectedAudioTrack() {
-            if (vlcPlayer == null) return -1;
-            return vlcPlayer.getSelectedAudioTrack();
+            return -1;
         }
 
         @JavascriptInterface
         public boolean setAudioTrack(int id) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.setAudioTrack(id);
+            return false;
         }
 
         @JavascriptInterface
         public String getAllSpuTracks() {
-            if (vlcPlayer == null) return "[]";
-            return vlcPlayer.getAllSpuTracks();
+            return "[]";
         }
 
         @JavascriptInterface
         public int getSelectedSpuTrack() {
-            if (vlcPlayer == null) return -1;
-            return vlcPlayer.getSelectedSpuTrack();
+            return -1;
         }
 
         @JavascriptInterface
         public boolean setSpuTrack(int id) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.setSpuTrack(id);
+            return false;
         }
 
         @JavascriptInterface
         public boolean addSlave(int type, String uri, boolean select) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.addSlave(type, uri, select);
+            return false;
         }
 
         @JavascriptInterface
         public boolean setSpuDelay(long delayMicros) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.setSpuDelay(delayMicros);
+            return false;
         }
 
         @JavascriptInterface
         public long getSpuDelay() {
-            if (vlcPlayer == null) return 0;
-            return vlcPlayer.getSpuDelay();
+            return 0;
         }
 
         @JavascriptInterface
         public boolean setAudioDelay(long delayMicros) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.setAudioDelay(delayMicros);
+            return false;
         }
 
         @JavascriptInterface
         public long getAudioDelay() {
-            if (vlcPlayer == null) return 0;
-            return vlcPlayer.getAudioDelay();
+            return 0;
         }
 
         @JavascriptInterface
@@ -847,65 +814,36 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public boolean vlcPlay(String url, String headersJson, long resumeMs) {
-            if (vlcPlayer == null) return false;
-            runOnUiThread(() -> {
-                boolean ok = vlcPlayer.play(url, headersJson, resumeMs);
-                if (ok && getBridge() != null && getBridge().getWebView() != null) {
-                    getBridge().getWebView().setBackgroundColor(Color.TRANSPARENT);
-                }
-            });
-            return true;
+            return false;
         }
 
         @JavascriptInterface
         public void vlcPause() {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.pause();
-            });
         }
 
         @JavascriptInterface
         public void vlcResume() {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.resume();
-            });
         }
 
         @JavascriptInterface
         public void vlcStop() {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.stop();
-                if (getBridge() != null && getBridge().getWebView() != null) {
-                    getBridge().getWebView().setBackgroundColor(Color.parseColor("#090A0C"));
-                }
-            });
         }
 
         @JavascriptInterface
         public void vlcSeek(long timeMs) {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.seek(timeMs);
-            });
         }
 
         @JavascriptInterface
         public void vlcSetVolume(int volume) {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.setVolume(volume);
-            });
         }
 
         @JavascriptInterface
         public void vlcSetRate(float rate) {
-            runOnUiThread(() -> {
-                if (vlcPlayer != null) vlcPlayer.setRate(rate);
-            });
         }
 
         @JavascriptInterface
         public boolean vlcSetAspectRatio(String aspect) {
-            if (vlcPlayer == null) return false;
-            return vlcPlayer.setAspectRatio(aspect);
+            return false;
         }
 
         @JavascriptInterface
@@ -919,12 +857,12 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public boolean isVlcAvailable() {
-            return vlcPlayer != null && vlcPlayer.isAvailable();
+            return false;
         }
 
         @JavascriptInterface
         public boolean isVlcPlaying() {
-            return vlcPlayer != null && vlcPlayer.isPlaying();
+            return false;
         }
 
         @JavascriptInterface

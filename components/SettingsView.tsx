@@ -10,14 +10,17 @@ import { tmdbService } from '../services/tmdbService';
 import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
 import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
 import { NETWORK_CONDITION_COPY, probeNetworkCondition, type NetworkCondition } from '../services/networkCondition';
+import { NSFW_COPY } from '../services/nsfwGate';
 import { TorrentStreamingEngine } from '../services/torrentStreamingService';
+import { torrServerController } from '../services/p2p/torrServerController';
+import type { TorrServerStatus } from '../services/p2p/torrServerBridge';
 import { PLAYER_THEMES } from './player/themes';
 import JellyfinSettings from './JellyfinSettings';
 import type { JellyfinSnapshot } from '../services/jellyfinService';
 import { PROFILE_PALETTE, ProfileAvatar } from './ProfilePicker';
 import {
   APP_VERSION,
-  AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NuvioRepository,
+  AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NsfwMode, NuvioRepository,
   PlayerSettings, UserProfile,
 } from '../types';
 
@@ -214,6 +217,9 @@ const SettingsView: React.FC<{
   const [networkCondition, setNetworkCondition] = useState<NetworkCondition | null>(null);
   const [networkChecking, setNetworkChecking] = useState(false);
   const [torrentHostDraft, setTorrentHostDraft] = useState(() => TorrentStreamingEngine.getHost());
+  const [torrSupported] = useState(() => torrServerController.isSupported());
+  const [torrStatus, setTorrStatus] = useState<TorrServerStatus | null>(null);
+  const [torrBusy, setTorrBusy] = useState(false);
   const [torrentHostStatus, setTorrentHostStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
   const [torrentHostMessage, setTorrentHostMessage] = useState('');
   const [apiStatus, setApiStatus] = useState<ApiStatus>('idle');
@@ -225,6 +231,28 @@ const SettingsView: React.FC<{
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => onChange({ ...settings, [key]: value });
   const updatePlayer = (patch: Partial<PlayerSettings>) => onChange({ ...settings, player: { ...settings.player, ...patch } });
+
+  /** Kids profiles can never see adult content, whatever is saved. */
+  const kidsProfile = Boolean(activeProfile?.isKids);
+
+  /**
+   * Adult content needs one confirmation the first time it is switched on.
+   * Kept in localStorage rather than settings so it is a device-level promise,
+   * and it is never re-asked after the first accept.
+   */
+  const NSFW_ACK_KEY = 'praha.nsfw.ack.v1';
+  const requestNsfwMode = (mode: NsfwMode) => {
+    if (mode === 'off') { update('nsfw', 'off'); return; }
+    let acknowledged = false;
+    try { acknowledged = localStorage.getItem(NSFW_ACK_KEY) === '1'; } catch { acknowledged = false; }
+    if (!acknowledged) {
+      const ok = window.confirm(`${NSFW_COPY.confirmTitle}\n\n${NSFW_COPY.confirmBody}`);
+      if (!ok) return;
+      try { localStorage.setItem(NSFW_ACK_KEY, '1'); } catch { /* storage full or blocked: ask again next time */ }
+    }
+    update('nsfw', mode);
+  };
+
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
   useEffect(() => { setImdxBaseDraft(settings.imdx.baseUrl); setImdxKeyDraft(settings.imdx.apiKey || ''); }, [settings.imdx.baseUrl, settings.imdx.apiKey]);
@@ -256,6 +284,20 @@ const SettingsView: React.FC<{
     const ok = await TorrentStreamingEngine.checkEngineAvailable(host);
     setTorrentHostStatus(ok ? 'ok' : 'error');
     setTorrentHostMessage(ok ? 'Torrent engine reachable.' : 'Could not reach a TorrServer-compatible engine at this host. Make sure it is running and accessible from this device.');
+  };
+
+  const toggleBundledTorrServer = async () => {
+    setTorrBusy(true);
+    try {
+      if (torrStatus?.running) {
+        await torrServerController.stop();
+      } else {
+        await torrServerController.ensureStarted();
+      }
+      setTorrStatus(await torrServerController.status());
+    } finally {
+      setTorrBusy(false);
+    }
   };
 
   const verifyImdx = async (event: React.FormEvent) => {
@@ -417,6 +459,56 @@ const SettingsView: React.FC<{
                 <UserPlus size={14} /> Add profile
               </button>
             </form>
+          </section>
+
+          {/* Adult content — three modes, per profile, age-gated */}
+          <section className="settings-card">
+            <div className="settings-card-heading">
+              <span><ShieldCheck size={19} /></span>
+              <div>
+                <h2>Adult content</h2>
+                <p>{NSFW_COPY.blurb}</p>
+              </div>
+            </div>
+            {kidsProfile ? (
+              <div className="setting-row">
+                <div>
+                  <strong>Off on this profile</strong>
+                  <p>{NSFW_COPY.kidsNote} Switch to a standard profile to change this.</p>
+                </div>
+                <span className="source-kind-badge free">KIDS</span>
+              </div>
+            ) : (
+              <>
+                <div className="setting-row">
+                  <div>
+                    <strong>{NSFW_COPY.title}</strong>
+                    <p>{NSFW_COPY.modes.find((mode) => mode.id === settings.nsfw)?.hint}</p>
+                  </div>
+                  <div className="filter-pills" role="group" aria-label="Adult content">
+                    {NSFW_COPY.modes.map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        className={settings.nsfw === mode.id ? 'active' : ''}
+                        aria-pressed={settings.nsfw === mode.id}
+                        onClick={() => requestNsfwMode(mode.id)}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <p>
+                      Applies to Manga, Comics, Anime, Live TV and the TMDB catalog. Turning it on asks
+                      you to confirm you are 18 or older, and it stays off for Kids profiles.
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
 
           {/* TMDB API */}
@@ -734,9 +826,37 @@ const SettingsView: React.FC<{
             <div className="setting-row" style={{ alignItems: 'flex-start' }}>
               <div style={{ flex: 1 }}>
                 <strong>Torrent engine host (TorrServer)</strong>
-                <p>Used for magnet/torrent streaming when a compatible local or LAN TorrServer engine is available. Default is <b>http://127.0.0.1:8090</b>. In-app WebTorrent P2P is also attempted automatically for magnet streams (WebRTC peers required).</p>
+                <p>
+                  {torrSupported
+                    ? 'Android uses the TorrServer engine bundled in this APK by default — no setup or LAN host needed. The URL below is only a fallback for an external engine.'
+                    : 'Used for magnet/torrent streaming when a compatible local or LAN TorrServer engine is available. Web/PWA uses in-app WebTorrent P2P for magnet streams (WebRTC peers required).'}
+                </p>
               </div>
             </div>
+            {torrSupported && (
+              <div className="api-key-form" style={{ marginTop: '4px' }}>
+                <label>Bundled TorrServer engine</label>
+                <p className="api-privacy" style={{ marginTop: 0 }}>
+                  <Server size={14} />
+                  <span>
+                    {torrStatus?.running
+                      ? `Running on 127.0.0.1:${torrStatus.port}${torrStatus.pid > 0 ? ` (pid ${torrStatus.pid})` : ''}, tuned for streaming.`
+                      : 'Stopped. It starts automatically the first time you play a torrent after accepting the P2P notice.'}
+                  </span>
+                </p>
+                <div className="api-key-actions">
+                  <button type="button" className="button button-secondary" onClick={() => { void torrServerController.status().then(setTorrStatus); }} disabled={torrBusy}>
+                    <RefreshCw size={15} /> Refresh
+                  </button>
+                  <button type="button" className={torrStatus?.running ? 'button button-secondary' : 'button button-primary'} onClick={() => { void toggleBundledTorrServer(); }} disabled={torrBusy}>
+                    {torrBusy ? <LoaderCircle size={15} className="spin" /> : <Magnet size={15} />} {torrStatus?.running ? 'Stop engine' : 'Start engine'}
+                  </button>
+                </div>
+                {!!torrStatus?.logs?.length && (
+                  <p className="settings-tv-help" role="log">{torrStatus.logs.slice(-3).join(' · ')}</p>
+                )}
+              </div>
+            )}
             <div className="api-key-form" style={{ marginTop: '4px' }}>
               <label htmlFor="torrent-host">TorrServer URL</label>
               <div className="api-key-input">
@@ -825,7 +945,7 @@ const SettingsView: React.FC<{
           <section className="settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Navigation</h2><p>Show or hide sections of the sidebar. Extensions and Settings always stay.</p></div></div>
             <div className="setting-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
-              {[['home', 'Home'], ['livetv', 'Live TV'], ['anime', 'Anime'], ['sanka', 'Manga & Comics'], ['music', 'Music'], ['audiobooks', 'Audiobooks'], ['books', 'Books'], ['discover', 'Discover'], ['flow', 'Flow · YouTube'], ['explore', 'Explore'], ['library', 'My Library']].map(([id, label]) => {
+              {[['home', 'Home'], ['livetv', 'Live TV'], ['anime', 'Anime'], ['sanka', 'Comics'], ['manga', 'Manga'], ['music', 'Music'], ['audiobooks', 'Audiobooks'], ['books', 'Books'], ['discover', 'Discover'], ['flow', 'Flow · YouTube'], ['explore', 'Explore'], ['library', 'My Library']].map(([id, label]) => {
                 const visible = !hiddenNav.includes(id);
                 return (
                   <button

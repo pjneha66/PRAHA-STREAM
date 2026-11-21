@@ -9,6 +9,7 @@ import ExtensionsView from './components/ExtensionsView';
 import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
+import MangaView from './components/MangaView';
 import AudiobooksView from './components/AudiobooksView';
 import BooksView from './components/BooksView';
 import MusicView from './components/MusicView';
@@ -31,6 +32,7 @@ import {
 } from './data/defaults';
 import { fetchStremioCatalog, fetchStremioManifest, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
 import { findNuvioStreams } from './services/nuvioService';
+import { setNsfwContext } from './services/nsfwGate';
 import { tmdbService } from './services/tmdbService';
 import type { JellyfinSnapshot } from './services/jellyfinService';
 import { animeService } from './services/animeService';
@@ -56,7 +58,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -278,6 +280,12 @@ const App: React.FC = () => {
   );
 
   useEffect(() => { setJellyfinSnapshot(null); }, [activeProfile.id]);
+
+  // Push the effective adult-content mode into the services. Kids profiles are
+  // forced to 'off' inside the gate, so this is the single place that decides.
+  useEffect(() => {
+    setNsfwContext(settings, activeProfile);
+  }, [settings.nsfw, activeProfile.isKids]);
 
   const watchlistKey = activeProfile.id === 'default'
     ? 'praha.v2.watchlist'
@@ -1346,6 +1354,14 @@ const App: React.FC = () => {
         prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
       />
     );
+  } else if (view === 'manga') {
+    // Separate Manga tab: WeebCentral + the webtoon/paged chapter reader.
+    // The Comics tab above keeps Sanka/Comick untouched.
+    page = (
+      <MangaView
+        prefillQuery={searchPrefill?.view === 'manga' ? searchPrefill.term : undefined}
+      />
+    );
   } else if (view === 'livetv') {
     page = (
       <LiveTvView
@@ -1554,6 +1570,11 @@ const App: React.FC = () => {
           preferredSource={preferredSource}
           onPreferredSourceChange={setPreferredSource}
           onClose={() => setSourceState(null)}
+          onOpenEmbedded={() => {
+            if (!sourceState) return;
+            setEmbedState({ media: sourceState.media, season: sourceState.season, episode: sourceState.episode });
+            setSourceState(null);
+          }}
           onOpenExtensions={() => { setSourceState(null); navigate('extensions'); }}
           onPlay={playStream}
           suspended={Boolean(player)}

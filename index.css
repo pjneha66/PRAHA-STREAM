@@ -3332,3 +3332,9 @@ html.player-vlc-active .app-shell,
 
 /* Downloads hint in source list */
 .download-hint { margin: 0 0 10px; padding: 8px 12px; border: 1px solid rgba(63,185,80,.4); border-radius: 9px; background: rgba(63,185,80,.08); color: #7ee787; font-size: 12.5px; }
+
+/* Last-resort embedded-player fallback at the bottom of the source list */
+.source-embed-fallback { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border-top: 1px solid var(--line, #21262d); background: rgba(88,166,255,.03); }
+.source-embed-fallback p { margin: 0; max-width: 62ch; color: var(--muted, #8b949e); font-size: 12px; line-height: 1.5; }
+.source-embed-fallback .button { flex: 0 0 auto; }
+@media (max-width: 700px) { .source-embed-fallback { flex-direction: column; align-items: stretch; } }

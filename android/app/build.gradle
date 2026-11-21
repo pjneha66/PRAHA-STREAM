@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 def ksPath = System.getenv("ANDROID_KEYSTORE_PATH") ?: 'release.keystore'
 // No fallback credentials. A password that lives in source is public, which
@@ -21,7 +22,36 @@ android {
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+        // Only the ABIs we ship. x86 (32-bit) is dropped: no device we support
+        // uses it and it would add ~30 MB of libmpv for nothing.
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
     }
+
+    // Two APKs: a lean arm64 one and a universal one. `universalApk` builds the
+    // second without ABI filtering.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            universalApk true
+        }
+    }
+
+    // The TorrServer binary is exec'd from the app's native-library directory, so
+    // its jniLibs entry has to be a real file on disk after install rather than a
+    // mapping inside the APK. Without useLegacyPackaging the exec fails with EACCES.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            // libmpv and media3 both bundle a libc++ runtime; mpv's is the one
+            // libmpv.so was linked against, and it is listed first.
+            pickFirsts.add('lib/*/libc++_shared.so')
+        }
+    }
+
     signingConfigs {
         if (hasReleaseSigning) {
             release {
@@ -38,6 +68,21 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+
+    compileOptions {
+        // The JDK on this machine is 21 and AGP 8.13 accepts 21 bytecode, so both
+        // compilers target 21. Kotlin must match exactly or the build fails with
+        // "Inconsistent JVM Target Compatibility".
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
     }
 }
 
@@ -64,6 +109,61 @@ repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
+    // The mpv engine ships as one AAR on a GitHub release, not in Maven Central.
+    // Ivy with no metadata resolves `edde746:mpv-android:<rev>@aar` straight from
+    // the release assets; the sha256 below is checked before the file is used.
+    exclusiveContent {
+        forRepository {
+            ivy {
+                name = 'mpv-build'
+                url = uri(rootProject.ext.mpvAarUrl)
+                patternLayout { artifact('[artifact]-[revision].[ext]') }
+                metadataSources { artifact() }
+            }
+        }
+        filter { includeModule('edde746', 'mpv-android') }
+    }
+}
+
+/**
+ * Verify the mpv AAR against the sha256 recorded in variables.gradle.
+ *
+ * The artifact arrives from a GitHub release, so a moved tag or a tampered asset
+ * would silently change what we ship. This fails the build instead.
+ */
+configurations.create('mpvAarVerify') {
+    canBeConsumed = false
+    canBeResolved = true
+}
+
+dependencies {
+    mpvAarVerify "edde746:mpv-android:$mpvVersion@aar"
+}
+
+tasks.register('verifyMpvAar') {
+    def expected = rootProject.ext.mpvAarSha256
+    def config = configurations.named('mpvAarVerify')
+    inputs.files(config)
+    inputs.property('expectedSha256', expected)
+    doLast {
+        def files = config.get().files
+        def artifact = files.find { it.name.startsWith('mpv-android') }
+        if (artifact == null) {
+            throw new GradleException('Could not resolve the mpv-android AAR.')
+        }
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        artifact.withInputStream { stream ->
+            byte[] buffer = new byte[1 << 16]
+            int read
+            while ((read = stream.read(buffer)) > 0) digest.update(buffer, 0, read)
+        }
+        def actual = digest.digest().encodeHex().toString()
+        if (actual != expected) {
+            throw new GradleException(
+                "mpv-android AAR checksum mismatch.\n  expected $expected\n  actual   $actual\n" +
+                'Refusing to package an unverified native player.')
+        }
+    }
 }
 
 dependencies {
@@ -75,7 +175,24 @@ dependencies {
     // WebView; no new APK dependency bloat (Capacitor already ships it).
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation project(':capacitor-android')
-    implementation 'org.videolan.android:libvlc-all:3.6.2'
+
+    // ── Playback engine 1: mpv ──
+    // libmpv + FFmpeg + libass + libdovi, all statically linked into libmpv.so.
+    // Nothing here compiles: this host is aarch64 and has no NDK toolchain.
+    implementation "edde746:mpv-android:$mpvVersion@aar"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
+
+    // ── Playback engine 2: Media3 / ExoPlayer ──
+    implementation "androidx.media3:media3-exoplayer:$media3Version"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3Version"
+    // Some film sources are DASH.
+    implementation "androidx.media3:media3-exoplayer-dash:$media3Version"
+    implementation "androidx.media3:media3-ui:$media3Version"
+    implementation "androidx.media3:media3-common:$media3Version"
+    implementation "androidx.media3:media3-decoder:$media3Version"
+    implementation "androidx.media3:media3-datasource-cronet:$media3Version"
+    implementation "org.chromium.net:cronet-embedded:$cronetVersion"
+
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
@@ -97,30 +214,44 @@ tasks.register('copyApkToDist') {
     doLast {
         def outputDir = file("${rootDir}/../dist-apk")
         outputDir.mkdirs()
+        def versionName = android.defaultConfig.versionName
+        // ABI splits put each APK in its own directory; the universal one sits at
+        // the root of outputs/apk. Name them so the two are never confused.
         fileTree(dir: layout.buildDirectory.dir("outputs/apk"), include: '**/*.apk').each { File apk ->
             if (apk.name.contains("release")) {
                 copy {
                     from apk
                     into outputDir
-                    rename { "praha-stream-v${android.defaultConfig.versionName}.apk" }
+                    rename { "praha-stream-v${versionName}-${apkSuffix(apk)}.apk" }
                 }
             } else if (apk.name.contains("debug")) {
                 copy {
                     from apk
                     into outputDir
-                    rename { "praha-stream-v${android.defaultConfig.versionName}-debug.apk" }
+                    rename { "praha-stream-v${versionName}-${apkSuffix(apk)}-debug.apk" }
                 }
             }
         }
     }
 }
+
+/** Works out which APK this is from its path: `.../arm64-v8a/app-release.apk` etc. */
+def apkSuffix(File apk) {
+    def parent = apk.parentFile?.name ?: ''
+    if (parent in ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86']) return parent
+    return 'universal'
+}
+
 afterEvaluate {
     tasks.matching { it.name.contains("Release") && it.name.startsWith("validateSigning") }.configureEach {
         dependsOn('ensureReleaseKeystore')
     }
     tasks.named('assembleRelease').configure {
-        dependsOn('ensureReleaseKeystore')
+        dependsOn('ensureReleaseKeystore', 'verifyMpvAar')
         finalizedBy('copyApkToDist')
     }
-    tasks.named('assembleDebug').configure { finalizedBy('copyApkToDist') }
+    tasks.named('assembleDebug').configure {
+        dependsOn('verifyMpvAar')
+        finalizedBy('copyApkToDist')
+    }
 }

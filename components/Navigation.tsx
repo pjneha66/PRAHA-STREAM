@@ -36,7 +36,8 @@ const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
-  { id: 'sanka' as const, label: 'Manga & Comics', icon: BookOpen },
+  { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
+  { id: 'manga' as const, label: 'Manga', icon: BookOpen },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2 },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
   { id: 'books' as const, label: 'Books', icon: BookMarked },
@@ -51,6 +52,7 @@ const primaryMobileNavItems = [
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
   { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
+  { id: 'manga' as const, label: 'Manga', icon: BookOpen },
 ];
 
 const moreNavItems = [

@@ -114,6 +114,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dpadNavigation: false,
   askProfileOnStartup: true,
   preferNativeProxy: true,
+  nsfw: 'off',
   dnsProvider: 'system',
   dnsFallback: true,
   player: DEFAULT_PLAYER_SETTINGS,
@@ -149,5 +150,8 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
     },
     dnsProvider: typeof base.dnsProvider === 'string' ? base.dnsProvider : DEFAULT_SETTINGS.dnsProvider,
     dnsFallback: typeof base.dnsFallback === 'boolean' ? base.dnsFallback : DEFAULT_SETTINGS.dnsFallback,
+    nsfw: base.nsfw === 'on' || base.nsfw === 'only' || base.nsfw === 'off'
+      ? base.nsfw
+      : DEFAULT_SETTINGS.nsfw,
   };
 }

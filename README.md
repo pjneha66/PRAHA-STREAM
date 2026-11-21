@@ -74,4 +74,10 @@ Release signing uses `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDR
 
 ## License
 
-See repository for license details.
+PRAHA STREAM is free software under the **GNU General Public License v3.0 only**
+(`GPL-3.0-only`). See [`LICENSE`](LICENSE) for the full text and
+[`NOTICE.md`](NOTICE.md) for third-party component attributions, including the
+VyseTV-derived code, the bundled mpv and TorrServer binaries.
+
+The Android build ships both the mpv and Media3 players plus the bundled
+TorrServer engine in every ABI-specific and universal APK.

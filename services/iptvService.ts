@@ -1,6 +1,7 @@
 import CryptoJS from 'crypto-js';
 import { nativeFetchText } from './androidBridge';
 import { evictOldest } from './cacheCaps';
+import { currentNsfwMode, filterChannelsForNsfw, isAdultChannelName } from './nsfwGate';
 import type { MediaItem, StreamResult } from '../types';
 
 async function fetchWithTimeout(
@@ -1671,18 +1672,20 @@ export class IptvSources {
     return `${base}/playlist.m3u8`;
   }
 
-  /** Community sources are family-facing: strip obvious adult channels. */
+  /** Community sources are family-facing by default; the NSFW setting decides. */
   private static isAdultChannel(channel: M3uChannel): boolean {
-    const haystack = `${channel.group || ''} ${channel.name}`.toLowerCase();
-    return /(xxx|porn|adult|\b18\+\b|erotic|sex)/.test(haystack);
+    return isAdultChannelName(channel.group, channel.name);
   }
 
   /**
    * Loads and parses a public playlist through the native CORS-bypass client.
-   * Results are cached per URL (bounded) so re-selecting a source is instant.
+   * Results are cached per URL *and* NSFW mode (bounded) so re-selecting a source
+   * is instant while still honouring a mode change without a stale cache hit.
    */
   static async loadPlaylist(url: string, timeoutMs = 20000): Promise<M3uChannel[]> {
-    const cached = this.PLAYLIST_CACHE.get(url);
+    const mode = currentNsfwMode();
+    const cacheKey = `${mode}::${url}`;
+    const cached = this.PLAYLIST_CACHE.get(cacheKey);
     if (cached) return cached;
     const res = await nativeFetchText(url, { timeoutMs });
     if (!res.ok && !res.data) throw new Error(`HTTP ${res.status || 'error'} while loading the playlist.`);
@@ -1690,9 +1693,10 @@ export class IptvSources {
     if (text.trimStart().startsWith('<')) {
       throw new Error('That playlist URL returned an HTML page instead of an M3U playlist.');
     }
-    const channels = M3uParser.parse(text).filter((ch) => !this.isAdultChannel(ch) && Boolean(ch.url));
+    const parsed = M3uParser.parse(text).filter((ch) => Boolean(ch.url));
+    const channels = filterChannelsForNsfw(parsed, { nsfw: mode });
     if (!channels.length) throw new Error('The playlist loaded but contained no playable channels.');
-    this.PLAYLIST_CACHE.set(url, channels);
+    this.PLAYLIST_CACHE.set(cacheKey, channels);
     evictOldest(this.PLAYLIST_CACHE, 12);
     return channels;
   }

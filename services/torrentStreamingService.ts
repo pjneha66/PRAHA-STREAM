@@ -1,6 +1,8 @@
-import { nativeFetchText } from './androidBridge';
+import { isAndroidApp, nativeFetchText } from './androidBridge';
 import type { StreamResult } from '../types';
 import { parseTorrentTitle, torrentFileMatches } from './torrentTitle';
+import { torrServerController } from './p2p/torrServerController';
+import { TorrServerClient } from './p2p/torrServerClient';
 
 // ── In-app P2P engine (WebTorrent) ────────────────────────────────────────────
 // No TorrServer needed: webtorrent runs inside the WebView over WebRTC +
@@ -73,6 +75,9 @@ export class TorrentStreamingEngine {
   private static listeners: ((stats: TorrentStreamStats) => void)[] = [];
 
   static getHost(): string {
+    // The bundled engine owns the host once it is live — the saved host is a
+    // fallback for people pointing PRAHA at their own LAN TorrServer.
+    if (torrServerController.running) return torrServerController.host;
     if (typeof window !== 'undefined') {
       const saved = window.localStorage.getItem('praha.torrent.host');
       if (saved) return saved.replace(/\/$/, '');
@@ -96,6 +101,9 @@ export class TorrentStreamingEngine {
     magnetOrHash: string,
     options: { title?: string; timeoutMs?: number } = {},
   ): Promise<{ url: string; fileName: string; infoHash: string } | null> {
+    // Android uses the bundled TorrServer executable instead: WebTorrent's
+    // WebRTC trackers are unreliable in the WebView and drain the battery.
+    if (isAndroidApp()) return null;
     const client = await getWebTorrentClient();
     if (!client) return null;
 
@@ -153,8 +161,19 @@ export class TorrentStreamingEngine {
   /**
    * Checks if TorrServer or local torrent streaming proxy is reachable.
    */
-  static async checkEngineAvailable(host = this.getHost()): Promise<boolean> {
-    const base = host.replace(/\/$/, '');
+  static async checkEngineAvailable(host?: string): Promise<boolean> {
+    // Default to the bundled engine on Android; only fall back to a user-
+    // configured host when the native plugin is not present (web/PWA).
+    const bundled = !host && (await torrServerController.ensureStarted());
+    const base = (host || this.getHost()).replace(/\/$/, '');
+    if (bundled || (isAndroidApp() && torrServerController.running && !host)) {
+      try {
+        await new TorrServerClient(base).echo(2500);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     const probes = [`${base}/echo`, `${base}/`];
     for (const url of probes) {
       try {
@@ -181,9 +200,18 @@ export class TorrentStreamingEngine {
     const hashMatch = magnetOrHash.match(/urn:btih:([a-zA-Z0-9]+)/i) || magnetOrHash.match(/^[a-fA-F0-9]{40}$/);
     const infoHash = hashMatch ? hashMatch[1].toLowerCase() : magnetOrHash;
 
-    const magnetLink = magnetOrHash.startsWith('magnet:')
+    let magnetLink = magnetOrHash.startsWith('magnet:')
       ? magnetOrHash
       : `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(options.title || 'PRAHA-Torrent')}`;
+
+    // The bundled engine gets our refreshed public tracker list appended.
+    if (torrServerController.running) {
+      try {
+        magnetLink = await torrServerController.augmentMagnet(magnetLink, { title: options.title });
+      } catch {
+        // The original magnet is still playable.
+      }
+    }
 
     // Add torrent to TorrServer engine
     try {

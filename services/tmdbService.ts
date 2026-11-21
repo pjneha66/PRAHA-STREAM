@@ -2,6 +2,7 @@ import type {
   DiscoverFilters, MediaCastMember, MediaItem, TmdbEpisodeInfo, TmdbSeasonSummary, TmdbEnrichmentSettings,
 } from '../types';
 import { getTmdbApiKey } from './tmdbConfig';
+import { currentAllowsAdult } from './nsfwGate';
 import { evictOldest } from './cacheCaps';
 
 const API_URL = 'https://api.themoviedb.org/3';
@@ -140,7 +141,7 @@ export const tmdbService = {
   async search(query: string, page = 1) {
     const endpoint = '/search/multi';
     const data = await request<{ results?: unknown }>(
-      `${endpoint}?query=${encodeURIComponent(query)}&include_adult=false&page=${page}`,
+      `${endpoint}?query=${encodeURIComponent(query)}&include_adult=${currentAllowsAdult()}&page=${page}`,
     );
     return listOf(data, endpoint);
   },
@@ -156,7 +157,7 @@ export const tmdbService = {
 
     const buildParams = (kind: 'movie' | 'tv') => {
       const params = new URLSearchParams();
-      params.set('include_adult', 'false');
+      params.set('include_adult', String(currentAllowsAdult()));
       params.set('page', String(page));
       const sort = kind === 'tv' && filters.sortBy === 'primary_release_date.desc'
         ? 'first_air_date.desc'
