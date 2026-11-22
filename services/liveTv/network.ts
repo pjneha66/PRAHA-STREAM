@@ -13,7 +13,7 @@ import type {
   IptvStream,
   VerifiedPortal,
 } from './models';
-import { getJson, getText, probeUrl, fetchText, fetchBytes } from './http';
+import { getJson, getText, fetchText, fetchBytes } from './http';
 import { decryptPasteSh } from './pasteDecryptor';
 import { pasteRawUrl, portalKey } from './portal';
 
@@ -328,30 +328,81 @@ export class IptvAliveChecker {
   /** Probe a stream with a bounded range request and up to two retries. */
   private static async isAlive(url: string, attempt = 0): Promise<boolean> {
     try {
-      const res = await fetchText(url, {
-        headers: {
+      const res = await fetchBytes(
+        url,
+        {
           'User-Agent': UA,
           Accept: '*/*',
           Connection: 'keep-alive',
           Range: `bytes=0-${IptvAliveChecker.MAX_BYTES - 1}`,
         },
-        timeoutMs: IptvAliveChecker.TIMEOUT,
-      });
-      if (!(res.ok && res.status >= 200 && res.status < 400)) return false;
+        IptvAliveChecker.TIMEOUT,
+      );
+      const status = res.status;
+      // 206 Partial Content is the expected reply to a Range request.
+      if (!res.ok || (status !== 206 && (status < 200 || status >= 300))) return false;
       const contentType = String(res.headers?.['content-type'] ?? '').toLowerCase();
       if (IptvAliveChecker.DEAD_TYPES.some((bad) => contentType.includes(bad))) return false;
-      const head = res.data.slice(0, 4096);
-      if (head.includes('#EXTM3U') || /\b(ftyp|moov|mdat)\b/.test(head)) return true;
-      if (/\.m3u8/i.test(url) && !head.includes('#EXTM3U')) return false;
-      // nativeFetchText only exposes text: a non-empty text body with no error
-      // page is the closest available signal that the stream started answering.
-      if (head.length >= 32) return true;
-      return (await probeUrl(url, IptvAliveChecker.TIMEOUT)).ok;
+      const buf = res.bytes ? res.bytes.subarray(0, IptvAliveChecker.MAX_BYTES) : new Uint8Array(0);
+
+      // HLS playlists are text; everything else is sniffed as binary.
+      const isM3U8 = contentType.includes('mpegurl') || /\.m3u8/i.test(url);
+      if (isM3U8) {
+        const head = new TextDecoder('utf-8').decode(buf.subarray(0, 1024));
+        return head.includes('#EXTM3U');
+      }
+
+      if (!buf.length) return false;
+
+      const contentLength = Number(res.headers?.['content-length'] ?? NaN);
+      // Dart's `ended` flag: the body stopped on its own instead of hitting
+      // the read cap. A 206 means the server has bytes beyond this range, so
+      // a short reply is normal and not evidence of a stub.
+      const ended = status !== 206 && buf.length < IptvAliveChecker.MAX_BYTES;
+      if (ended && buf.length < IptvAliveChecker.MIN_BYTES) return false;
+      // Dart rejects a small declared length outright: live TS is chunked and
+      // reports no content-length, so a bounded one is a stub page.
+      if (Number.isFinite(contentLength) && contentLength >= 1 && contentLength <= 5_000_000) return false;
+
+      // MPEG-TS: sync byte 0x47 every 188 bytes.
+      if (buf[0] === 0x47) {
+        let validTs = true;
+        let checkedPackets = 0;
+        for (let i = 0; i + 188 < buf.length && checkedPackets < 10; i += 188) {
+          if (buf[i] !== 0x47) { validTs = false; break; }
+          checkedPackets++;
+        }
+        if (validTs && checkedPackets >= 3) return true;
+      }
+      // MP4: 'ftyp' box type at offset 4.
+      if (buf.length >= 8 && ascii(buf, 4, 8) === 'ftyp') return true;
+
+      return IptvAliveChecker.hasVideoSignature(buf);
     } catch {
       if (attempt < 2) return IptvAliveChecker.isAlive(url, attempt + 1);
       return false;
     }
   }
+
+  /** Container/codec magic numbers, ported from Dart's `_hasVideoSignature`. */
+  private static hasVideoSignature(buf: Uint8Array): boolean {
+    if (buf.length < 4) return false;
+    if (buf[0] === 0x47) return true; // MPEG-TS
+    if (ascii(buf, 0, 4) === '#EXT') return true; // HLS / playlist
+    if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true; // MPEG audio/video
+    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return true; // Matroska/WebM
+    if (ascii(buf, 0, 4) === 'OggS') return true; // Ogg
+    if (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x00 && buf[3] === 0x01) return true; // MPEG-PS
+    if (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] >= 0xb0) return true; // MPEG-PS pack
+    return false;
+  }
+}
+
+/** ASCII text of `buf[start, end)`, without allocating a decoder. */
+function ascii(buf: Uint8Array, start: number, end: number): string {
+  let out = '';
+  for (let i = start; i < end && i < buf.length; i++) out += String.fromCharCode(buf[i]);
+  return out;
 }
 
 // ── Catalog Xtream-Codes scraper ─────────────────────────────────────────────

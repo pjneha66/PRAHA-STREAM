@@ -17,6 +17,7 @@ export interface BytesResponse {
   ok: boolean;
   status: number;
   bytes: Uint8Array | null;
+  headers?: Record<string, string>;
 }
 
 export interface HttpOptions {
@@ -60,7 +61,7 @@ export async function getText(url: string, timeoutMs = 8000, headers: Record<str
 export async function fetchBytes(url: string, headers: Record<string, string> = {}, timeoutMs = 15000): Promise<BytesResponse> {
   try {
     const res = await nativeFetchBytes(url, { headers, timeoutMs });
-    return { ok: Boolean(res.ok), status: res.status ?? 0, bytes: res.bytes };
+    return { ok: Boolean(res.ok), status: res.status ?? 0, bytes: res.bytes, headers: res.headers };
   } catch {
     return { ok: false, status: 0, bytes: null };
   }

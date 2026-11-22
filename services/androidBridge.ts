@@ -707,10 +707,16 @@ export async function nativeFetchBytes(
       });
       const status = Number(response.status || 0);
       if (status === 429) noteRateLimited(nativeUrl);
-      if (status >= 200 && status < 300 && typeof response.data === 'string' && response.data) {
-        return { ok: true, status, bytes: base64ToBytes(response.data) };
+      const responseHeaders: Record<string, string> = {};
+      if (response.headers && typeof response.headers === 'object') {
+        for (const [key, value] of Object.entries(response.headers as Record<string, unknown>)) {
+          responseHeaders[key.toLowerCase()] = String(value ?? '');
+        }
       }
-      return { ok: false, status, bytes: null };
+      if (status >= 200 && status < 300 && typeof response.data === 'string' && response.data) {
+        return { ok: true, status, bytes: base64ToBytes(response.data), headers: responseHeaders };
+      }
+      return { ok: false, status, bytes: null, headers: responseHeaders };
     } catch {
       // Fall through to browser fetch.
     }
@@ -723,9 +729,11 @@ export async function nativeFetchBytes(
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
-    if (!response.ok) return { ok: false, status: response.status, bytes: null };
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => { responseHeaders[key.toLowerCase()] = value; });
+    if (!response.ok) return { ok: false, status: response.status, bytes: null, headers: responseHeaders };
     const buffer = await response.arrayBuffer();
-    return { ok: true, status: response.status, bytes: new Uint8Array(buffer) };
+    return { ok: true, status: response.status, bytes: new Uint8Array(buffer), headers: responseHeaders };
   } catch {
     return { ok: false, status: 0, bytes: null };
   } finally {
