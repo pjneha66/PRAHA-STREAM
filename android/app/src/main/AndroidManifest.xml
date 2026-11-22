@@ -23,6 +23,7 @@
       streams while forbidding it for credential-bearing APIs.
     -->
     <application
+        android:name=".PrahaApplication"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:dataExtractionRules="@xml/data_extraction_rules"

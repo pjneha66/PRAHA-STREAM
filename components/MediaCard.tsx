@@ -95,7 +95,9 @@ export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, on
                     ? 'IMDX'
                     : entry.media.source === 'youtube'
                       ? 'FLOW'
-                      : 'TMDB'}
+                      : entry.media.source === 'cloudstream'
+                        ? 'CLOUDSTREAM'
+                        : 'TMDB'}
           </span>
           <span className="continue-timestamp">{timeLabel}</span>
         </div>

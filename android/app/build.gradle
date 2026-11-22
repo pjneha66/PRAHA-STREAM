@@ -16,8 +16,8 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 44
-        versionName "2.11.19"
+        versionCode 45
+        versionName "2.11.20"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -83,6 +83,14 @@ kotlin {
     jvmToolchain(21)
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+        // The CloudStream host layer mirrors the official app, which opts in to
+        // these markers for the same reason: DataStore's JSON helpers and the
+        // extension loader are annotated InternalAPI but are what extensions and
+        // the app both call. Opting in here keeps the shim identical to upstream.
+        freeCompilerArgs.addAll(
+            "-opt-in=com.lagradost.cloudstream3.InternalAPI",
+            "-opt-in=com.lagradost.cloudstream3.Prerelease",
+        )
     }
 }
 
@@ -175,6 +183,11 @@ dependencies {
     // WebView; no new APK dependency bloat (Capacitor already ships it).
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation project(':capacitor-android')
+
+    // ── CloudStream extensions ──
+    // The API real .cs3 files link against, compiled from upstream's library
+    // sources. Without it the classes a .cs3 references are missing at load time.
+    implementation project(':cloudstream-lib')
 
     // ── Playback engine 1: mpv ──
     // libmpv + FFmpeg + libass + libdovi, all statically linked into libmpv.so.

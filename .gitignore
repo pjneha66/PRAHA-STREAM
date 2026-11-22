@@ -49,3 +49,8 @@ android/.mimosa/
 android/capacitor-cordova-android-plugins/build/
 android/app/release.keystore
 
+# Pinned CloudStream sources, vendored by scripts/fetch-cloudstream-upstream.sh.
+# Fetched, not committed: they are upstream's tree at a pinned commit.
+android/upstream/
+android/cloudstream-lib/build/
+

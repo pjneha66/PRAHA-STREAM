@@ -6,6 +6,7 @@ import EmbedModal from './components/EmbedModal';
 import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
 import ExtensionsView from './components/ExtensionsView';
+import CloudStreamView from './components/CloudStreamView';
 import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
@@ -47,9 +48,10 @@ import { noteSearchTerm } from './services/searchHistory';
 import { hashPin } from './services/profilePin';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
 import { buildIptvPlayback, IptvZapStore } from './services/iptvService';
+import { loadTitle } from './services/cloudstreamService';
 import {
   APP_VERSION,
-  AppSettings, AppView, DiscoverFilters, HomeCatalog, InstalledAddon,
+  AppSettings, AppView, CloudStreamSearchItem, DiscoverFilters, HomeCatalog, InstalledAddon,
   LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, ProfileAvatarIcon, StreamResult, ToastMessage,
   UserProfile, WatchProgress, PrahaBackupBundle,
 } from './types';
@@ -58,7 +60,7 @@ const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -843,6 +845,45 @@ const App: React.FC = () => {
     setEmbedState({ media, season: season ?? existing?.season ?? 1, episode: episode ?? existing?.episode ?? 1 });
   };
 
+  /**
+   * A CloudStream extension returns its own item data, not a TMDB title, so the
+   * details page is built from what the extension reported and the extension
+   * itself supplies the sources. There is nothing for TMDB to enrich here — the
+   * item may not even exist in TMDB — so this goes straight to the source list.
+   */
+  const openCloudStreamItem = async (item: CloudStreamSearchItem) => {
+    try {
+      const response = await loadTitle(item.apiName, item.url);
+      const isSeries = response.kind === 'series' || response.kind === 'anime';
+      const media: MediaItem = {
+        id: `cloudstream:${item.apiName}:${item.url}`,
+        type: isSeries ? 'series' : 'movie',
+        title: response.name || item.name,
+        overview: response.plot || '',
+        poster: response.posterUrl || item.posterUrl || '',
+        backdrop: response.backgroundPosterUrl || undefined,
+        logo: response.logoUrl || undefined,
+        year: response.year ? String(response.year) : undefined,
+        rating: response.score ?? undefined,
+        genres: response.tags ?? [],
+        source: 'cloudstream',
+        cloudstreamApiName: item.apiName,
+        cloudstreamUrl: item.url,
+        cloudstreamPlayables: response.playables,
+      };
+      if (isSeries) {
+        // Each playable is one episode; the season/episode numbers the extension
+        // reported are what SourceModal matches against.
+        const first = response.playables[0];
+        openSources(media, first?.season ?? 1, first?.episode ?? 1);
+      } else {
+        openSources(media);
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'That title could not be opened.', 'error');
+    }
+  };
+
   const openSources = (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => {
     const existing = history.find((h) => h.media.id === item.id);
     setSelected(null);
@@ -1457,6 +1498,13 @@ const App: React.FC = () => {
         onOpenExtensions={() => navigate('extensions')}
       />
     );
+  } else if (view === 'cloudstream') {
+    page = (
+      <CloudStreamView
+        onOpenItem={openCloudStreamItem}
+        notify={notify}
+      />
+    );
   } else if (view === 'extensions') {
     page = (
       <ExtensionsView
@@ -1467,6 +1515,7 @@ const App: React.FC = () => {
         setRepositories={setRepositories}
         setNuvioSettings={setNuvioSettings}
         notify={notify}
+        onOpenCloudStream={() => navigate('cloudstream')}
       />
     );
   } else {

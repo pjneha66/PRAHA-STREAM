@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookMarked, BookOpen, Check, Compass, Home, LayoutGrid, Library,
+  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, LayoutGrid, Library,
   MoreHorizontal, Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
   UserPlus, Users, X,
 } from 'lucide-react';
@@ -63,6 +63,7 @@ const moreNavItems = [
   { id: 'discover' as const, label: 'Discover', icon: Compass, desc: 'Recommendations & genres' },
   { id: 'library' as const, label: 'My Library', icon: Library, desc: 'Watchlist & history' },
   { id: 'extensions' as const, label: 'Addons & Plugins', icon: Blocks, desc: 'Stremio & Nuvio sources' },
+  { id: 'cloudstream' as const, label: 'CloudStream', icon: Boxes, desc: 'Repositories & .cs3 extensions' },
   { id: 'settings' as const, label: 'Settings', icon: Settings, desc: 'Debrid, player & auto-updates' },
 ];
 

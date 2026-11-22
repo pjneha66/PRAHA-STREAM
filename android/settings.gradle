@@ -1,4 +1,18 @@
+// The CloudStream extension API is a Kotlin-multiplatform module, and a KMP module
+// is applied through a `plugins {}` block. That block resolves through
+// pluginManagement, which only pluginManagement in settings can configure, so the
+// repositories are declared here (PRAHA's root build.gradle uses the older
+// buildscript classpath style, which cannot supply KMP plugin markers).
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
 include ':app'
+include ':cloudstream-lib'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 

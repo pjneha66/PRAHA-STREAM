@@ -22,6 +22,34 @@ areas include:
 Where a file carries an original GPL header or a "ported from" comment, that
 notice has been preserved.
 
+## Code ported from CloudStream
+
+The CloudStream extension host is a direct port of **CloudStream 3**
+([recloudstream/cloudstream](https://github.com/recloudstream/cloudstream)),
+distributed under GPL-3.0. Copyright in that original work remains with the
+CloudStream authors and contributors. Two kinds of code are involved:
+
+- **The extension API itself.** `android/cloudstream-lib` compiles CloudStream's
+  `library` module from source at the pinned commit
+  `a7ac454af8fbd64574c96847a936905855911720`, plus the NiceHttp dependency at
+  tag `0.4.18`. It is not modified in substance; it is built from the upstream
+  tree so installed `.cs3` extensions link against a matching ABI. The upstream
+  sources are fetched by `scripts/fetch-cloudstream-upstream.sh` and are not
+  committed to this repository.
+- **The app-side host.** The classes under
+  `android/app/src/main/java/com/lagradost/cloudstream3/` reimplement the parts
+  of CloudStream's `app` module that extensions call into — `CloudStreamApp`,
+  `CommonActivity`, `Plugin`, `DataStore`, `Event`, `UiText`, `VideoClickAction`,
+  `ResultEpisode` and the settings/repository records — and the files under
+  `com/praha/stream/cloudstream/` port upstream's `PluginManager`,
+  `RepositoryManager` and the home/catalog plumbing onto PRAHA's bridge.
+
+These are ports, not the upstream application: they are cut down to the surface
+extensions actually use, and the player, UI and download machinery are PRAHA's
+own. Where a ported file differs from upstream, the difference is a deliberate
+reduction rather than an unmarked change. The complete corresponding source for
+both the library and the host is available from this repository.
+
 ## Bundled native components
 
 | Component | Licence | Notes |

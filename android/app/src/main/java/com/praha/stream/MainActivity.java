@@ -35,7 +35,6 @@ import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 import androidx.webkit.WebViewCompat.WebMessageListener;
 
-import com.getcapacitor.BridgeActivity;
 import com.praha.stream.mpv.PrahaMpvPlugin;
 import com.praha.stream.media3.PrahaMedia3Plugin;
 import com.praha.stream.torr.PrahaTorrServerPlugin;
@@ -62,7 +61,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-public class MainActivity extends BridgeActivity {
+public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
     // The full bridge instance used for RPC dispatch on the origin-gated path.
     // It is intentionally NOT injected into JavaScript on that path; only the
@@ -78,7 +77,24 @@ public class MainActivity extends BridgeActivity {
             6, 6, 30L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<Runnable>(96),
             new ThreadPoolExecutor.AbortPolicy());
+    /**
+     * Extension calls get their own pool. An extension can block for the whole
+     * source timeout (45s by default, and several at once), so sharing
+     * [httpExecutor] would let a few slow extensions starve the app's own HTTP
+     * bridge. Small on purpose: extension work is already parallelised inside
+     * CsEngine, this is only the bridge's fan-out.
+     */
+    private final ExecutorService csExecutor = new ThreadPoolExecutor(
+            4, 4, 30L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(64),
+            new ThreadPoolExecutor.AbortPolicy());
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
+    /**
+     * Picking a .cs3 has to happen natively: the file lives behind a content://
+     * uri that CsBridge.sideload reads through the content resolver, and a WebView
+     * <input type="file"> cannot hand that uri over.
+     */
+    private ActivityResultLauncher<Intent> csPluginPickerLauncher;
     private ActivityResultLauncher<Intent> vpnConsentLauncher;
     /** Resolver to use once consent is granted. */
     private volatile String pendingVpnDns = "1.1.1.1";
@@ -138,6 +154,24 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Extensions get this activity for dialogs and toasts, and PluginManager
+        // waits for it before calling a plugin's load(). Set before anything can
+        // ask for it, and before the WebView is configured.
+        com.lagradost.cloudstream3.CommonActivity.INSTANCE.setActivity(this);
+        // An extension calling AppContextUtils.loadResult (open a title page)
+        // navigates the web layer instead of an Android screen.
+        com.lagradost.cloudstream3.utils.AppContextUtils.INSTANCE.setOpenDetails(
+                (apiName, url, name) -> {
+                    try {
+                        pushCloudStreamEvent("details", new org.json.JSONObject()
+                                .put("apiName", apiName)
+                                .put("url", url)
+                                .put("name", name));
+                    } catch (Exception ignored) {
+                        // A malformed title name must not break the extension's call.
+                    }
+                    return kotlin.Unit.INSTANCE;
+                });
         // The mpv engine is a Capacitor plugin but is not installed by npm, so
         // Capacitor's automatic scanning never sees it. Registering it here is
         // what puts `Capacitor.Plugins.PrahaMpv` on the JS side.
@@ -169,6 +203,34 @@ public class MainActivity extends BridgeActivity {
                             }
                         }
                     }
+                }
+        );
+
+        // A .cs3 the user picked from storage. Installing it here (rather than
+        // replying to a held-open RPC) keeps the bridge call synchronous with the
+        // install and reports the outcome as an event.
+        csPluginPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() != RESULT_OK || result.getData() == null) return;
+                    Uri uri = result.getData().getData();
+                    if (uri == null) return;
+                    final String picked = uri.toString();
+                    csExecutor.execute(() -> {
+                        boolean ok = false;
+                        String message = null;
+                        try {
+                            ok = com.praha.stream.cloudstream.CsBridge.INSTANCE.sideload(picked);
+                            if (!ok) message = "The package could not be loaded.";
+                        } catch (Exception e) {
+                            message = e.getMessage() != null ? e.getMessage() : "The package could not be loaded.";
+                        }
+                        try {
+                            pushCloudStreamEvent("install", new org.json.JSONObject()
+                                    .put("ok", ok)
+                                    .put("message", message == null ? org.json.JSONObject.NULL : message));
+                        } catch (Exception ignored) { }
+                    });
                 }
         );
 
@@ -243,8 +305,13 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        // Do not leave extensions holding a destroyed activity.
+        if (com.lagradost.cloudstream3.CommonActivity.INSTANCE.getActivity() == this) {
+            com.lagradost.cloudstream3.CommonActivity.INSTANCE.setActivity(null);
+        }
         streamProxy.stop();
         httpExecutor.shutdownNow();
+        csExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -296,9 +363,10 @@ public class MainActivity extends BridgeActivity {
         };
 
         // Network-bound calls must not occupy the WebView bridge thread.
-        if ("httpRequest".equals(fMethod)) {
+        if ("httpRequest".equals(fMethod) || fMethod.startsWith("cs")) {
+            ExecutorService pool = fMethod.startsWith("cs") ? csExecutor : httpExecutor;
             try {
-                httpExecutor.execute(invoke);
+                pool.execute(invoke);
             } catch (RejectedExecutionException rejected) {
                 // Pool and queue saturated: fail fast so JS falls back to
                 // CapacitorHttp / browser fetch instead of waiting.
@@ -317,6 +385,47 @@ public class MainActivity extends BridgeActivity {
             }
         } else {
             invoke.run();
+        }
+    }
+
+    /**
+     * Pushes an event from the extension host to the web layer. The listener is
+     * optional (`&&`), so an event fired before the UI registered is dropped
+     * rather than throwing — same shape as `deliverHttpCallback`.
+     */
+    void pushCloudStreamEvent(String type, JSONObject detail) {
+        final String payload = detail == null ? "{}" : detail.toString();
+        runOnUiThread(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    String js = "window.__prahaCloudStreamEvent && window.__prahaCloudStreamEvent("
+                            + JSONObject.quote(type) + ", " + payload + ");";
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // The WebView is gone; nothing to deliver to.
+            }
+        });
+    }
+
+    /** Opens the document picker for a .cs3; the result is installed on csExecutor. */
+    private void launchPluginPicker() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                    "application/zip",
+                    "application/octet-stream",
+                    "application/vnd.android.package-archive",
+            });
+            csPluginPickerLauncher.launch(intent);
+        } catch (Exception e) {
+            try {
+                pushCloudStreamEvent("install", new org.json.JSONObject()
+                        .put("ok", false)
+                        .put("message", "No file picker is available."));
+            } catch (Exception ignored) { }
         }
     }
 
@@ -411,6 +520,65 @@ public class MainActivity extends BridgeActivity {
                 return null;
             case "vlcSetAspectRatio":
                 return rpcBridge.vlcSetAspectRatio(args.optString(0, ""));
+
+            // ── CloudStream extensions ────────────────────────────────────
+            // Every one of these blocks on extension code, which is why they
+            // run on the network pool (see the isLongRunning switch below),
+            // not on the WebView's bridge thread.
+            case "csRepositories":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.repositories().toString();
+            case "csAddRepository":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.addRepository(args.getString(0)).toString();
+            case "csRemoveRepository":
+                com.praha.stream.cloudstream.CsBridge.INSTANCE.removeRepository(args.getString(0));
+                return null;
+            case "csRepoPlugins":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.repoPlugins(args.getString(0)).toString();
+            case "csPlugins":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.plugins().toString();
+            case "csInstallPlugin":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.installPlugin(args.getString(0), args.getString(1));
+            case "csUninstallPlugin":
+                com.praha.stream.cloudstream.CsBridge.INSTANCE.uninstallPlugin(args.getString(0));
+                return null;
+            case "csUpdatePlugins":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.updateAll().toString();
+            case "csInstallMissing":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.installMissing(
+                        args.optBoolean(0, false), args.optJSONArray(1)).toString();
+            case "csSideload":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.sideload(args.getString(0));
+            case "csPickPluginFile":
+                runOnUiThread(this::launchPluginPicker);
+                return true;
+            case "csProviders":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.providers().toString();
+            case "csHome":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.home(args.optJSONArray(0)).toString();
+            case "csCatalogs":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.catalogs(args.optJSONArray(0)).toString();
+            case "csSetCatalogEnabled":
+                com.praha.stream.cloudstream.CsBridge.INSTANCE.setCatalogEnabled(
+                        args.getString(0), args.getString(1), args.optBoolean(2, true));
+                return null;
+            case "csSearch":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.search(
+                        args.getString(0), args.optJSONArray(1)).toString();
+            case "csLoad":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.load(args.getString(0), args.getString(1)).toString();
+            case "csLinks":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.links(args.getString(0), args.getString(1)).toString();
+            case "csPrefetch":
+                com.praha.stream.cloudstream.CsBridge.INSTANCE.prefetch(args.getString(0), args.getString(1));
+                return null;
+            case "csSettings":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.settings().toString();
+            case "csSetSettings":
+                com.praha.stream.cloudstream.CsBridge.INSTANCE.setSettings(args.getJSONObject(0));
+                return null;
+            case "csOpenPluginFile":
+                return com.praha.stream.cloudstream.CsBridge.INSTANCE.pluginFile(args.getString(0));
+
             default:
                 throw new IllegalArgumentException("Unknown bridge method: " + method);
         }

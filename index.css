@@ -466,7 +466,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .extension-stats p { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; color: var(--muted); font-size: 9px; }
 .extension-stats strong { color: var(--text); font-size: 20px; line-height: 1; }
 .extension-stats small { margin-top: 4px; color: var(--muted-2); font-size: 8px; }
-.extension-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 14px; padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: #0c0e11; }
+.extension-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-bottom: 14px; padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: #0c0e11; }
 .extension-tabs button { display: flex; align-items: center; gap: 11px; min-height: 55px; padding: 8px 13px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--muted); text-align: left; }
 .extension-tabs button.active { border-color: var(--line); background: var(--surface-2); color: var(--accent); box-shadow: 0 4px 12px rgba(0,0,0,.12); }
 .extension-tabs button > span { display: flex; flex: 1; flex-direction: column; color: #d8dbdf; font-size: 10px; font-weight: 650; }
@@ -1487,6 +1487,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .stream-meta > span { display: inline-flex; align-items: center; gap: 4px; }
 .stream-origin { padding: 4px 7px; border-radius: 6px; background: rgba(255,255,255,.05); color: #b8c0c9; text-transform: uppercase; letter-spacing: .3px; font-size: 10px; font-weight: 700; }
 .stream-origin.nuvio { color: var(--accent); }
+.stream-origin.cloudstream { color: #c99bff; }
 .stream-meta .seeders { color: #8ebf9c; }
 .stream-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .stream-skeleton { display: flex; align-items: center; gap: 13px; height: 74px; border-bottom: 1px solid var(--line); }
@@ -3362,3 +3363,43 @@ html.player-vlc-active .app-shell,
 .source-embed-fallback p { margin: 0; max-width: 62ch; color: var(--muted, #8b949e); font-size: 12px; line-height: 1.5; }
 .source-embed-fallback .button { flex: 0 0 auto; }
 @media (max-width: 700px) { .source-embed-fallback { flex-direction: column; align-items: stretch; } }
+
+/* ── CloudStream extensions ────────────────────────────────────────────────
+   Extensions run on the device, so these screens manage native state rather
+   than a local store. The layout reuses the extension cards so the two screens
+   read as one family. */
+.cloudstream-page .cloudstream-hero h1 { max-width: 15ch; }
+.cloudstream-unavailable { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 620px; margin: 60px auto; padding: 34px 30px; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-soft); text-align: center; }
+.cloudstream-unavailable > span { display: flex; align-items: center; justify-content: center; width: 58px; height: 58px; border: 1px solid rgba(var(--accent-rgb), .2); border-radius: 17px; background: rgba(var(--accent-rgb), .09); color: var(--accent); }
+.cloudstream-unavailable h1 { margin: 0; font-size: 21px; }
+.cloudstream-unavailable p { margin: 0; max-width: 52ch; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
+.cloudstream-toolbar { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 16px; }
+.cloudstream-badge { padding: 3px 7px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.04); color: var(--muted); font-size: 8px; font-weight: 650; }
+.cloudstream-badge.error { border-color: rgba(248,81,73,.4); color: #f85149; }
+.cloudstream-loading { display: flex; align-items: center; gap: 8px; padding: 16px; color: var(--muted); font-size: 10px; }
+.test-button.is-installed { color: var(--muted-2); cursor: default; }
+
+.cloudstream-results, .cloudstream-batch { margin-top: 22px; }
+.cloudstream-batch .section-heading { margin-bottom: 12px; }
+.cloudstream-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 14px 12px; }
+.cloudstream-tile { display: flex; flex-direction: column; gap: 7px; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.cloudstream-tile-art { display: flex; align-items: center; justify-content: center; aspect-ratio: 2 / 3; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); color: var(--muted); }
+.cloudstream-tile-art img { width: 100%; height: 100%; object-fit: cover; }
+.cloudstream-tile strong { display: -webkit-box; overflow: hidden; font-size: 11px; font-weight: 650; line-height: 1.3; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cloudstream-tile small { color: var(--muted); font-size: 8.5px; }
+.cloudstream-tile:hover .cloudstream-tile-art { border-color: rgba(var(--accent-rgb), .4); }
+.cloudstream-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 11px; }
+
+.cloudstream-addon-section { margin-top: 8px; }
+.cloudstream-addon-card { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft); }
+.cloudstream-addon-card > div { flex: 1; min-width: 0; }
+.cloudstream-addon-card h3 { margin: 0 0 4px; font-size: 14px; }
+.cloudstream-addon-card p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.cloudstream-addon-card .button { flex: 0 0 auto; }
+
+@media (max-width: 760px) {
+  .extension-tabs { grid-template-columns: repeat(2, 1fr); }
+  .cloudstream-addon-card { flex-direction: column; align-items: stretch; }
+  .cloudstream-addon-card .button { justify-content: center; }
+}

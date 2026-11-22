@@ -1,7 +1,7 @@
-export const APP_VERSION = '2.11.19';
+export const APP_VERSION = '2.11.20';
 
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -87,12 +87,20 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube' | 'iptv';
+  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube' | 'iptv' | 'cloudstream';
   /** Present when the title was resolved through AniCore / Anikura. */
   anime?: AnimeReference;
   addonUrl?: string;
   providerId?: string;
   providerMediaId?: string;
+  /**
+   * Set when the title came from a CloudStream extension. Sources for it are
+   * resolved by asking that extension for links, so the provider name and the
+   * playable list travel with the item rather than being looked up again.
+   */
+  cloudstreamApiName?: string;
+  cloudstreamUrl?: string;
+  cloudstreamPlayables?: CloudStreamPlayable[];
   /** Enriched TMDB details */
   trailerKey?: string;
   trailerName?: string;
@@ -234,6 +242,142 @@ export interface NuvioRepository {
   updatedAt: number;
 }
 
+/**
+ * A CloudStream extension repository (a `repo.json` / `plugins.json` pair). Managed
+ * natively: the .cs3 packages are Dalvik bytecode and can only be installed and run
+ * by the Android host, so this list mirrors what the host reports rather than
+ * being the source of truth.
+ */
+export interface CloudStreamRepository {
+  name: string;
+  url: string;
+  iconUrl?: string | null;
+  description?: string | null;
+}
+
+/** An extension a repository offers, with its installed state as the host sees it. */
+export interface CloudStreamAvailablePlugin {
+  internalName: string;
+  name: string;
+  version: number;
+  description?: string | null;
+  authors: string[];
+  language?: string | null;
+  iconUrl?: string | null;
+  /** 0 down, 1 ok, 2 slow, 3 beta only — the repository's own health marker. */
+  status: number;
+  tvTypes: string[];
+  fileSize?: number | null;
+  repositoryUrl: string;
+  installed: boolean;
+  installedVersion?: number | null;
+  updateAvailable: boolean;
+}
+
+/** An installed extension. `loaded` is false when the .cs3 failed to load. */
+export interface CloudStreamPlugin {
+  internalName: string;
+  name: string;
+  version: number;
+  isOnline: boolean;
+  repositoryUrl?: string | null;
+  loaded: boolean;
+  providerCount: number;
+  extractorCount: number;
+  error?: string | null;
+}
+
+/** A provider a loaded extension registered. */
+export interface CloudStreamProvider {
+  name: string;
+  lang: string;
+  hasMainPage: boolean;
+  supportedTypes: string[];
+  sourcePlugin?: string | null;
+}
+
+export interface CloudStreamSearchItem {
+  name: string;
+  url: string;
+  apiName: string;
+  type?: string | null;
+  posterUrl?: string | null;
+  quality?: string | null;
+  score?: number | null;
+  id?: number | null;
+}
+
+/** One row of the CloudStream home screen. */
+export interface CloudStreamHomeSection {
+  apiName: string;
+  section: string;
+  name: string;
+  horizontal: boolean;
+  items: CloudStreamSearchItem[];
+}
+
+/** A playable unit: a movie, or one episode of a series. */
+export interface CloudStreamPlayable {
+  label: string;
+  data: string;
+  season?: number | null;
+  episode?: number | null;
+  name?: string | null;
+  posterUrl?: string | null;
+  description?: string | null;
+  dub?: string | null;
+}
+
+export interface CloudStreamLoadResponse {
+  apiName: string;
+  name: string;
+  url: string;
+  type: string;
+  kind: 'movie' | 'series' | 'anime' | 'torrent' | 'live';
+  posterUrl?: string | null;
+  backgroundPosterUrl?: string | null;
+  logoUrl?: string | null;
+  year?: number | null;
+  plot?: string | null;
+  duration?: number | null;
+  score?: number | null;
+  contentRating?: string | null;
+  tags: string[];
+  playables: CloudStreamPlayable[];
+}
+
+export interface CloudStreamLink {
+  source: string;
+  name: string;
+  url: string;
+  referer: string;
+  quality: number;
+  type: string;
+  isM3u8: boolean;
+  headers: Record<string, string>;
+}
+
+/** A subtitle an extension returned. Field names match the host's JSON. */
+export interface CloudStreamSubtitle {
+  lang: string;
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export interface CloudStreamLinks {
+  links: CloudStreamLink[];
+  subtitles: CloudStreamSubtitle[];
+}
+
+export interface CloudStreamSettings {
+  sourcesTimeoutSeconds: number;
+  preferredQuality: number;
+  audioLanguage: string;
+  prepareSources: boolean;
+  allowAdult: boolean;
+  jsDelivr: boolean;
+}
+
 export interface StreamSubtitle {
   id?: string;
   url: string;
@@ -247,7 +391,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed';
+  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed' | 'cloudstream';
   quality?: string;
   size?: string;
   language?: string;

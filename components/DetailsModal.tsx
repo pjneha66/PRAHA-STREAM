@@ -238,7 +238,9 @@ const DetailsModal: React.FC<{
                     ? 'FROM IMDX'
                     : item.source === 'youtube'
                       ? 'FROM YOUTUBE · FLOW'
-                      : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
+                      : item.source === 'cloudstream'
+                        ? 'FROM A CLOUDSTREAM EXTENSION'
+                        : item.type === 'movie' ? 'FEATURE FILM' : 'SERIES'}
             </span>
             <h2>{item.title}</h2>
             <div className="details-meta">

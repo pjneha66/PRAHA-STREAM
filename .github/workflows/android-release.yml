@@ -47,6 +47,9 @@ jobs:
         with:
           packages: 'platform-tools'
 
+      - name: Fetch CloudStream upstream sources
+        run: bash scripts/fetch-cloudstream-upstream.sh
+
       - name: Sync Capacitor Android
         run: npx cap sync android
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, ArrowUpRight, Blocks, Check, ChevronDown, ChevronUp, CircleAlert,
+  ArrowDown, ArrowUp, ArrowUpRight, Blocks, Boxes, Check, ChevronDown, ChevronUp, CircleAlert,
   Cloud, Compass, ExternalLink, Layers, Package, PackageOpen, Play, Plug, RefreshCw,
   Search, Settings2, ShieldCheck, Sliders, Trash2, WandSparkles, X, Zap, Pencil,
 } from 'lucide-react';
@@ -12,6 +12,7 @@ import {
 import {
   fetchNuvioRepository, getNuvioScraperSettingsSchema, testNuvioScraper,
 } from '../services/nuvioService';
+import { cloudStreamAvailable } from '../services/cloudstreamService';
 import type {
   InstalledAddon, NuvioRepository, NuvioScraper, NuvioSettingField,
 } from '../types';
@@ -25,6 +26,8 @@ interface ExtensionsProps {
   setRepositories: (updater: NuvioRepository[] | ((current: NuvioRepository[]) => NuvioRepository[])) => void;
   setNuvioSettings: (updater: Record<string, Record<string, unknown>> | ((current: Record<string, Record<string, unknown>>) => Record<string, Record<string, unknown>>)) => void;
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
+  /** CloudStream extensions are managed natively; this opens that screen. */
+  onOpenCloudStream: () => void;
 }
 
 const resourceNames = (addon: InstalledAddon) => [...new Set(addon.manifest.resources.map((resource) => resource.name))];
@@ -41,9 +44,9 @@ function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
 
 const ExtensionsView: React.FC<ExtensionsProps> = ({
   addons, repositories, nuvioSettings,
-  setAddons, setRepositories, setNuvioSettings, notify,
+  setAddons, setRepositories, setNuvioSettings, notify, onOpenCloudStream,
 }) => {
-  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'directory'>('stremio');
+  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'cloudstream' | 'directory'>('stremio');
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState('');
@@ -186,10 +189,11 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
       <div className="extension-tabs">
         <button className={tab === 'stremio' ? 'active' : ''} onClick={() => { setTab('stremio'); setInstallError(''); }}><Blocks size={18} /><span>Stremio addons<small>Catalogs, subtitles & streams</small></span><b>{addons.length}</b></button>
         <button className={tab === 'nuvio' ? 'active' : ''} onClick={() => { setTab('nuvio'); setInstallError(''); }}><Zap size={18} /><span>Nuvio plugins<small>Repositories & scrapers</small></span><b>{repositories.length}</b></button>
+        <button className={tab === 'cloudstream' ? 'active' : ''} onClick={() => { setTab('cloudstream'); setInstallError(''); }}><Boxes size={18} /><span>CloudStream<small>Native .cs3 extensions</small></span><b>→</b></button>
         <button className={tab === 'directory' ? 'active' : ''} onClick={() => { setTab('directory'); setInstallError(''); }}><Compass size={18} /><span>1-Click Directory<small>Subtitles, anime & catalogs</small></span><b>{CURATED_EXTENSIONS.length}</b></button>
       </div>
 
-      {tab !== 'directory' && (
+      {tab !== 'directory' && tab !== 'cloudstream' && (
         <section className="install-panel">
           <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : <Zap size={20} />}</span><div><h2>Add {tab === 'stremio' ? 'a Stremio addon' : 'a Nuvio repository'}</h2><p>{tab === 'stremio'
             ? 'Paste a manifest URL or stremio:// link. Subtitle addons like OpenSubtitles work automatically.'
@@ -266,7 +270,7 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         </section>
       )}
 
-      {tab !== 'directory' && (
+      {tab !== 'directory' && tab !== 'cloudstream' && (
         <div className="installed-heading">
           <div>
             <h2>Installed {tab === 'stremio' ? 'addons' : 'repositories'}</h2>
@@ -405,6 +409,32 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
           })}
           {!repositories.length && <div className="empty-state extension-empty nuvio-empty"><span><PackageOpen size={27} /></span><h2>Your plugin shelf is empty</h2><p>Add a Nuvio repository above. Its providers appear here with individual controls, scraper settings, and stream testing.</p><div className="empty-features"><span><Check size={14} /> Android CORS bypass</span><span><Check size={14} /> Scraper settings</span><span><Check size={14} /> Stream testing</span></div></div>}
         </div>
+      )}
+
+      {tab === 'cloudstream' && (
+        <section className="cloudstream-addon-section">
+          <div className="installed-heading">
+            <div>
+              <h2>CloudStream extensions</h2>
+              <p>
+                CloudStream ships its sources as <code>.cs3</code> packages — Android bytecode that
+                has to run on the device. Manage repositories, install extensions and browse their
+                catalogs from the dedicated screen.
+              </p>
+            </div>
+            <span>{cloudStreamAvailable() ? 'Available on this device' : 'Android only'}</span>
+          </div>
+          <div className="cloudstream-addon-card">
+            <span className="extension-logo nuvio"><Boxes size={24} /></span>
+            <div>
+              <h3>CloudStream</h3>
+              <p>Real extension support: repositories, <code>.cs3</code> install/update, providers, home rows and search.</p>
+            </div>
+            <button className="button button-primary" onClick={onOpenCloudStream}>
+              {cloudStreamAvailable() ? 'Open CloudStream' : 'Learn more'} <ArrowUpRight size={15} />
+            </button>
+          </div>
+        </section>
       )}
 
       <div className="extension-footer"><div><ShieldCheck size={18} /><p><strong>Android Native Networking</strong>Inside the PRAHA Android APK, Stremio addons and Nuvio scrapers automatically route blocked requests and custom stream headers through PRAHA’s native Android HTTP & local stream proxy.</p></div><a href={tab === 'nuvio' ? 'https://github.com/NuvioMedia/NuvioMobile' : 'https://github.com/Stremio/stremio-addon-sdk'} target="_blank" rel="noreferrer">View project docs <ArrowUpRight size={15} /></a></div>

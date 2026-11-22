@@ -187,7 +187,7 @@ function ensureRpcListener(): void {
   rpcListenerAttached = true;
 }
 
-function prahaRpc<T>(method: string, args: unknown[], timeoutMs = 15000): Promise<T> {
+export function prahaRpc<T>(method: string, args: unknown[], timeoutMs = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const bridge = getBridgeRpc();
     if (!bridge) {

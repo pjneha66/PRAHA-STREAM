@@ -3,6 +3,9 @@ import { MonitorPlay } from 'lucide-react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
 import { findNuvioStreams } from '../services/nuvioService';
 import { findPlayTorrioStreams } from '../services/playtorrioScrapers';
+import {
+  cloudStreamAvailable, getLinks, prefetch, toStreamResults,
+} from '../services/cloudstreamService';
 import { filmQueryFromMedia, rankStreams, scrapeFilmSources } from '../services/sourceOrchestrator';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
@@ -150,6 +153,9 @@ const SourceModal: React.FC<{
     setHealth([
       { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
       { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
+      ...(media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable()
+        ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
+        : []),
       ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
       ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
     ]);
@@ -274,7 +280,29 @@ const SourceModal: React.FC<{
             if (result.streams.length) clearLoading();
           });
         })();
-        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob];
+        const cloudstreamJob = (async () => {
+          // Only a title that came from an extension can be resolved by one:
+          // CloudStream links are looked up by the extension's own item data,
+          // not by an IMDb/TMDB id, so there is nothing to ask for a TMDB title.
+          const apiName = media.cloudstreamApiName;
+          const playables = media.cloudstreamPlayables ?? [];
+          if (!apiName || !playables.length || !cloudStreamAvailable()) return;
+          const wantedSeason = media.type === 'series' ? s : undefined;
+          const wantedEpisode = media.type === 'series' ? ep : undefined;
+          const playable = (wantedSeason && wantedEpisode
+            ? playables.find((entry) => entry.season === wantedSeason && entry.episode === wantedEpisode)
+            : undefined)
+            ?? playables[0];
+          if (!playable) return;
+          const id = `cloudstream:${apiName}`;
+          prefetch(apiName, playable.data);
+          return runProvider(id, async () => {
+            const links = await getLinks(apiName, playable.data);
+            const streams = toStreamResults(apiName, links);
+            return { streams, errors: [] };
+          }, publish);
+        })();
+        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, cloudstreamJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
@@ -285,7 +313,6 @@ const SourceModal: React.FC<{
     void load();
     return () => { cancelled = true; };
   }, [media, season, episode, requestKey, addons, repositories, nuvioSettings]);
-
   useEffect(() => {
     if (suspended) return;
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -299,7 +326,8 @@ const SourceModal: React.FC<{
 
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
-  const providerCount = activeStreamAddons + activeScrapers + 1;
+  const providerCount = activeStreamAddons + activeScrapers + 1
+    + (media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable() ? 1 : 0);
 
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
 
