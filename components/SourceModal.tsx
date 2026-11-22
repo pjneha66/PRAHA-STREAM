@@ -201,9 +201,17 @@ const SourceModal: React.FC<{
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
 
         // Stage 1 — the 39 VyseTV scrapers + Movy. They publish as they finish
-        // in waves, and rankStreams keeps them at the top of the list.
+        // in waves, and rankStreams keeps them at the top of the list. Movy and
+        // Knaben have their own longer budgets, so their results arrive last;
+        // the fast scrapers must not be held back waiting for them.
         const filmJob = runProvider('vysetv:scrapers', async () => {
-          const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep));
+          const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep), {
+            onPartial: (partial) => {
+              // Publish each wave as it lands, but keep the provider's health
+              // entry as "searching" until the full list arrives.
+              if (!cancelled && partial.streams.length) publish({ streams: partial.streams, errors: [] });
+            },
+          });
           return {
             streams: result.streams,
             errors: result.streams.length

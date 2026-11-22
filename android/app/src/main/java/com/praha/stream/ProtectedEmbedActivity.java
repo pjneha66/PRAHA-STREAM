@@ -31,6 +31,8 @@ public final class ProtectedEmbedActivity extends Activity {
     private String initialHost;
     private String initialUrl;
     private boolean destroyed;
+    /** Shown until the player's first page finishes loading, then removed. */
+    private TextView loading;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -49,7 +51,7 @@ public final class ProtectedEmbedActivity extends Activity {
         layout.addView(bar);
         content = new FrameLayout(this);
         layout.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        TextView loading = new TextView(this); loading.setText("Loading protected player…"); loading.setTextColor(Color.WHITE); content.addView(loading);
+        loading = new TextView(this); loading.setText("Loading protected player…"); loading.setTextColor(Color.WHITE); content.addView(loading);
         setContentView(layout);
         // Fail closed if the filter cannot be loaded; never start an unfiltered WebView by accident.
         new Thread(() -> {
@@ -95,12 +97,21 @@ public final class ProtectedEmbedActivity extends Activity {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 if (!EmbedBlocklist.isPublicHttps(uri) || filter.blocks(uri.getHost())) return true;
-                // Prevent same-tab ad redirects from taking over the player.
+                // Prevent same-tab ad redirects from taking over the player, but
+                // let the player itself work. Embed hosts routinely bounce the
+                // main frame to a second host to reach the actual stream, and
+                // blocking every cross-host navigation left those players blank.
+                // Ads arrive as silent script redirects, so a real tap is what
+                // separates them from a legitimate hand-off.
                 if (request.isForMainFrame()) {
                     String host = uri.getHost().toLowerCase(Locale.ROOT);
-                    return !(host.equals(initialHost) || host.endsWith("." + initialHost));
+                    if (host.equals(initialHost) || host.endsWith("." + initialHost)) return false;
+                    return !request.hasGesture();
                 }
                 return false;
+            }
+            @Override public void onPageFinished(WebView view, String url) {
+                if (loading.getParent() != null) content.removeView(loading);
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();

@@ -89,10 +89,19 @@ export interface ScrapeResult {
 /**
  * Stage 1: ask every enabled VyseTV scraper in parallel, but keep results in
  * FILM_SOURCES order so the best-known sources appear at the top.
+ *
+ * `onPartial` fires as each lane lands, so the UI can show the 39 fast scrapers
+ * instead of staring at a spinner until Knaben's 25 s budget runs out. The
+ * promise still resolves with the complete, FILM_SOURCES-ordered list.
  */
 export async function scrapeFilmSources(
   query: FilmQuery,
-  options: { enabledIds?: string[]; timeoutMs?: number } = {},
+  options: {
+    enabledIds?: string[];
+    timeoutMs?: number;
+    /** Called with everything finished so far, in FILM_SOURCES order. */
+    onPartial?: (result: ScrapeResult) => void;
+  } = {},
 ): Promise<ScrapeResult> {
   const enabled = options.enabledIds
     ? FILM_SOURCES.filter((source) => options.enabledIds!.includes(source.id))
@@ -119,12 +128,27 @@ export async function scrapeFilmSources(
   const wavable = enabled.filter((source) => !longLane.includes(source));
   const answers = new Map<string, Awaited<ReturnType<FilmSource['scraper']>> | Error>();
 
+  // Emit in FILM_SOURCES order, whatever order the lanes finished in, so a
+  // partial result reads the same as the final one.
+  const collect = (): ScrapeResult => {
+    const streams: StreamResult[] = [];
+    const failures: ScrapeResult['failures'] = [];
+    for (const source of enabled) {
+      const answer = answers.get(source.id);
+      if (answer instanceof Error) failures.push({ source: source.name, message: answer.message });
+      else if (Array.isArray(answer)) for (const found of answer) streams.push(foundToStream(found, source.name));
+    }
+    return { streams, failures };
+  };
+  const publish = () => { options.onPartial?.(collect()); };
+
   const longJob = (async () => {
     const settled = await Promise.allSettled(longLane.map(ask));
     settled.forEach((result, index) => {
       const source = longLane[index];
       answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
     });
+    if (longLane.length) publish();
   })();
 
   const CONCURRENCY = 8;
@@ -135,18 +159,12 @@ export async function scrapeFilmSources(
       const source = wave[index];
       answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
     });
+    // Each wave is visible immediately; the last one is the full list.
+    publish();
   }
   await longJob;
 
-  // Emit in FILM_SOURCES order, whatever order the lanes finished in.
-  const streams: StreamResult[] = [];
-  const failures: ScrapeResult['failures'] = [];
-  for (const source of enabled) {
-    const answer = answers.get(source.id);
-    if (answer instanceof Error) failures.push({ source: source.name, message: answer.message });
-    else if (Array.isArray(answer)) for (const found of answer) streams.push(foundToStream(found, source.name));
-  }
-  return { streams, failures };
+  return collect();
 }
 
 /** Stage 3: resolve a magnet through the bundled TorrServer into a playable URL. */

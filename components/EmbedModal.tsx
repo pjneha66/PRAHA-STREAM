@@ -221,7 +221,20 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
           <button className="button button-secondary button-small" onClick={() => setFrame(null)}>Choose another</button>
           <button className="button button-secondary button-small" onClick={() => { void openSafeExternalUrl(frame.url).then((ok) => { if (!ok) setError('Could not open the browser.'); }); }}>Open in browser <ExternalLink size={14} /></button>
         </div>
-        <iframe src={frame.url} title={`${frame.name} player`} sandbox="allow-scripts allow-forms allow-presentation" referrerPolicy="no-referrer" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />
+        {/* `allow-same-origin` is required: without it the frame gets an opaque
+            origin, and most embed hosts detect that and refuse to play. With
+            both it and `allow-scripts` the frame could escape the sandbox, so
+            the real isolation here is that the URL is a known embed host and
+            the frame cannot navigate this page. `no-referrer` is dropped for
+            the same reason — hosts that hotlink-check reject the request. */}
+        <iframe
+          src={frame.url}
+          title={`${frame.name} player`}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+          allowFullScreen
+        />
         <p>Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p>
       </div> : <>
         {media.type === 'series' && <div className="embed-episode">

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
 import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
-import { isAndroidApp, isAndroidTv, openPrivateDnsSettings } from '../services/androidBridge';
+import { isAndroidApp, isAndroidTv, openPrivateDnsSettings, setVpnEnabled, getVpnStatus } from '../services/androidBridge';
 import { NETWORK_CONDITION_COPY, probeNetworkCondition, type NetworkCondition } from '../services/networkCondition';
 import { NSFW_COPY } from '../services/nsfwGate';
 import { TorrentStreamingEngine } from '../services/torrentStreamingService';
@@ -59,6 +59,7 @@ const SETTINGS_GROUPS: Array<[string, string]> = [
   ['Android & TV Experience', 'Android/TV'],
   ['Private DNS', 'Device DNS'],
   ['DNS over HTTPS', 'App DNS'],
+  ['VPN', 'VPN'],
   ['Network & Torrent Engine', 'Torrent · free'],
   ['Debrid & Magnet Streaming', 'Debrid · paid'],
   ['Playback & browsing', 'Playback'],
@@ -214,6 +215,9 @@ const SettingsView: React.FC<{
   const [imdxMessage, setImdxMessage] = useState('');
   const [dnsOpenError, setDnsOpenError] = useState(false);
   const [dnsCopied, setDnsCopied] = useState(false);
+  const [vpnBusy, setVpnBusy] = useState(false);
+  const [vpnRunning, setVpnRunning] = useState(false);
+  const [vpnError, setVpnError] = useState('');
   const [networkCondition, setNetworkCondition] = useState<NetworkCondition | null>(null);
   const [networkChecking, setNetworkChecking] = useState(false);
   const [torrentHostDraft, setTorrentHostDraft] = useState(() => TorrentStreamingEngine.getHost());
@@ -252,6 +256,59 @@ const SettingsView: React.FC<{
     }
     update('nsfw', mode);
   };
+
+  /**
+   * The toggle reflects the real tunnel, not just the saved preference: the
+   * user can turn the VPN off from Android's own settings, and a stale "on"
+   * would be a lie. Consent is a one-time system dialog, so the first flip
+   * lands on "not running yet" and we poll briefly for the user's answer.
+   */
+  const toggleVpn = async (next: boolean, resolver?: string) => {
+    setVpnError('');
+    if (!isAndroidApp()) {
+      setVpnError('The VPN tunnel needs the Android app.');
+      return;
+    }
+    setVpnBusy(true);
+    try {
+      update('vpnEnabled', next);
+      // The service restarts itself when the resolver differs, so a single
+      // call is enough — sending STOP then START separately would race.
+      await setVpnEnabled(next, resolver || settings.vpnDnsServer || '1.1.1.1');
+      let running = await getVpnStatus();
+      // The consent dialog is the user's to read; 30s is generous enough that a
+      // timeout means a real refusal rather than someone taking their time.
+      for (let attempt = 0; next && !running && attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        running = await getVpnStatus();
+      }
+      setVpnRunning(running);
+      if (next && !running) {
+        update('vpnEnabled', false);
+        setVpnError('The tunnel did not start. Allow the VPN request when Android asks, then switch it on again.');
+      }
+    } finally {
+      setVpnBusy(false);
+    }
+  };
+
+  // Reflect a tunnel the user started or stopped outside the app.
+  useEffect(() => {
+    if (!isAndroidApp()) return;
+    let cancelled = false;
+    const sync = () => {
+      void getVpnStatus().then((on) => {
+        if (cancelled) return;
+        setVpnRunning(on);
+        // The tunnel can come up after a slow consent tap; a stale "did not
+        // start" error would then contradict the toggle.
+        if (on) setVpnError('');
+      });
+    };
+    sync();
+    const timer = window.setInterval(sync, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
 
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
@@ -804,6 +861,54 @@ const SettingsView: React.FC<{
             </div>
             <p className="settings-tv-help">Android TV / remote: press <kbd>Tab</kbd> to move between controls, <kbd>Enter</kbd> to select, then scroll down with the D-pad.</p>
             <p className="api-privacy"><ShieldCheck size={14} /><span>Applies when the app restarts. Encrypted DNS sends queries over HTTPS to the selected provider instead of your network's default resolver. Some Android WebView requests may still use system DNS.</span></p>
+          </section>
+
+          {/* VPN — some sources only resolve through an unfiltered DNS server */}
+          <section className="settings-card">
+            <div className="settings-card-heading">
+              <span><ShieldCheck size={19} /></span>
+              <div>
+                <h2>VPN</h2>
+                <p>Some sources are blocked by your network's DNS. Turn this on to resolve their hostnames through a different DNS server.</p>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <strong>DNS tunnel</strong>
+                <p>
+                  {vpnRunning
+                    ? 'Running. DNS lookups go through the resolver below.'
+                    : 'Off. Blocked sources will fail to resolve until this is on.'}
+                </p>
+              </div>
+              {vpnBusy
+                ? <LoaderCircle size={18} className="spin" />
+                : <Toggle checked={vpnRunning} onChange={(val) => { void toggleVpn(val); }} label="VPN tunnel" />}
+            </div>
+            <div className="setting-row">
+              <div><strong>Resolver</strong><p>The DNS server the tunnel forwards queries to.</p></div>
+              <select
+                className="settings-select"
+                value={settings.vpnDnsServer || '1.1.1.1'}
+                disabled={vpnBusy}
+                onChange={(e) => {
+                  const nextServer = e.target.value;
+                  update('vpnDnsServer', nextServer);
+                  // The service reads the resolver at startup, so changing it
+                  // while running has to restart the tunnel to take effect.
+                  if (vpnRunning) void toggleVpn(true, nextServer);
+                }}
+              >
+                <option value="1.1.1.1">Cloudflare (1.1.1.1)</option>
+                <option value="8.8.8.8">Google (8.8.8.8)</option>
+                <option value="9.9.9.9">Quad9 (9.9.9.9)</option>
+                <option value="94.140.14.14">AdGuard (94.140.14.14)</option>
+                <option value="1.0.0.1">Cloudflare secondary (1.0.0.1)</option>
+              </select>
+            </div>
+            {vpnError && <p role="alert">{vpnError}</p>}
+            <p className="settings-tv-help">Android asks for permission the first time you switch this on. Android TV / remote: press <kbd>Tab</kbd> to reach the toggle, then <kbd>Enter</kbd>.</p>
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Only DNS is captured — video and torrent traffic keep using your normal connection, so streaming speed is unaffected. Android shows a VPN key in the status bar while this is on. Changing the resolver restarts the tunnel.</span></p>
           </section>
 
           {/* Network & Torrent Engine */}

@@ -62,8 +62,7 @@ describe('source priority chain', () => {
     );
     expect(result.streams).toHaveLength(0);
     expect(result.failures).toHaveLength(0);
-    expect(mock.sources[0].scraper).not.toHaveBeenCalled();
-  });
+    expect(mock.sources[0].scraper).not.toHaveBeenCalled();  });
 
   it('builds a FilmQuery from a media item', () => {
     expect(filmQueryFromMedia({

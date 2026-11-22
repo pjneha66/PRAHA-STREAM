@@ -33,6 +33,8 @@ export interface PrahaNativeInterface {
   openBrowser?(url: string): boolean;
   openProtectedEmbed?(url: string): boolean;
   openPrivateDnsSettings?(): boolean;
+  setVpnEnabled?(enabled: boolean, dnsServer: string): boolean;
+  getVpnStatus?(): boolean;
   getProxyPort(): number;
   proxyStreamUrl(url: string, headersJson: string): string;
   httpRequest?(url: string, method: string, headersJson: string, body: string): string;
@@ -244,6 +246,36 @@ export async function openPrivateDnsSettings(): Promise<boolean> {
       return Boolean(await prahaRpc<boolean>('openPrivateDnsSettings', [], 8000));
     }
     return Boolean(window.PrahaNative?.openPrivateDnsSettings?.());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Starts or stops the in-app DNS tunnel.
+ *
+ * Returns false when the tunnel could not be started — most often because the
+ * user declined the one-time Android VPN consent dialog. Callers should treat
+ * that as "not on" rather than retrying in a loop.
+ */
+export async function setVpnEnabled(enabled: boolean, dnsServer: string): Promise<boolean> {
+  try {
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('setVpnEnabled', [enabled, dnsServer], 20000));
+    }
+    return Boolean(window.PrahaNative?.setVpnEnabled?.(enabled, dnsServer));
+  } catch {
+    return false;
+  }
+}
+
+/** True while the DNS tunnel holds a live interface. */
+export async function getVpnStatus(): Promise<boolean> {
+  try {
+    if (bridgeRpcAvailable()) {
+      return Boolean(await prahaRpc<boolean>('getVpnStatus', [], 8000));
+    }
+    return Boolean(window.PrahaNative?.getVpnStatus?.());
   } catch {
     return false;
   }

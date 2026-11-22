@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.18';
+export const APP_VERSION = '2.11.19';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'extensions' | 'settings';
@@ -425,6 +425,13 @@ export interface AppSettings {
   dnsProvider?: string;
   /** Fall back to system DNS when DoH resolver is slow or blocked. */
   dnsFallback?: boolean;
+  /**
+   * Route DNS through the in-app tunnel so resolver-blocked sources load.
+   * Only the DNS lookups are captured; media traffic is untouched.
+   */
+  vpnEnabled?: boolean;
+  /** Resolver the DNS tunnel forwards to. */
+  vpnDnsServer?: string;
   player: PlayerSettings;
 }
 

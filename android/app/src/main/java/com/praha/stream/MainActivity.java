@@ -11,6 +11,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -78,6 +79,9 @@ public class MainActivity extends BridgeActivity {
             new LinkedBlockingQueue<Runnable>(96),
             new ThreadPoolExecutor.AbortPolicy());
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
+    private ActivityResultLauncher<Intent> vpnConsentLauncher;
+    /** Resolver to use once consent is granted. */
+    private volatile String pendingVpnDns = "1.1.1.1";
 
     /**
      * Stream, addon and scraper URLs are attacker-controlled. Only absolute
@@ -165,6 +169,17 @@ public class MainActivity extends BridgeActivity {
                             }
                         }
                     }
+                }
+        );
+
+        // Android requires explicit user consent before any VpnService runs.
+        // The reply to JS is deliberately not held open across the dialog:
+        // setVpnEnabled() reports "not on yet" and the UI polls getVpnStatus()
+        // once the user answers, which is also what happens if they decline.
+        vpnConsentLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (result.getResultCode() == RESULT_OK) startDnsVpn(pendingVpnDns);
                 }
         );
 
@@ -305,6 +320,28 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /** Launches the DNS tunnel service; consent is assumed already granted. */
+    private void startDnsVpn(String dnsServer) {
+        try {
+            Intent intent = new Intent(this, PrahaDnsVpnService.class);
+            intent.setAction(PrahaDnsVpnService.ACTION_START);
+            intent.putExtra(PrahaDnsVpnService.EXTRA_DNS,
+                    (dnsServer == null || dnsServer.isEmpty()) ? "1.1.1.1" : dnsServer);
+            startService(intent);
+        } catch (Exception ignored) {
+            // Service start refused (background restrictions); the toggle simply
+            // stays off and getVpnStatus() keeps reporting false.
+        }
+    }
+
+    private void stopDnsVpn() {
+        try {
+            Intent intent = new Intent(this, PrahaDnsVpnService.class);
+            intent.setAction(PrahaDnsVpnService.ACTION_STOP);
+            startService(intent);
+        } catch (Exception ignored) {}
+    }
+
     private Object dispatchBridgeCall(String method, JSONArray args) throws Exception {
         if (method == null || method.isEmpty()) throw new IllegalArgumentException("Missing bridge method");
         switch (method) {
@@ -314,6 +351,10 @@ public class MainActivity extends BridgeActivity {
                 return rpcBridge.openProtectedEmbed(args.optString(0, ""));
             case "openPrivateDnsSettings":
                 return rpcBridge.openPrivateDnsSettings();
+            case "setVpnEnabled":
+                return rpcBridge.setVpnEnabled(args.optBoolean(0, false), args.optString(1, "1.1.1.1"));
+            case "getVpnStatus":
+                return rpcBridge.getVpnStatus();
             case "httpRequest":
                 return rpcBridge.executeHttpRequest(
                         args.optString(0, ""), args.optString(1, "GET"),
@@ -410,6 +451,33 @@ public class MainActivity extends BridgeActivity {
                 }
             }
             return false;
+        }
+
+        /**
+         * Starts or stops the DNS tunnel. Returns whether the tunnel is running
+         * at the moment of return: the first call shows Android's consent
+         * dialog, so it returns false and the caller polls getVpnStatus().
+         */
+        @JavascriptInterface
+        public boolean setVpnEnabled(boolean enabled, String dnsServer) {
+            if (!enabled) {
+                stopDnsVpn();
+                return false;
+            }
+            Intent consent = VpnService.prepare(MainActivity.this);
+            if (consent == null) {
+                // Already authorised; start immediately.
+                startDnsVpn(dnsServer);
+                return PrahaDnsVpnService.isActive();
+            }
+            pendingVpnDns = (dnsServer == null || dnsServer.isEmpty()) ? "1.1.1.1" : dnsServer;
+            vpnConsentLauncher.launch(consent);
+            return false;
+        }
+
+        @JavascriptInterface
+        public boolean getVpnStatus() {
+            return PrahaDnsVpnService.isActive();
         }
 
         @JavascriptInterface

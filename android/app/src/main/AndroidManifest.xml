@@ -67,6 +67,21 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!--
+          DNS-only VPN: captures DNS so resolver-blocked sources can load.
+          Traffic is not tunnelled; see PrahaDnsVpnService for why. The VPN
+          framework itself owns the process lifetime, so no foreground service.
+        -->
+        <service
+            android:name=".PrahaDnsVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

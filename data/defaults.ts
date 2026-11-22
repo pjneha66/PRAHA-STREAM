@@ -117,6 +117,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   nsfw: 'off',
   dnsProvider: 'system',
   dnsFallback: true,
+  vpnEnabled: false,
+  vpnDnsServer: '1.1.1.1',
   player: DEFAULT_PLAYER_SETTINGS,
 };
 
