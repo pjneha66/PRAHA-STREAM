@@ -2,8 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { matchBadgeRule } from '../services/badgeRules';
 import { downloadStreamFile } from '../services/androidBridge';
 import {
-  Blocks, Check, CircleAlert, Copy, Film, HardDrive, Languages, Play, RefreshCw,
-  ShieldCheck, Users, X, Zap, Star, ArrowDownToLine,
+  ArrowDownToLine, Blocks, Check, ChevronDown, CircleAlert, Copy, Film, HardDrive,
+  Languages, Play, RefreshCw, ShieldCheck, SlidersHorizontal, Star, Users, X, Zap,
 } from 'lucide-react';
 import type { MediaItem, SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth } from '../types';
 import { Artwork } from './MediaCard';
@@ -80,12 +80,19 @@ interface SourcePanelProps {
   onOpenExtensions?: () => void;
   showClose?: boolean;
   onClose?: () => void;
+  /**
+   * Where these streams come from, shown under the title. The panel is shared by
+   * the Home/Search finder (many stacks at once) and by a title opened from a
+   * CloudStream extension (exactly one), so the header cannot hardcode it.
+   */
+  sourceSummary?: string;
 }
 
 const SourcePanel: React.FC<SourcePanelProps> = ({
   media, streams, loading, errors, season, episode, seasons, episodes,
   onSeasonChange, onEpisodeChange, onRefresh, providerCount, preferredLanguage,
   onPlay, onOpenExtensions, showClose, onClose, health = [], preferredSource = '', onPreferredSourceChange,
+  sourceSummary,
 }) => {
   const [quality, setQuality] = useState('all');
   const [downloadHint, setDownloadHint] = useState('');
@@ -100,7 +107,8 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   const allRanked = useMemo(() => filterAndSortStreams(streams, { quality: 'all', provider: 'all', language: 'all', codec: 'all', subtitles: 'all' }, preferredSource, preferredLanguage), [streams, preferredSource, preferredLanguage]);
   const providers = useMemo(() => Array.from(new Map(streams.map((stream) => [sourceKey(stream), stream.sourceName])).entries()), [streams]);
   const languages = useMemo(() => Array.from(new Set(streams.map((stream) => stream.language?.toLowerCase()).filter((value): value is string => Boolean(value)))).sort(), [streams]);
-  const hasFilters = [quality, provider, language, codec, subtitles].some((value) => value !== 'all');
+  const advancedCount = [provider, language, codec, subtitles].filter((value) => value !== 'all').length;
+  const hasFilters = advancedCount > 0 || quality !== 'all';
   const play = (stream: StreamResult) => onPlay(stream, allRanked.filter((candidate) => candidate !== stream));
 
   const copyStream = async (stream: StreamResult) => {
@@ -124,17 +132,25 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
     return Array.from({ length: count }, (_, idx) => ({ value: idx + 1, label: `Episode ${idx + 1}` }));
   }, [episodes, seasons, season]);
 
+  const checkedProviders = health.filter((item) => item.status !== 'searching').length;
+  const summary = sourceSummary || (providerCount === 1 ? '1 provider' : `${providerCount} providers`);
+
   return (
     <>
       <header className="source-header">
         <div className="source-title-art"><Artwork src={media.poster} alt="" /></div>
-        <div>
+        <div className="source-header-copy">
           <span className="page-kicker">SOURCE FINDER</span>
           <h2>{media.title}</h2>
-          <p>{media.year || ''} · {media.type === 'movie' ? 'Movie' : 'Series'} <i /> Stremio & Nuvio</p>
+          <div className="source-header-meta">
+            {media.year && <span>{media.year}</span>}
+            <span>{media.type === 'movie' ? 'Movie' : 'Series'}</span>
+            <span className="source-header-providers"><Blocks size={11} />{summary}</span>
+          </div>
         </div>
         {showClose && <button className="modal-close" onClick={onClose} aria-label="Close source finder"><X size={20} /></button>}
       </header>
+
       {media.type === 'series' && onSeasonChange && (
         <div className="episode-picker">
           <span>Watching</span>
@@ -152,20 +168,39 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
           </label>
         </div>
       )}
+
       <div className="source-toolbar">
-        <div className="source-search-status"><span className={`status-dot ${loading ? 'pulse' : ''}`} />{loading ? `Searching ${providerCount} provider${providerCount === 1 ? '' : 's'}… ${filtered.length} found` : `${filtered.length} stream${filtered.length === 1 ? '' : 's'} found`}</div>
-        <div className="quality-filters">{['all', '4K', '1080p', '720p', '480p'].map((value) => <button key={value} className={quality === value ? 'active' : ''} onClick={() => setQuality(value)}>{value === 'all' ? 'All quality' : value}</button>)}</div>
-        <button className="icon-button" onClick={onRefresh} disabled={loading} aria-label="Refresh streams"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button>
+        <div className="source-search-status">
+          <span className={`status-dot ${loading ? 'pulse' : ''}`} />
+          <strong>{filtered.length}</strong>
+          <span>{filtered.length === 1 ? 'stream' : 'streams'}{loading ? ` · searching ${providerCount}…` : ' found'}</span>
+        </div>
+        <div className="quality-filters" role="group" aria-label="Filter by quality">
+          {['all', '4K', '1080p', '720p', '480p'].map((value) => (
+            <button key={value} className={quality === value ? 'active' : ''} onClick={() => setQuality(value)}>
+              {value === 'all' ? 'All' : value}
+            </button>
+          ))}
+        </div>
+        <details className="source-filters">
+          <summary className={advancedCount ? 'active' : ''}>
+            <SlidersHorizontal size={14} />
+            Filters{advancedCount ? ` (${advancedCount})` : ''}
+            <ChevronDown size={13} className="source-filters-chevron" />
+          </summary>
+          <div className="source-filter-bar" aria-label="Filter streams">
+            <label>Provider <select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="all">All providers</option>{providers.map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+            <label>Language <select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="all">All languages</option>{languages.map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>
+            <label>Codec <select value={codec} onChange={(event) => setCodec(event.target.value)}><option value="all">All codecs</option><option>HEVC</option><option>H.264</option><option>AV1</option><option>Unknown</option></select></label>
+            <label>Subtitles <select value={subtitles} onChange={(event) => setSubtitles(event.target.value)}><option value="all">Any</option><option value="available">Reported</option><option value="unknown">Not reported</option></select></label>
+            {hasFilters && <button className="button button-secondary button-small" onClick={() => { setQuality('all'); setProvider('all'); setLanguage('all'); setCodec('all'); setSubtitles('all'); }}>Clear filters</button>}
+          </div>
+          {onPreferredSourceChange && <p className="source-preference-hint">Star a provider to rank it first for this profile. Subtitle filters use only metadata reported by the stream.</p>}
+        </details>
+        <button className="icon-button source-refresh" onClick={onRefresh} disabled={loading} aria-label="Refresh streams" title="Refresh streams"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button>
       </div>
-      {onPreferredSourceChange && <p className="source-preference-hint">Star a provider to rank it first for this profile. Subtitle filters use only metadata reported by the stream.</p>}
-      <div className="source-filter-bar" aria-label="Filter streams">
-        <label>Provider <select value={provider} onChange={(event) => setProvider(event.target.value)}><option value="all">All providers</option>{providers.map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
-        <label>Language <select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="all">All languages</option>{languages.map((value) => <option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>
-        <label>Codec <select value={codec} onChange={(event) => setCodec(event.target.value)}><option value="all">All codecs</option><option>HEVC</option><option>H.264</option><option>AV1</option><option>Unknown</option></select></label>
-        <label>Subtitles <select value={subtitles} onChange={(event) => setSubtitles(event.target.value)}><option value="all">Any</option><option value="available">Reported</option><option value="unknown">Not reported</option></select></label>
-        {hasFilters && <button className="button button-secondary button-small" onClick={() => { setQuality('all'); setProvider('all'); setLanguage('all'); setCodec('all'); setSubtitles('all'); }}>Clear filters</button>}
-      </div>
-      {health.length > 0 && <details className="source-health"><summary>Provider health · {health.filter((item) => item.status !== 'searching').length}/{health.length} checked</summary>
+
+      {health.length > 0 && <details className="source-health"><summary>Provider health · {checkedProviders}/{health.length} checked</summary>
         <ul>{health.map((item) => <li key={item.id}><strong>{item.name}</strong><span className={`health-${item.status}`}>{item.status === 'searching' ? 'Searching…' : item.status === 'ready' ? `${item.count} found` : item.status === 'empty' ? 'No streams' : item.status === 'unsupported' ? 'Not supported' : 'Failed'}{item.message ? ` · ${item.message}` : ''}</span></li>)}</ul>
       </details>}
       {downloadHint && <p className="download-hint">{downloadHint}</p>}
@@ -186,22 +221,24 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
                       return badge ? <span className="stream-badge-rule" style={{ color: badge.color, borderColor: badge.color }}>{badge.label}</span> : null;
                     })()}
                   </strong>
-                  {badges.resolution && <span className="badge-pill badge-res">{badges.resolution}</span>}
-                  {badges.hdr && <span className="badge-pill badge-hdr">{badges.hdr}</span>}
-                  {badges.audio && <span className="badge-pill badge-audio">{badges.audio}</span>}
-                  {badges.codec && <span className="badge-pill badge-codec">{badges.codec}</span>}
-                  {badges.source && <span className="badge-pill badge-source">{badges.source}</span>}
-                  {badges.debrid && <span className="badge-pill badge-debrid">⚡ {badges.debrid}</span>}
+                  <span className="stream-badges">
+                    {badges.resolution && <span className="badge-pill badge-res">{badges.resolution}</span>}
+                    {badges.hdr && <span className="badge-pill badge-hdr">{badges.hdr}</span>}
+                    {badges.audio && <span className="badge-pill badge-audio">{badges.audio}</span>}
+                    {badges.codec && <span className="badge-pill badge-codec">{badges.codec}</span>}
+                    {badges.source && <span className="badge-pill badge-source">{badges.source}</span>}
+                    {badges.debrid && <span className="badge-pill badge-debrid">⚡ {badges.debrid}</span>}
+                  </span>
                 </div>
                 <div className="stream-meta">
                   <span className={`stream-origin ${stream.sourceType}`}>
-                    {stream.sourceType === 'nuvio' ? <Zap size={11} /> : <Blocks size={11} />}
+                    {stream.sourceType === 'nuvio' ? <Zap size={11} /> : stream.sourceType === 'cloudstream' ? <Blocks size={11} /> : <Blocks size={11} />}
                     {stream.sourceName}
                   </span>
                   {stream.provider && stream.provider !== stream.sourceName && <span>{stream.provider}</span>}
                   {badges.size && <span><HardDrive size={11} />{badges.size}</span>}
                   {stream.language && <span><Languages size={12} />{stream.language}</span>}
-                  {typeof stream.seeders === 'number' && <span className="seeders"><Users size={12} />{stream.seeders} seeders</span>}
+                  {typeof stream.seeders === 'number' && <span className="seeders"><Users size={12} />{stream.seeders}</span>}
                 </div>
               </div>
               <div className="stream-actions">

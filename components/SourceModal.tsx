@@ -147,18 +147,30 @@ const SourceModal: React.FC<{
       setLoading(false);
     };
     setLoading(true); setStreams([]); setErrors([]);
-    const enabledAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream'));
-    const scrapers = repositories.filter((repo) => repo.enabled).flatMap((repo) =>
-      repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
-    setHealth([
-      { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
-      { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
-      ...(media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable()
-        ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
-        : []),
-      ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
-      ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
-    ]);
+
+    // A title that came out of a CloudStream extension is not a TMDB title: the
+    // extension handed us the exact episode payload to load links from. Asking
+    // Stremio/Nuvio/VyseTV for the same name would mix unrelated rips into a
+    // list the user opened from one extension, and could even surface a
+    // different film with the same title. So the other providers stay off.
+    const extensionOnly = Boolean(
+      media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
+    );
+    const enabledAddons = extensionOnly
+      ? []
+      : addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream'));
+    const scrapers = extensionOnly
+      ? []
+      : repositories.filter((repo) => repo.enabled).flatMap((repo) =>
+          repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
+    setHealth(extensionOnly
+      ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
+      : [
+          { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
+          { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
+          ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
+          ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
+        ]);
     const updateHealth = (id: string, patch: Partial<ProviderHealth>) => {
       if (!cancelled) setHealth((current) => current.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
     };
@@ -178,10 +190,12 @@ const SourceModal: React.FC<{
       // Don't let slow/dead providers keep the UI in a "searching" state forever.
       const loadingCap = window.setTimeout(clearLoading, 4500);
       try {
-        const idJob = tmdbService.resolveIds(media).catch(() => ({
-          tmdbId: media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined,
-          imdbId: media.imdbId || (media.id.startsWith('tt') ? media.id : undefined),
-        }));
+        const idJob = extensionOnly
+          ? Promise.resolve({ tmdbId: undefined as string | undefined, imdbId: undefined as string | undefined })
+          : tmdbService.resolveIds(media).catch(() => ({
+              tmdbId: media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined,
+              imdbId: media.imdbId || (media.id.startsWith('tt') ? media.id : undefined),
+            }));
         const s = media.type === 'series' ? season : undefined;
         const ep = media.type === 'series' ? episode : undefined;
 
@@ -210,7 +224,7 @@ const SourceModal: React.FC<{
         // in waves, and rankStreams keeps them at the top of the list. Movy and
         // Knaben have their own longer budgets, so their results arrive last;
         // the fast scrapers must not be held back waiting for them.
-        const filmJob = runProvider('vysetv:scrapers', async () => {
+        const filmJob = extensionOnly ? Promise.resolve() : runProvider('vysetv:scrapers', async () => {
           const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep), {
             onPartial: (partial) => {
               // Publish each wave as it lands, but keep the provider's health
@@ -228,7 +242,7 @@ const SourceModal: React.FC<{
           };
         }, publish);
 
-        const stremioJob = (async () => {
+        const stremioJob = extensionOnly ? Promise.resolve() : (async () => {
           const imdbId = knownImdb || (await idJob).imdbId;
           const resolved = { ...media, imdbId: imdbId || media.imdbId };
           await Promise.all(enabledAddons.map((addon) => {
@@ -240,7 +254,7 @@ const SourceModal: React.FC<{
             return runProvider(id, () => findStremioStreams([addon], resolved, s, ep), publish);
           }));
         })();
-        const nuvioJob = (async () => {
+        const nuvioJob = extensionOnly ? Promise.resolve() : (async () => {
           const tmdbId = knownTmdb || (await idJob).tmdbId;
           const jobs = scrapers.map(({ repo, scraper }) => {
             const id = `nuvio:${scraper.id}`;
@@ -258,7 +272,7 @@ const SourceModal: React.FC<{
           });
           await Promise.all(jobs);
         })();
-        const playtorrioJob = (async () => {
+        const playtorrioJob = extensionOnly ? Promise.resolve() : (async () => {
           const tmdbId = knownTmdb || (await idJob).tmdbId;
           const id = 'playtorrio:vod';
           return runProvider(id, async () => {
@@ -324,10 +338,16 @@ const SourceModal: React.FC<{
     };
   }, [onClose, suspended]);
 
+  const extensionOnly = Boolean(
+    media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
+  );
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
-  const providerCount = activeStreamAddons + activeScrapers + 1
-    + (media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable() ? 1 : 0);
+  // A CloudStream title has exactly one provider: the extension that supplied
+  // it. Counting the other stacks here would promise sources that are not queried.
+  const providerCount = extensionOnly
+    ? 1
+    : activeStreamAddons + activeScrapers + 2;
 
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
 
@@ -356,6 +376,9 @@ const SourceModal: React.FC<{
           onRefresh={() => setRequestKey((key) => key + 1)}
           providerCount={providerCount}
           preferredLanguage={preferredLanguage}
+          sourceSummary={extensionOnly
+            ? `${media.cloudstreamApiName} extension`
+            : `${providerCount} provider${providerCount === 1 ? '' : 's'}`}
           onPlay={(stream, alternatives) => onPlay(
             stream,
             media.type === 'series' ? season : undefined,
@@ -367,7 +390,7 @@ const SourceModal: React.FC<{
           showClose
           onClose={onClose}
         />
-        {onOpenEmbedded && (
+        {onOpenEmbedded && !extensionOnly && (
           <div className="source-embed-fallback">
             <p>None of the sources above playable? Embedded player sites are a last resort — they run third-party iframes and are slower and less reliable.</p>
             <button type="button" className="button button-secondary" onClick={onOpenEmbedded}>

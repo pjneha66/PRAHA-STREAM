@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, LoaderCircle, Play, RefreshCw, Trash2, X } from 'lucide-react';
+import {
+  ArrowRight, ChevronDown, CircleAlert, ExternalLink, Globe, LoaderCircle, Play,
+  RefreshCw, ShieldCheck, Sparkles, Trash2, X,
+} from 'lucide-react';
 import type { MediaItem, StreamResult } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openProtectedEmbed, openSafeExternalUrl } from '../services/androidBridge';
@@ -24,6 +27,16 @@ interface SourceGroup {
   streams: StreamResult[];
 }
 
+const hostOf = (template: string) => { try { return new URL(template).hostname; } catch { return 'Invalid URL'; } };
+
+/**
+ * Last-resort playback screen.
+ *
+ * This is the screen reached when the direct source list had nothing playable,
+ * so its whole job is to answer "what else can I try?" fast. That means the
+ * direct results come first (they are real streams, not iframes), and the embed
+ * sites sit below them as a clearly-labelled fallback — never mixed in.
+ */
 const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, onClose, onPlay }) => {
   const [custom, setCustom] = usePersistentState<EmbedProvider[]>('praha.v2.embed-providers', []);
   const [overrides, setOverrides] = usePersistentState<Record<string, { movie: string; series: string }>>('praha.v2.embed-overrides', {});
@@ -204,13 +217,19 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
     onPlay(stream, media.type === 'series' ? season : undefined, media.type === 'series' ? episode : undefined, undefined, alternatives);
   };
 
+  const hasDirect = vyseStreams.length > 0;
+
   return <div className="modal-backdrop source-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="source-modal embed-modal" role="dialog" aria-modal="true" aria-label={`Sources and embedded players for ${media.title}`}>
-      <header className="source-header">
-        <div>
-          <span className="page-kicker">SOURCES · {FILM_SOURCES.length} BUILT IN</span>
+      <header className="source-header embed-header">
+        <div className="embed-header-copy">
+          <span className="page-kicker">FALLBACK PLAYER</span>
           <h2>{media.title}</h2>
-          <p>VyseTV's built-in sources, found streams, and embed sites — in that order.</p>
+          <div className="source-header-meta">
+            {media.year && <span>{media.year}</span>}
+            <span>{media.type === 'movie' ? 'Movie' : 'Series'}</span>
+            <span>{FILM_SOURCES.length} built-in sources</span>
+          </div>
         </div>
         <button className="modal-close" onClick={onClose} aria-label="Close sources"><X size={20} /></button>
       </header>
@@ -235,115 +254,128 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
           allowFullScreen
         />
-        <p>Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p>
+        <p className="embed-frame-note"><CircleAlert size={13} /> Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p>
       </div> : <>
         {media.type === 'series' && <div className="embed-episode">
           <label>Season <input type="number" min="1" value={season} onChange={(e) => setSeason(Number(e.target.value))} /></label>
           <label>Episode <input type="number" min="1" value={episode} onChange={(e) => setEpisode(Number(e.target.value))} /></label>
         </div>}
 
-        <section className="source-stage" aria-label="VyseTV built-in sources">
-          <div className="source-stage-head">
-            <div>
-              <span className="page-kicker">PREFERRED</span>
-              <h3>Built-in sources</h3>
-              <p>Movy and Knaben first, then {FILM_SOURCES.length - 2} ported scrapers. Direct streams play in the app; torrents need P2P streaming or a debrid service.</p>
+        <div className="embed-body">
+          {/* Direct results first: they play in the real player, so they beat any
+              iframe. The count is in the heading so the answer to "is there
+              anything here?" is readable without scrolling. */}
+          <section className="embed-block" aria-label="Direct sources">
+            <div className="embed-block-head">
+              <div className="embed-block-title">
+                <span className="embed-block-icon direct"><Sparkles size={16} /></span>
+                <div>
+                  <h3>Direct sources <span className={`embed-block-count ${hasDirect ? 'ok' : ''}`}>{vyseStreams.length}</span></h3>
+                  <p>Played by PRAHA's own player. Movy and Knaben first, then the ported scrapers.</p>
+                </div>
+              </div>
+              <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Search the sources again">
+                <RefreshCw size={14} className={vyseLoading ? 'spin' : undefined} /> Retry
+              </button>
             </div>
-            <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Search the sources again">
-              <RefreshCw size={14} className={vyseLoading ? 'spin' : undefined} /> Retry
-            </button>
-          </div>
 
-          {vyseLoading && <p className="source-stage-status"><LoaderCircle size={15} className="spin" /> Searching {FILM_SOURCES.length} sources…</p>}
-          {!vyseLoading && !vyseStreams.length && <p className="source-stage-status">Nothing found{vyseFailures ? ` · ${vyseFailures} sources failed` : ''}. Try an embed site below.</p>}
+            {vyseLoading && <p className="embed-status"><LoaderCircle size={15} className="spin" /> Searching {FILM_SOURCES.length} sources…</p>}
+            {!vyseLoading && !vyseStreams.length && <p className="embed-status">Nothing direct{vyseFailures ? ` · ${vyseFailures} sources failed` : ''}. Use an embed site below.</p>}
 
-          {Boolean(vyseStreams.length) && <div className="source-groups">
-            {groups.map((group) => <div className="source-group" key={group.sourceName}>
-              <div className="source-group-head">
-                <strong>{group.sourceName}</strong>
-                <small>{group.streams.length} {group.streams.length === 1 ? 'stream' : 'streams'}</small>
+            {hasDirect && <div className="source-groups">
+              {groups.map((group) => <div className="source-group" key={group.sourceName}>
+                <div className="source-group-head">
+                  <strong>{group.sourceName}</strong>
+                  <small>{group.streams.length} {group.streams.length === 1 ? 'stream' : 'streams'}</small>
+                </div>
+                <div className="source-group-list">
+                  {group.streams.slice(0, 12).map((stream, index) => {
+                    const torrent = Boolean(stream.infoHash);
+                    return <div className="source-row" key={`${stream.id}-${index}`}>
+                      <div className="source-row-info">
+                        <strong>{stream.title}</strong>
+                        <small>
+                          {[stream.quality, stream.language, stream.size, stream.seeders !== undefined ? `${stream.seeders} seeders` : undefined, torrent ? 'torrent' : stream.format].filter(Boolean).join(' · ') || 'Stream'}
+                        </small>
+                      </div>
+                      <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, vyseStreams.slice(vyseStreams.indexOf(stream) + 1))}>
+                        <Play size={14} /> Play
+                      </button>
+                    </div>;
+                  })}
+                </div>
+              </div>)}
+            </div>}
+            {torrentCount > 0 && <p className="embed-status note">{torrentCount} torrent {torrentCount === 1 ? 'result needs' : 'results need'} P2P streaming or a debrid service to play.</p>}
+          </section>
+
+          <section className="embed-block" aria-label="Embed sites">
+            <div className="embed-block-head">
+              <div className="embed-block-title">
+                <span className="embed-block-icon fallback"><Globe size={16} /></span>
+                <div>
+                  <h3>Embed sites <span className="embed-block-count">{providers.length}</span></h3>
+                  <p>Third-party websites, not verified streams. Use these only if nothing above plays.</p>
+                </div>
               </div>
-              <div className="source-group-list">
-                {group.streams.slice(0, 12).map((stream, index) => {
-                  const torrent = Boolean(stream.infoHash);
-                  return <div className="source-row" key={`${stream.id}-${index}`}>
-                    <div className="source-row-info">
-                      <strong>{stream.title}</strong>
-                      <small>
-                        {[stream.quality, stream.language, stream.size, stream.seeders !== undefined ? `${stream.seeders} seeders` : undefined, torrent ? 'torrent' : stream.format].filter(Boolean).join(' · ') || 'Stream'}
-                      </small>
-                    </div>
-                    <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, vyseStreams.slice(vyseStreams.indexOf(stream) + 1))}>
-                      <Play size={14} /> Play
-                    </button>
-                  </div>;
-                })}
+              <label className="embed-filter">
+                <input type="search" placeholder="Filter players" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Filter players" />
+              </label>
+            </div>
+            {error && <p className="embed-error" role="alert"><CircleAlert size={14} />{error}</p>}
+            {pendingExternal && <p className="embed-status"><ArrowRight size={13} /> ID resolved. <a href={pendingExternal.url} target="_blank" rel="noopener noreferrer">Open {pendingExternal.name} in browser</a>.</p>}
+            <div className="embed-grid">
+              {providers.map((provider) => {
+                const isCustom = provider.id.startsWith('custom-');
+                const edited = Boolean(overrides && Object.prototype.hasOwnProperty.call(overrides, provider.id));
+                const fromFeed = Boolean(remote && Object.prototype.hasOwnProperty.call(remote, provider.id));
+                return <article className={`embed-card${isCustom ? ' embed-card-custom' : ''}`} key={provider.id}>
+                  <div className="embed-card-head">
+                    <strong>{provider.name}</strong>
+                    <small>{isCustom ? 'Your player' : edited ? 'Edited locally' : fromFeed ? 'Feed updated' : hostOf(provider.movie)}</small>
+                  </div>
+                  <div className="embed-card-actions">
+                    <button className="button button-primary button-small" onClick={() => void start(provider, false)}><Play size={14} /> {isAndroidApp() ? 'Protected player' : 'Open here'}</button>
+                    <button className="button button-secondary button-small" onClick={() => void start(provider, true)} aria-label={`Open ${provider.name} in browser`}>Browser <ExternalLink size={13} /></button>
+                    <button className="button button-secondary button-small" onClick={() => edit(provider)} aria-label={`Edit ${provider.name} templates`}>Edit</button>
+                    {isCustom && <button className="icon-button" aria-label={`Remove ${provider.name}`} onClick={() => setCustom((current) => current.filter((item) => item.id !== provider.id))}><Trash2 size={15} /></button>}
+                  </div>
+                </article>;
+              })}
+              {!providers.length && <p className="embed-status">No matching players.</p>}
+            </div>
+          </section>
+
+          {editing && <div className="embed-add embed-edit-open">
+            <strong>Update {editing.name}</strong>
+            <p>Only use an address you trust. Local edits take priority over the optional update feed.</p>
+            <form onSubmit={saveEdit}>
+              <label>Movie template<input required value={editMovie} onChange={(e) => setEditMovie(e.target.value)} /></label>
+              <label>Series template<input required value={editSeries} onChange={(e) => setEditSeries(e.target.value)} /></label>
+              <div className="embed-provider-actions">
+                <button className="button button-primary button-small">Save changes</button>
+                <button type="button" className="button button-secondary button-small" onClick={() => setEditing(null)}>Cancel</button>
+                {!editing.id.startsWith('custom-') && <button type="button" className="button button-secondary button-small" onClick={() => resetPreset(editing.id)}>Use feed/default</button>}
               </div>
-            </div>)}
+            </form>
           </div>}
-          {torrentCount > 0 && <p className="source-stage-note">{torrentCount} torrent {torrentCount === 1 ? 'result needs' : 'results need'} P2P streaming or a debrid service to play.</p>}
-        </section>
 
-        <section className="source-stage" aria-label="Embed sites">
-          <div className="source-stage-head">
-            <div>
-              <span className="page-kicker">FALLBACK</span>
-              <h3>Embed sites</h3>
-              <p>Third-party websites, not verified streams. 4KHDHub is no longer included; your own players are kept at the end of the list.</p>
-            </div>
+          {/* Configuration lives at the bottom, collapsed. It is set-once work
+              and was previously three stacked forms sitting between the title
+              and the players. */}
+          <div className="embed-settings">
+            <details className="embed-add"><summary><ChevronDown size={14} /> Automatic domain updates</summary>
+              <p>The built-in PRAHA feed is checked when this screen opens, at most once a day. The app keeps the last successful update if the feed is unavailable, and manual edits take priority. The feed needs maintenance when domains change; it cannot discover new domains itself. You can change or disable it below. Only use feeds you trust: their operator can change player domains.</p>
+              <form onSubmit={saveFeed}><label>Trusted feed URL<input type="url" value={feedDraft} onChange={(e) => setFeedDraft(e.target.value)} placeholder="https://your-server.example/providers.json" required /></label><div className="embed-provider-actions"><button className="button button-secondary button-small">{updateConfig.enabled ? 'Save feed' : 'Enable updates'}</button>{updateConfig.enabled && <><button type="button" className="button button-secondary button-small" onClick={() => setRefreshKey((value) => value + 1)}>Check now</button><button type="button" className="button button-secondary button-small" onClick={() => { setUpdateConfig({ enabled: false, url: '' }); setUpdateStatus('Automatic updates disabled.'); }}>Disable</button></>}</div></form>
+              <p role="status">{updateStatus || (updateConfig.enabled && updateCache.url === updateConfig.url && updateCache.checkedAt ? `Last successful update: ${new Date(updateCache.checkedAt).toLocaleString()}` : updateConfig.enabled ? 'No successful update yet.' : 'Automatic updates are off.')}</p>
+            </details>
+            <details className="embed-add"><summary><ChevronDown size={14} /> Add your own player</summary><p>Use HTTPS templates with {'{id}'}, {'{tmdb}'} or {'{imdb}'}. TV also requires {'{season}'} and {'{episode}'}. Templates are stored on this device.</p><form onSubmit={add}><label>Name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Provider name" /></label><label>Movie template<input required value={movie} onChange={(e) => setMovie(e.target.value)} placeholder="https://example.com/movie/{tmdb}" /></label><label>Series template<input required value={series} onChange={(e) => setSeries(e.target.value)} placeholder="https://example.com/tv/{tmdb}/{season}/{episode}" /></label><button className="button button-secondary button-small">Add player</button></form></details>
           </div>
-          <div className="embed-search"><label>Filter players <input type="search" placeholder="Provider name" value={query} onChange={(e) => setQuery(e.target.value)} /></label></div>
-          {error && <p className="embed-error" role="alert">{error}</p>}
-          {pendingExternal && <p className="embed-warning" role="status">ID resolved. <a href={pendingExternal.url} target="_blank" rel="noopener noreferrer">Open {pendingExternal.name} in browser</a>.</p>}
-          <div className="embed-grid">
-            {providers.map((provider) => {
-              const custom = provider.id.startsWith('custom-');
-              const edited = Boolean(overrides && Object.prototype.hasOwnProperty.call(overrides, provider.id));
-              const fromFeed = Boolean(remote && Object.prototype.hasOwnProperty.call(remote, provider.id));
-              let host = 'Invalid URL';
-              try { host = new URL(provider.movie).hostname; } catch { /* keep the label */ }
-              return <article className={`embed-card${custom ? ' embed-card-custom' : ''}`} key={provider.id}>
-                <div className="embed-card-head">
-                  <strong>{provider.name}</strong>
-                  <small>{custom ? 'Your player' : edited ? 'Edited locally' : fromFeed ? 'Feed updated' : host}</small>
-                </div>
-                <div className="embed-card-actions">
-                  <button className="button button-primary button-small" onClick={() => void start(provider, false)}><Play size={14} /> {isAndroidApp() ? 'Protected player' : 'Open here'}</button>
-                  <button className="button button-secondary button-small" onClick={() => void start(provider, true)}>Browser <ExternalLink size={13} /></button>
-                  <button className="button button-secondary button-small" onClick={() => edit(provider)} aria-label={`Edit ${provider.name} templates`}>Edit</button>
-                  {custom && <button className="icon-button" aria-label={`Remove ${provider.name}`} onClick={() => setCustom((current) => current.filter((item) => item.id !== provider.id))}><Trash2 size={15} /></button>}
-                </div>
-              </article>;
-            })}
-            {!providers.length && <p className="source-stage-status">No matching players.</p>}
-          </div>
-        </section>
 
-        <p className="embed-warning">Embed sites may show ads or track visits. The protected Android player blocks known ad/tracker hosts and pop-ups, but is not uBlock Origin and cannot block every ad. Browser mode is unfiltered. On the web the sandbox blocks pop-ups but does not filter network ads. Availability, legality, and compatibility are not verified. Only use sites and content you are authorized to access. {isAndroidApp() ? 'Protected player runs separately from the app bridge. Some sites may not play.' : 'In-app embeds are restricted and may not work; you can open them in your browser instead.'}</p>
+          <p className="embed-warning"><ShieldCheck size={13} /> Embed sites may show ads or track visits. The protected Android player blocks known ad/tracker hosts and pop-ups, but is not uBlock Origin and cannot block every ad. Browser mode is unfiltered. On the web the sandbox blocks pop-ups but does not filter network ads. Availability, legality, and compatibility are not verified. Only use sites and content you are authorized to access. {isAndroidApp() ? 'Protected player runs separately from the app bridge. Some sites may not play.' : 'In-app embeds are restricted and may not work; you can open them in your browser instead.'}</p>
 
-        {editing && <div className="embed-add">
-          <strong>Update {editing.name}</strong>
-          <p>Only use an address you trust. Local edits take priority over the optional update feed.</p>
-          <form onSubmit={saveEdit}>
-            <label>Movie template<input required value={editMovie} onChange={(e) => setEditMovie(e.target.value)} /></label>
-            <label>Series template<input required value={editSeries} onChange={(e) => setEditSeries(e.target.value)} /></label>
-            <div className="embed-provider-actions">
-              <button className="button button-primary button-small">Save changes</button>
-              <button type="button" className="button button-secondary button-small" onClick={() => setEditing(null)}>Cancel</button>
-              {!editing.id.startsWith('custom-') && <button type="button" className="button button-secondary button-small" onClick={() => resetPreset(editing.id)}>Use feed/default</button>}
-            </div>
-          </form>
-        </div>}
-
-        <details className="embed-add"><summary>Automatic domain updates</summary>
-          <p>The built-in PRAHA feed is checked when this screen opens, at most once a day. The app keeps the last successful update if the feed is unavailable, and manual edits take priority. The feed needs maintenance when domains change; it cannot discover new domains itself. You can change or disable it below. Only use feeds you trust: their operator can change player domains.</p>
-          <form onSubmit={saveFeed}><label>Trusted feed URL<input type="url" value={feedDraft} onChange={(e) => setFeedDraft(e.target.value)} placeholder="https://your-server.example/providers.json" required /></label><div className="embed-provider-actions"><button className="button button-secondary button-small">{updateConfig.enabled ? 'Save feed' : 'Enable updates'}</button>{updateConfig.enabled && <><button type="button" className="button button-secondary button-small" onClick={() => setRefreshKey((value) => value + 1)}>Check now</button><button type="button" className="button button-secondary button-small" onClick={() => { setUpdateConfig({ enabled: false, url: '' }); setUpdateStatus('Automatic updates disabled.'); }}>Disable</button></>}</div></form>
-          <p role="status">{updateStatus || (updateConfig.enabled && updateCache.url === updateConfig.url && updateCache.checkedAt ? `Last successful update: ${new Date(updateCache.checkedAt).toLocaleString()}` : updateConfig.enabled ? 'No successful update yet.' : 'Automatic updates are off.')}</p>
-        </details>
-
-        <details className="embed-add"><summary>Add your own player</summary><p>Use HTTPS templates with {'{id}'}, {'{tmdb}'} or {'{imdb}'}. TV also requires {'{season}'} and {'{episode}'}. Templates are stored on this device.</p><form onSubmit={add}><label>Name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Provider name" /></label><label>Movie template<input required value={movie} onChange={(e) => setMovie(e.target.value)} placeholder="https://example.com/movie/{tmdb}" /></label><label>Series template<input required value={series} onChange={(e) => setSeries(e.target.value)} placeholder="https://example.com/tv/{tmdb}/{season}/{episode}" /></label><button className="button button-secondary button-small">Add player</button></form></details>
-
-        <p className="embed-directory">More sites: <a href="https://rentry.co/onbksdgu" target="_blank" rel="noopener noreferrer">open the provider directory <ExternalLink size={12} /></a>. Not every site supports these templates.</p>
+          <p className="embed-directory">More sites: <a href="https://rentry.co/onbksdgu" target="_blank" rel="noopener noreferrer">open the provider directory <ExternalLink size={12} /></a>. Not every site supports these templates.</p>
+        </div>
       </>}
     </section>
   </div>;

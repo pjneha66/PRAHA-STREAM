@@ -21,7 +21,15 @@ interface CloudStreamViewProps {
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
 }
 
-type Tab = 'extensions' | 'repositories' | 'browse' | 'providers';
+/**
+ * Two top-level sections, because browsing and maintenance are different jobs:
+ * Browse is what you open to watch something, Manage is what you open when an
+ * extension is missing, broken or needs updating. The four old peer tabs put the
+ * search box below three screens of repository chrome, so Browse meant scrolling
+ * past everything you did not want.
+ */
+type Section = 'browse' | 'manage';
+type ManageTab = 'extensions' | 'repositories' | 'providers';
 
 const shortUrl = (url: string) => { try { return new URL(url).hostname; } catch { return url; } };
 
@@ -45,7 +53,8 @@ const STATUS_LABELS: Record<number, string> = { 0: 'Down', 1: 'Working', 2: 'Slo
 const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify }) => {
   const available = cloudStreamAvailable();
 
-  const [tab, setTab] = useState<Tab>('extensions');
+  const [section, setSection] = useState<Section>('browse');
+  const [manageTab, setManageTab] = useState<ManageTab>('extensions');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -119,9 +128,13 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
     }
   }, [available, homeLoading, notify]);
 
+  // Load the rows as soon as Browse is shown, so switching to it is not a blank
+  // screen waiting on a refresh press.
   useEffect(() => {
-    if (tab === 'browse' && !home.length && !homeLoading) void loadHome();
-  }, [tab, home.length, homeLoading, loadHome]);
+    if (section === 'browse' && !home.length && !homeLoading && plugins.some((plugin) => plugin.loaded)) {
+      void loadHome();
+    }
+  }, [section, home.length, homeLoading, loadHome, plugins]);
 
   const handleAddRepository = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -134,7 +147,8 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
       setRepoUrl('');
       await reload();
       notify(`${repo.name} added.`, 'success');
-      setTab('repositories');
+      setSection('manage');
+      setManageTab('repositories');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'The repository could not be added.';
       setError(message);
@@ -260,10 +274,12 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
     }
   };
 
-  const handleToggleCatalog = async (apiName: string, section: string, enabled: boolean) => {
-    setHome((current) => current.map((row) => (row.apiName === apiName && row.section === section ? { ...row, ...{} } : row)));
+  const handleToggleCatalog = async (apiName: string, sectionName: string, enabled: boolean) => {
+    setHome((current) => current.map((row) => (
+      row.apiName === apiName && row.section === sectionName ? { ...row, enabled } : row
+    )));
     try {
-      await setCatalogEnabled(apiName, section, enabled);
+      await setCatalogEnabled(apiName, sectionName, enabled);
       await loadHome();
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Could not save that catalog.', 'error');
@@ -271,9 +287,13 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
   };
 
   const loadedPlugins = plugins.filter((plugin) => plugin.loaded).length;
-  const updateCount = plugins.filter((plugin) => plugin.error).length;
+  const failedPlugins = plugins.filter((plugin) => plugin.error).length;
   const totalResults = useMemo(
     () => searchBatches.reduce((sum, batch) => sum + batch.items.length, 0),
+    [searchBatches],
+  );
+  const visibleBatches = useMemo(
+    () => searchBatches.filter((batch) => batch.items.length || batch.error),
     [searchBatches],
   );
 
@@ -295,224 +315,35 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
 
   return (
     <div className="standard-page cloudstream-page page-enter">
-      <div className="extension-hero cloudstream-hero">
-        <div className="extension-orbit orbit-one" /><div className="extension-orbit orbit-two" />
-        <span className="extension-hero-icon"><Boxes size={26} /></span>
+      <header className="cloudstream-head">
+        <span className="cloudstream-head-icon"><Boxes size={22} /></span>
         <div>
-          <span className="page-kicker">CLOUDSTREAM EXTENSIONS</span>
-          <h1>Every CloudStream source, in PRAHA.</h1>
-          <p>Install real <code>.cs3</code> extensions and their repositories. They run natively on the device, exactly as they do in CloudStream.</p>
+          <h1>CloudStream</h1>
+          <p>
+            {loadedPlugins} extension{loadedPlugins === 1 ? '' : 's'} loaded · {providers.length} provider{providers.length === 1 ? '' : 's'} · {repositories.length} repositor{repositories.length === 1 ? 'y' : 'ies'}
+            {failedPlugins > 0 && <span className="cloudstream-head-warn"> · {failedPlugins} failed</span>}
+          </p>
         </div>
-        <div className="compatibility-badges">
-          <span><Zap size={16} /> Native Dalvik host</span>
-          <span><ShieldCheck size={16} /> SHA-256 verified</span>
-        </div>
-      </div>
+        <span className="cloudstream-head-badge"><Zap size={13} /> Native</span>
+      </header>
 
-      <div className="extension-stats">
-        <div><span className="stat-icon lime"><Plug size={19} /></span><p>Loaded extensions<strong>{loadedPlugins}</strong></p><small>of {plugins.length} installed</small></div>
-        <div><span className="stat-icon blue"><Layers size={19} /></span><p>Providers<strong>{providers.length}</strong></p><small>Across every extension</small></div>
-        <div><span className="stat-icon violet"><Compass size={19} /></span><p>Repositories<strong>{repositories.length}</strong></p><small>{updateCount > 0 ? `${updateCount} need attention` : 'All healthy'}</small></div>
-      </div>
-
-      <div className="extension-tabs">
-        <button className={tab === 'extensions' ? 'active' : ''} onClick={() => setTab('extensions')}><PackageOpen size={18} /><span>Extensions<small>Installed & running</small></span><b>{plugins.length}</b></button>
-        <button className={tab === 'repositories' ? 'active' : ''} onClick={() => setTab('repositories')}><Layers size={18} /><span>Repositories<small>Sources of .cs3 packages</small></span><b>{repositories.length}</b></button>
-        <button className={tab === 'browse' ? 'active' : ''} onClick={() => setTab('browse')}><Compass size={18} /><span>Browse<small>Home rows & search</small></span><b>{home.length}</b></button>
-        <button className={tab === 'providers' ? 'active' : ''} onClick={() => setTab('providers')}><Zap size={18} /><span>Providers<small>What each extension offers</small></span><b>{providers.length}</b></button>
+      <div className="cloudstream-sections">
+        <button className={section === 'browse' ? 'active' : ''} onClick={() => setSection('browse')}>
+          <Compass size={18} />
+          <span>Browse<small>Search and home rows</small></span>
+        </button>
+        <button className={section === 'manage' ? 'active' : ''} onClick={() => setSection('manage')}>
+          <Layers size={18} />
+          <span>Manage<small>Extensions, repositories, providers</small></span>
+          <b>{plugins.length + repositories.length}</b>
+        </button>
       </div>
 
       {error && <p className="install-error"><CircleAlert size={15} />{error}</p>}
 
-      {tab === 'extensions' && (
+      {section === 'browse' && (
         <>
-          <div className="cloudstream-toolbar">
-            <button className="button button-primary" onClick={handleUpdateAll} disabled={busy === 'update-all' || !plugins.length}>
-              {busy === 'update-all' ? <RefreshCw size={16} className="spin" /> : <RefreshCw size={16} />} Update all
-            </button>
-            <button className="button button-secondary" onClick={handleInstallMissing} disabled={busy === 'install-missing'}>
-              {busy === 'install-missing' ? <RefreshCw size={16} className="spin" /> : <Download size={16} />} Install everything available
-            </button>
-            <button className="button button-secondary" onClick={handleSideload} disabled={busy === 'sideload'}>
-              {busy === 'sideload' ? <RefreshCw size={16} className="spin" /> : <Plug size={16} />} Install from file
-            </button>
-          </div>
-
-          <div className="extension-list">
-            {plugins.map((plugin) => {
-              const isExpanded = expanded === plugin.internalName;
-              return (
-                <article className={`extension-card ${!plugin.loaded ? 'disabled' : ''}`} key={plugin.internalName}>
-                  <div className="extension-card-main">
-                    <div className="extension-logo"><Boxes size={24} /></div>
-                    <div className="extension-info">
-                      <div className="extension-title">
-                        <h3>{plugin.name}</h3>
-                        <span>v{plugin.version}</span>
-                        {plugin.loaded && <span className="active-badge"><i />ACTIVE</span>}
-                        {plugin.error && <span className="cloudstream-badge error">FAILED</span>}
-                      </div>
-                      <p>{plugin.error || (plugin.repositoryUrl ? shortUrl(plugin.repositoryUrl) : 'Installed from file')}</p>
-                      <div className="resource-badges">
-                        <span>{plugin.providerCount} provider{plugin.providerCount === 1 ? '' : 's'}</span>
-                        <span>{plugin.extractorCount} extractor{plugin.extractorCount === 1 ? '' : 's'}</span>
-                        {plugin.isOnline && <span>Online</span>}
-                      </div>
-                    </div>
-                    <div className="extension-actions">
-                      <button className="icon-button" onClick={() => setExpanded(isExpanded ? null : plugin.internalName)} aria-label="Show extension details">
-                        {isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        onClick={() => handleUninstall(plugin)}
-                        disabled={busy === `uninstall:${plugin.internalName}`}
-                        aria-label={`Remove ${plugin.name}`}
-                      >
-                        {busy === `uninstall:${plugin.internalName}` ? <RefreshCw size={17} className="spin" /> : <Trash2 size={17} />}
-                      </button>
-                    </div>
-                  </div>
-                  {isExpanded && (
-                    <div className="extension-details">
-                      <span><b>Internal name</b>{plugin.internalName}</span>
-                      <span><b>Repository</b>{plugin.repositoryUrl ? shortUrl(plugin.repositoryUrl) : 'Sideloaded'}</span>
-                      <span><b>State</b>{plugin.loaded ? 'Loaded' : plugin.error ? 'Failed to load' : 'Not loaded'}</span>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-            {!plugins.length && !loading && (
-              <div className="empty-state extension-empty">
-                <span><PackageOpen size={27} /></span>
-                <h2>No CloudStream extensions yet</h2>
-                <p>Add a repository, then install the extensions you want from it. Every provider they register becomes available to PRAHA.</p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {tab === 'repositories' && (
-        <>
-          <section className="install-panel">
-            <div className="install-panel-title">
-              <span><Layers size={20} /></span>
-              <div>
-                <h2>Add a CloudStream repository</h2>
-                <p>Paste a repository URL or a GitHub repo. PRAHA reads its <code>repo.json</code> and lists the extensions it publishes.</p>
-              </div>
-            </div>
-            <form onSubmit={handleAddRepository} className="install-form">
-              <div>
-                <Search size={17} />
-                <input
-                  value={repoUrl}
-                  onChange={(event) => { setRepoUrl(event.target.value); setError(''); }}
-                  placeholder="https://github.com/user/cloudstream-repo"
-                  aria-label="CloudStream repository URL"
-                />
-              </div>
-              <button className="button button-primary" disabled={busy === 'add-repo'}>
-                {busy === 'add-repo' ? <RefreshCw size={17} className="spin" /> : <Plug size={17} />}
-                {busy === 'add-repo' ? 'Adding…' : 'Add'}
-              </button>
-            </form>
-          </section>
-
-          <div className="extension-list">
-            {repositories.map((repo) => {
-              const isExpanded = expanded === repo.url;
-              const list = repoPlugins[repo.url];
-              const installedHere = list?.filter((plugin) => plugin.installed).length ?? 0;
-              return (
-                <article className="extension-card repository-card" key={repo.url}>
-                  <div className="extension-card-main">
-                    <div className="extension-logo nuvio"><Layers size={24} /></div>
-                    <div className="extension-info">
-                      <div className="extension-title">
-                        <h3>{repo.name}</h3>
-                        {list && <span className="cloudstream-badge">{installedHere}/{list.length} installed</span>}
-                      </div>
-                      <p>{repo.description || shortUrl(repo.url)}</p>
-                      <div className="resource-badges"><span>{shortUrl(repo.url)}</span></div>
-                    </div>
-                    <div className="extension-actions">
-                      <button
-                        className="icon-button"
-                        onClick={() => handleLoadRepoPlugins(repo)}
-                        disabled={busy === `browse:${repo.url}`}
-                        aria-label={`Show extensions in ${repo.name}`}
-                      >
-                        {busy === `browse:${repo.url}` ? <RefreshCw size={17} className="spin" /> : isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
-                      </button>
-                      <a className="icon-button" href={repo.url} target="_blank" rel="noreferrer" aria-label={`Open ${repo.name}`}><ExternalLink size={16} /></a>
-                      <button
-                        className="icon-button danger"
-                        onClick={() => handleRemoveRepository(repo)}
-                        disabled={busy === `remove:${repo.url}`}
-                        aria-label={`Remove ${repo.name}`}
-                      >
-                        {busy === `remove:${repo.url}` ? <RefreshCw size={17} className="spin" /> : <Trash2 size={17} />}
-                      </button>
-                    </div>
-                  </div>
-                  {isExpanded && (
-                    <div className="scraper-list">
-                      {!list && <div className="cloudstream-loading"><Loader2 size={16} className="spin" /> Reading repository…</div>}
-                      {list?.map((plugin) => {
-                        const installing = busy === `install:${plugin.internalName}`;
-                        const size = formatSize(plugin.fileSize);
-                        return (
-                          <div className="scraper-row" key={plugin.internalName}>
-                            <span className="scraper-icon"><Boxes size={16} /></span>
-                            <div>
-                              <strong>{plugin.name}<small>v{plugin.version}</small></strong>
-                              <p>
-                                {plugin.description || plugin.tvTypes.join(' · ') || 'Extension'}
-                                {size ? ` · ${size}` : ''}
-                                {plugin.language ? ` · ${plugin.language.toUpperCase()}` : ''}
-                              </p>
-                            </div>
-                            <span className={`scraper-status ${plugin.status === 1 ? '' : 'paused'}`}>{STATUS_LABELS[plugin.status] ?? 'Unknown'}</span>
-                            {plugin.installed ? (
-                              <button
-                                className={`test-button ${plugin.updateAvailable ? '' : 'is-installed'}`}
-                                onClick={() => handleInstall(repo, plugin)}
-                                disabled={installing || !plugin.updateAvailable}
-                                title={plugin.updateAvailable ? 'Update to the published version' : 'Already installed'}
-                              >
-                                {installing ? <RefreshCw size={14} className="spin" /> : plugin.updateAvailable ? <RefreshCw size={14} /> : <Check size={14} />}
-                                {plugin.updateAvailable ? 'Update' : 'Installed'}
-                              </button>
-                            ) : (
-                              <button className="test-button" onClick={() => handleInstall(repo, plugin)} disabled={installing}>
-                                {installing ? <RefreshCw size={14} className="spin" /> : <Download size={14} />} Install
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-            {!repositories.length && !loading && (
-              <div className="empty-state extension-empty">
-                <span><Layers size={27} /></span>
-                <h2>No repositories added</h2>
-                <p>Add a CloudStream repository above to see the extensions it publishes.</p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {tab === 'browse' && (
-        <>
-          <section className="install-panel">
+          <section className="install-panel cloudstream-search">
             <form onSubmit={handleSearch} className="install-form">
               <div>
                 <Search size={17} />
@@ -528,20 +359,27 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
                 {searching ? 'Searching…' : 'Search'}
               </button>
             </form>
-            <p className="install-hint"><ShieldCheck size={14} /> Each provider searches on the device. Results appear grouped by extension.</p>
           </section>
 
-          {searchBatches.length > 0 && (
+          {visibleBatches.length > 0 ? (
             <div className="cloudstream-results">
-              <div className="installed-heading">
-                <div><h2>Results</h2><p>{totalResults} across {searchBatches.filter((batch) => batch.items.length).length} provider{searchBatches.filter((batch) => batch.items.length).length === 1 ? '' : 's'}</p></div>
-                <button className="button button-secondary button-small" onClick={() => { setSearchBatches([]); setQuery(''); }}>Clear</button>
+              <div className="cloudstream-row-head">
+                <div>
+                  <h2>Results</h2>
+                  <p>{totalResults} across {visibleBatches.filter((batch) => batch.items.length).length} provider{visibleBatches.filter((batch) => batch.items.length).length === 1 ? '' : 's'}</p>
+                </div>
+                <button className="button button-secondary button-small" onClick={() => { setSearchBatches([]); setQuery(''); }}>
+                  Clear
+                </button>
               </div>
-              {searchBatches.filter((batch) => batch.items.length || batch.error).map((batch) => (
+              {visibleBatches.map((batch) => (
                 <section className="cloudstream-batch" key={batch.apiName}>
-                  <div className="section-heading">
-                    <div><h2>{batch.apiName}</h2>{batch.error && <p><TriangleAlert size={13} /> {batch.error}</p>}</div>
-                    <span>{batch.items.length}</span>
+                  <div className="cloudstream-row-head">
+                    <div>
+                      <h2>{batch.apiName}</h2>
+                      {batch.error && <p className="cloudstream-batch-error"><TriangleAlert size={12} /> {batch.error}</p>}
+                    </div>
+                    <span className="cloudstream-count">{batch.items.length}</span>
                   </div>
                   <div className="cloudstream-grid">
                     {batch.items.map((item) => (
@@ -557,46 +395,59 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
                 </section>
               ))}
             </div>
-          )}
-
-          {!searchBatches.length && (
+          ) : (
             <>
-              <div className="installed-heading">
-                <div><h2>Home rows</h2><p>Catalogs every loaded extension publishes.</p></div>
+              <div className="cloudstream-row-head">
+                <div><h2>Home rows</h2><p>Catalogs from every loaded extension.</p></div>
                 <button className="button button-secondary button-small" onClick={loadHome} disabled={homeLoading}>
-                  {homeLoading ? <RefreshCw size={14} className="spin" /> : <RefreshCw size={14} />} Refresh
+                  <RefreshCw size={14} className={homeLoading ? 'spin' : ''} /> Refresh
                 </button>
               </div>
-              {home.map((section) => (
-                <section className="cloudstream-batch" key={`${section.apiName}:${section.section}`}>
-                  <div className="section-heading">
-                    <div><h2>{section.name}</h2><p>{section.apiName}</p></div>
-                    <button
-                      className="test-button"
-                      onClick={() => handleToggleCatalog(section.apiName, section.section, false)}
-                      title="Hide this row"
-                    >
-                      <Check size={13} /> Shown
-                    </button>
+              {homeLoading && !home.length && (
+                <p className="cloudstream-loading"><Loader2 size={15} className="spin" /> Reading catalogs…</p>
+              )}
+              {home.map((row) => (
+                <section className="cloudstream-batch" key={`${row.apiName}:${row.section}`}>
+                  <div className="cloudstream-row-head">
+                    <div><h2>{row.name}</h2><p>{row.apiName}</p></div>
+                    <label className="cloudstream-toggle" title={row.enabled === false ? 'Show this row' : 'Hide this row'}>
+                      <span>{row.enabled === false ? 'Hidden' : 'Shown'}</span>
+                      <Toggle
+                        checked={row.enabled !== false}
+                        onChange={(next) => void handleToggleCatalog(row.apiName, row.section, next)}
+                        label={`Show the ${row.name} row`}
+                      />
+                    </label>
                   </div>
-                  <div className="cloudstream-grid">
-                    {section.items.map((item) => (
-                      <button className="cloudstream-tile" key={`${section.apiName}:${item.url}`} onClick={() => onOpenItem(item)}>
-                        <span className="cloudstream-tile-art">
-                          {item.posterUrl ? <img src={item.posterUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Boxes size={22} />}
-                        </span>
-                        <strong>{item.name}</strong>
-                        <small>{item.type || 'Title'}</small>
-                      </button>
-                    ))}
-                  </div>
+                  {row.enabled !== false && (
+                    <div className="cloudstream-grid">
+                      {row.items.map((item) => (
+                        <button className="cloudstream-tile" key={`${row.apiName}:${item.url}`} onClick={() => onOpenItem(item)}>
+                          <span className="cloudstream-tile-art">
+                            {item.posterUrl ? <img src={item.posterUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Boxes size={22} />}
+                          </span>
+                          <strong>{item.name}</strong>
+                          <small>{item.type || 'Title'}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </section>
               ))}
               {!home.length && !homeLoading && (
                 <div className="empty-state extension-empty">
                   <span><Compass size={27} /></span>
-                  <h2>No home rows</h2>
-                  <p>Install an extension with a main page to see its catalogs here, or search above.</p>
+                  <h2>{loadedPlugins ? 'No home rows' : 'No extensions installed'}</h2>
+                  <p>
+                    {loadedPlugins
+                      ? 'Search above, or refresh to read the catalogs again.'
+                      : 'Open Manage to add a repository and install extensions, then their catalogs appear here.'}
+                  </p>
+                  {!loadedPlugins && (
+                    <button className="button button-primary" onClick={() => setSection('manage')}>
+                      <Layers size={16} /> Manage extensions
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -604,34 +455,239 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
         </>
       )}
 
-      {tab === 'providers' && (
-        <div className="extension-list">
-          {providers.map((provider) => (
-            <article className="extension-card" key={provider.name}>
-              <div className="extension-card-main">
-                <div className="extension-logo"><Zap size={24} /></div>
-                <div className="extension-info">
-                  <div className="extension-title">
-                    <h3>{provider.name}</h3>
-                    {provider.lang && <span>{provider.lang}</span>}
-                    {provider.hasMainPage && <span className="active-badge"><i />HOME</span>}
+      {section === 'manage' && (
+        <>
+          <div className="cloudstream-subtabs">
+            <button className={manageTab === 'extensions' ? 'active' : ''} onClick={() => setManageTab('extensions')}>
+              <PackageOpen size={15} /> Extensions <b>{plugins.length}</b>
+            </button>
+            <button className={manageTab === 'repositories' ? 'active' : ''} onClick={() => setManageTab('repositories')}>
+              <Layers size={15} /> Repositories <b>{repositories.length}</b>
+            </button>
+            <button className={manageTab === 'providers' ? 'active' : ''} onClick={() => setManageTab('providers')}>
+              <Zap size={15} /> Providers <b>{providers.length}</b>
+            </button>
+          </div>
+
+          {manageTab === 'extensions' && (
+            <>
+              <div className="cloudstream-toolbar">
+                <button className="button button-primary" onClick={handleUpdateAll} disabled={busy === 'update-all' || !plugins.length}>
+                  <RefreshCw size={16} className={busy === 'update-all' ? 'spin' : ''} /> Update all
+                </button>
+                <button className="button button-secondary" onClick={handleInstallMissing} disabled={busy === 'install-missing'}>
+                  <Download size={16} className={busy === 'install-missing' ? 'spin' : ''} /> Install available
+                </button>
+                <button className="button button-secondary" onClick={handleSideload} disabled={busy === 'sideload'}>
+                  <Plug size={16} className={busy === 'sideload' ? 'spin' : ''} /> From file
+                </button>
+              </div>
+
+              <div className="extension-list">
+                {plugins.map((plugin) => {
+                  const isExpanded = expanded === plugin.internalName;
+                  return (
+                    <article className={`extension-card ${!plugin.loaded ? 'disabled' : ''}`} key={plugin.internalName}>
+                      <div className="extension-card-main">
+                        <div className="extension-logo"><Boxes size={24} /></div>
+                        <div className="extension-info">
+                          <div className="extension-title">
+                            <h3>{plugin.name}</h3>
+                            <span>v{plugin.version}</span>
+                            {plugin.loaded && <span className="active-badge"><i />ACTIVE</span>}
+                            {plugin.error && <span className="cloudstream-badge error">FAILED</span>}
+                          </div>
+                          <p>{plugin.error || (plugin.repositoryUrl ? shortUrl(plugin.repositoryUrl) : 'Installed from file')}</p>
+                          <div className="resource-badges">
+                            <span>{plugin.providerCount} provider{plugin.providerCount === 1 ? '' : 's'}</span>
+                            <span>{plugin.extractorCount} extractor{plugin.extractorCount === 1 ? '' : 's'}</span>
+                            {plugin.isOnline && <span>Online</span>}
+                          </div>
+                        </div>
+                        <div className="extension-actions">
+                          <button className="icon-button" onClick={() => setExpanded(isExpanded ? null : plugin.internalName)} aria-label="Show extension details">
+                            {isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                          </button>
+                          <button
+                            className="icon-button danger"
+                            onClick={() => handleUninstall(plugin)}
+                            disabled={busy === `uninstall:${plugin.internalName}`}
+                            aria-label={`Remove ${plugin.name}`}
+                          >
+                            {busy === `uninstall:${plugin.internalName}` ? <RefreshCw size={17} className="spin" /> : <Trash2 size={17} />}
+                          </button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="extension-details">
+                          <span><b>Internal name</b>{plugin.internalName}</span>
+                          <span><b>Repository</b>{plugin.repositoryUrl ? shortUrl(plugin.repositoryUrl) : 'Sideloaded'}</span>
+                          <span><b>State</b>{plugin.loaded ? 'Loaded' : plugin.error ? 'Failed to load' : 'Not loaded'}</span>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+                {!plugins.length && !loading && (
+                  <div className="empty-state extension-empty">
+                    <span><PackageOpen size={27} /></span>
+                    <h2>No CloudStream extensions yet</h2>
+                    <p>Add a repository, then install the extensions you want from it. Every provider they register becomes available to PRAHA.</p>
+                    <button className="button button-primary" onClick={() => setManageTab('repositories')}>
+                      <Layers size={16} /> Add a repository
+                    </button>
                   </div>
-                  <p>{provider.sourcePlugin ? `From ${provider.sourcePlugin}` : 'Built in'}</p>
-                  <div className="resource-badges">
-                    {provider.supportedTypes.map((type) => <span key={type}>{type}</span>)}
+                )}
+              </div>
+            </>
+          )}
+
+          {manageTab === 'repositories' && (
+            <>
+              <section className="install-panel">
+                <div className="install-panel-title">
+                  <span><Layers size={20} /></span>
+                  <div>
+                    <h2>Add a CloudStream repository</h2>
+                    <p>Paste a repository URL or a GitHub repo. PRAHA reads its <code>repo.json</code> and lists what it publishes.</p>
                   </div>
                 </div>
+                <form onSubmit={handleAddRepository} className="install-form">
+                  <div>
+                    <Search size={17} />
+                    <input
+                      value={repoUrl}
+                      onChange={(event) => { setRepoUrl(event.target.value); setError(''); }}
+                      placeholder="https://github.com/user/cloudstream-repo"
+                      aria-label="CloudStream repository URL"
+                    />
+                  </div>
+                  <button className="button button-primary" disabled={busy === 'add-repo'}>
+                    {busy === 'add-repo' ? <RefreshCw size={17} className="spin" /> : <Plug size={17} />}
+                    {busy === 'add-repo' ? 'Adding…' : 'Add'}
+                  </button>
+                </form>
+              </section>
+
+              <div className="extension-list">
+                {repositories.map((repo) => {
+                  const isExpanded = expanded === repo.url;
+                  const list = repoPlugins[repo.url];
+                  const installedHere = list?.filter((plugin) => plugin.installed).length ?? 0;
+                  return (
+                    <article className="extension-card repository-card" key={repo.url}>
+                      <div className="extension-card-main">
+                        <div className="extension-logo nuvio"><Layers size={24} /></div>
+                        <div className="extension-info">
+                          <div className="extension-title">
+                            <h3>{repo.name}</h3>
+                            {list && <span className="cloudstream-badge">{installedHere}/{list.length} installed</span>}
+                          </div>
+                          <p>{repo.description || shortUrl(repo.url)}</p>
+                          <div className="resource-badges"><span>{shortUrl(repo.url)}</span></div>
+                        </div>
+                        <div className="extension-actions">
+                          <button
+                            className="icon-button"
+                            onClick={() => handleLoadRepoPlugins(repo)}
+                            disabled={busy === `browse:${repo.url}`}
+                            aria-label={`Show extensions in ${repo.name}`}
+                          >
+                            {busy === `browse:${repo.url}` ? <RefreshCw size={17} className="spin" /> : isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                          </button>
+                          <a className="icon-button" href={repo.url} target="_blank" rel="noreferrer" aria-label={`Open ${repo.name}`}><ExternalLink size={16} /></a>
+                          <button
+                            className="icon-button danger"
+                            onClick={() => handleRemoveRepository(repo)}
+                            disabled={busy === `remove:${repo.url}`}
+                            aria-label={`Remove ${repo.name}`}
+                          >
+                            {busy === `remove:${repo.url}` ? <RefreshCw size={17} className="spin" /> : <Trash2 size={17} />}
+                          </button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="scraper-list">
+                          {!list && <div className="cloudstream-loading"><Loader2 size={16} className="spin" /> Reading repository…</div>}
+                          {list?.map((plugin) => {
+                            const installing = busy === `install:${plugin.internalName}`;
+                            const size = formatSize(plugin.fileSize);
+                            return (
+                              <div className="scraper-row" key={plugin.internalName}>
+                                <span className="scraper-icon"><Boxes size={16} /></span>
+                                <div>
+                                  <strong>{plugin.name}<small>v{plugin.version}</small></strong>
+                                  <p>
+                                    {plugin.description || plugin.tvTypes.join(' · ') || 'Extension'}
+                                    {size ? ` · ${size}` : ''}
+                                    {plugin.language ? ` · ${plugin.language.toUpperCase()}` : ''}
+                                  </p>
+                                </div>
+                                <span className={`scraper-status ${plugin.status === 1 ? '' : 'paused'}`}>{STATUS_LABELS[plugin.status] ?? 'Unknown'}</span>
+                                {plugin.installed ? (
+                                  <button
+                                    className={`test-button ${plugin.updateAvailable ? '' : 'is-installed'}`}
+                                    onClick={() => handleInstall(repo, plugin)}
+                                    disabled={installing || !plugin.updateAvailable}
+                                    title={plugin.updateAvailable ? 'Update to the published version' : 'Already installed'}
+                                  >
+                                    {installing ? <RefreshCw size={14} className="spin" /> : plugin.updateAvailable ? <RefreshCw size={14} /> : <Check size={14} />}
+                                    {plugin.updateAvailable ? 'Update' : 'Installed'}
+                                  </button>
+                                ) : (
+                                  <button className="test-button" onClick={() => handleInstall(repo, plugin)} disabled={installing}>
+                                    {installing ? <RefreshCw size={14} className="spin" /> : <Download size={14} />} Install
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+                {!repositories.length && !loading && (
+                  <div className="empty-state extension-empty">
+                    <span><Layers size={27} /></span>
+                    <h2>No repositories added</h2>
+                    <p>Add a CloudStream repository above to see the extensions it publishes.</p>
+                  </div>
+                )}
               </div>
-            </article>
-          ))}
-          {!providers.length && (
-            <div className="empty-state extension-empty">
-              <span><Zap size={27} /></span>
-              <h2>No providers loaded</h2>
-              <p>Install an extension that registers providers, then they will be listed here.</p>
+            </>
+          )}
+
+          {manageTab === 'providers' && (
+            <div className="extension-list">
+              {providers.map((provider) => (
+                <article className="extension-card" key={provider.name}>
+                  <div className="extension-card-main">
+                    <div className="extension-logo"><Zap size={24} /></div>
+                    <div className="extension-info">
+                      <div className="extension-title">
+                        <h3>{provider.name}</h3>
+                        {provider.lang && <span>{provider.lang}</span>}
+                        {provider.hasMainPage && <span className="active-badge"><i />HOME</span>}
+                      </div>
+                      <p>{provider.sourcePlugin ? `From ${provider.sourcePlugin}` : 'Built in'}</p>
+                      <div className="resource-badges">
+                        {provider.supportedTypes.map((type) => <span key={type}>{type}</span>)}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+              {!providers.length && (
+                <div className="empty-state extension-empty">
+                  <span><Zap size={27} /></span>
+                  <h2>No providers loaded</h2>
+                  <p>Install an extension that registers providers, then they will be listed here.</p>
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
 
       <div className="extension-footer">
