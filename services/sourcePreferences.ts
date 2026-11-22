@@ -71,11 +71,14 @@ export function streamTransportPriority(stream: StreamResult): number {
 }
 
 export function streamPriority(stream: StreamResult): number {
-  const is4khd = /4khd/i.test(stream.sourceName) || /4khd/i.test(stream.provider || '');
+  // Movy is VyseTV's own source and sits first in its source list, so it takes
+  // the top rank that 4KHDHub used to hold. 4KHDHub itself no longer gets a
+  // special rank: it is graded on quality alone, like every other scraper.
+  const isMovy = /movy/i.test(stream.sourceName) || /movy/i.test(stream.provider || '');
   const quality = streamQuality(stream);
   let base = 10;
-  if (is4khd && quality === '4K') base = 100;
-  else if (is4khd) base = 90;
+  if (isMovy && quality === '4K') base = 100;
+  else if (isMovy) base = 90;
   else if (quality === '4K') base = 80;
   else if (quality === '1080p') base = 60;
   else if (quality === '720p') base = 40;

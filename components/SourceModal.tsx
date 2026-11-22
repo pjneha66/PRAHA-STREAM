@@ -149,7 +149,7 @@ const SourceModal: React.FC<{
       repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
     setHealth([
       { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
-      { id: 'playtorrio:4khd', name: '4KHDHub & PlayTorrio VOD (4K UHD)', status: 'searching' as const },
+      { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
       ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
       ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
     ]);
@@ -246,7 +246,7 @@ const SourceModal: React.FC<{
         })();
         const playtorrioJob = (async () => {
           const tmdbId = knownTmdb || (await idJob).tmdbId;
-          const id = 'playtorrio:4khd';
+          const id = 'playtorrio:vod';
           return runProvider(id, async () => {
             const results = await findPlayTorrioStreams(media.title, media.type, tmdbId, media.year, s, ep);
             return { streams: results, errors: [] };
@@ -254,7 +254,7 @@ const SourceModal: React.FC<{
             if (cancelled) return;
             setStreams((current) => {
               const seen = new Set<string>();
-              // Put 4KHDHub and PlayTorrio 4K results right at the very front
+              // PlayTorrio results go first so its 4K rows are visible without scrolling
               const combined = [...result.streams, ...current];
               return combined.filter((stream) => {
                 const key = stream.url || (stream.ytId ? `youtube:${stream.ytId}` : stream.id);

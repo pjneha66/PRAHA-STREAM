@@ -2,11 +2,6 @@
   "version": 1,
   "providers": [
     {
-      "id": "fourkhdhub",
-      "movie": "https://4khdhub.one/embed/movie/{tmdb}",
-      "series": "https://4khdhub.one/embed/tv/{tmdb}/{season}/{episode}"
-    },
-    {
       "id": "movienight",
       "movie": "https://movienig.ht/watch/movie/{tmdb}",
       "series": "https://movienig.ht/watch/tv/{tmdb}/{season}/{episode}"

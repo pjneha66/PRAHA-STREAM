@@ -4,8 +4,8 @@ import { EMBED_PRESETS, buildEmbedUrl, validateEmbedTemplate } from '../services
 import { findPlayTorrioStreams } from '../services/playtorrioScrapers';
 import type { StreamResult, MediaItem } from '../types';
 
-describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
-  it('prioritizes 4KHDHub 4K UHD stream at the absolute top of results', () => {
+describe('PlayTorrio VOD scrapers & embed presets', () => {
+  it('ranks a Movy 4K stream above every other source', () => {
     const streams: StreamResult[] = [
       {
         id: '1',
@@ -27,12 +27,12 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
       },
       {
         id: '3',
-        title: '4KHDHub · 4K UHD · HubCloud',
-        url: 'https://hubcloud.example.com/stream-4k.mp4',
-        sourceName: '4KHDHub',
-        sourceType: 'playtorrio',
+        title: '4K',
+        url: 'https://vidy.st/master.m3u8',
+        sourceName: 'Movy · Miami',
+        sourceType: 'scraper',
         quality: '4K',
-        provider: '4KHDHub (PlayTorrio)',
+        provider: 'Movy',
         seeders: 0,
       },
       {
@@ -45,7 +45,7 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
       },
     ];
 
-    expect(streamPriority(streams[2])).toBe(100); // 4KHDHub 4K = 100
+    expect(streamPriority(streams[2])).toBe(100); // Movy 4K = 100
     expect(streamPriority(streams[1])).toBe(80);  // Other 4K = 80
     expect(streamPriority(streams[0])).toBe(60);  // 1080p = 60
     expect(streamPriority(streams[3])).toBe(40);  // 720p = 40
@@ -58,19 +58,19 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
       subtitles: 'all',
     }, '', 'en');
 
-    // 4KHDHub 4K MUST be first
-    expect(sorted[0].sourceName).toBe('4KHDHub');
+    expect(sorted[0].sourceName).toBe('Movy · Miami');
     expect(sorted[0].quality).toBe('4K');
     expect(sorted[1].quality).toBe('4K');
     expect(sorted[2].quality).toBe('1080p');
   });
 
-  it('embed presets include 4KHDHub at the top and all 9 playtorrio embed providers', () => {
-    expect(EMBED_PRESETS[0].id).toBe('fourkhdhub');
-    expect(EMBED_PRESETS[0].name).toContain('4KHD Hub');
-
+  it('keeps 4KHDHub out of the embed presets but keeps the other embed providers', () => {
     const providerIds = EMBED_PRESETS.map((p) => p.id);
-    expect(providerIds).toContain('fourkhdhub');
+    expect(providerIds).not.toContain('fourkhdhub');
+
+    // VyseTV's own sources lead the list.
+    expect(EMBED_PRESETS[0].id).toBe('movienight');
+
     expect(providerIds).toContain('movienight');
     expect(providerIds).toContain('videasy');
     expect(providerIds).toContain('vidcore');
@@ -79,7 +79,7 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
     expect(providerIds).toContain('vidsrc-me');
     expect(providerIds).toContain('xdownloader');
 
-    // Test URL generation for movie and series on 4KHDHub
+    // URL generation still works for the first preset.
     const media: MediaItem = {
       id: 'movie-1',
       title: 'Dune: Part Two',
@@ -90,8 +90,7 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
       genres: ['Sci-Fi', 'Adventure'],
       source: 'tmdb',
     };
-    const movieUrl = buildEmbedUrl(EMBED_PRESETS[0], media);
-    expect(movieUrl).toBe('https://4khdhub.one/embed/movie/693134');
+    expect(buildEmbedUrl(EMBED_PRESETS[0], media)).toBe('https://movienig.ht/watch/movie/693134');
 
     const seriesMedia: MediaItem = {
       id: 'series-1',
@@ -103,8 +102,7 @@ describe('PlayTorrio VOD Scrapers & 4KHDHub Priority', () => {
       genres: ['Sci-Fi', 'Action'],
       source: 'tmdb',
     };
-    const seriesUrl = buildEmbedUrl(EMBED_PRESETS[0], seriesMedia, 1, 2);
-    expect(seriesUrl).toBe('https://4khdhub.one/embed/tv/106379/1/2');
+    expect(buildEmbedUrl(EMBED_PRESETS[0], seriesMedia, 1, 2)).toBe('https://movienig.ht/watch/tv/106379/1/2');
 
     // Verify all templates pass validation
     for (const preset of EMBED_PRESETS) {

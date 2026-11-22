@@ -65,9 +65,15 @@ describe('filmSources ports', () => {
     state.handler = () => ({ ok: false, status: 500, data: '' });
   });
 
-  it('loads all 39 sources with unique ids', () => {
-    expect(FILM_SOURCES).toHaveLength(39);
-    expect(new Set(FILM_SOURCES.map((source) => source.id)).size).toBe(39);
+  it('loads all 41 sources with unique ids', () => {
+    // VyseTV's 39 ported scrapers, plus its two built-in sources: Movy and Knaben.
+    expect(FILM_SOURCES).toHaveLength(41);
+    expect(new Set(FILM_SOURCES.map((source) => source.id)).size).toBe(41);
+  });
+
+  it("puts VyseTV's built-in sources where VyseTV puts them", () => {
+    expect(FILM_SOURCES[0].id).toBe('movy');
+    expect(FILM_SOURCES[FILM_SOURCES.length - 1].id).toBe('knaben');
   });
 
   it('gives every source a callable scraper', () => {

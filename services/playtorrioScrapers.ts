@@ -733,12 +733,8 @@ export async function findPlayTorrioStreams(
     }
   }
 
-  // Ensure 4KHDHub streams are at the absolute top of the return array
+  // Best quality first; the PlayTorrio aggregator has no favourite source.
   return all.sort((a, b) => {
-    const is4kHubA = /4khd/i.test(a.sourceName);
-    const is4kHubB = /4khd/i.test(b.sourceName);
-    if (is4kHubA && !is4kHubB) return -1;
-    if (!is4kHubA && is4kHubB) return 1;
     const is4kA = a.quality === '4K';
     const is4kB = b.quality === '4K';
     if (is4kA && !is4kB) return -1;

@@ -1,6 +1,8 @@
 import CryptoJS from 'crypto-js';
 import { nativeFetchText } from './androidBridge';
 import { getTmdbApiKey } from './tmdbConfig';
+import { findKnabenStreams } from './sources/knaben';
+import { findMovyStreams } from './sources/movy';
 
 /**
  * Film and TV scrapers ported from VyseTV's Flutter build (which in turn ported
@@ -32,9 +34,21 @@ export interface FoundStream {
   /** Human label shown in the source list, e.g. "VidLink HLS". */
   server: string;
   quality: string;
-  /** 'hls' | 'dash' | 'mp4' … */
+  /** 'hls' | 'dash' | 'mp4' | 'torrent' … */
   type: string;
   headers?: Record<string, string>;
+  /** Spoken language of the sound, when the source says (Movy's dubs). */
+  audio?: string;
+  /**
+   * A torrent result (Knaben) has no URL: the hash is what plays. Present only
+   * for those, and `url` is then empty.
+   */
+  infoHash?: string;
+  trackers?: string[];
+  seeders?: number;
+  size?: string;
+  /** A release line for the source list, when the source gives one. */
+  description?: string;
 }
 
 /** One source in the Settings list, and how to ask it for a stream. */
@@ -49,6 +63,12 @@ export interface FilmSource {
   showsOnly?: boolean;
   /** Anime only: it has nothing for titles TMDB doesn't list as Japanese animation. */
   animeOnly?: boolean;
+  /**
+   * How long this source gets before it is written off, in ms. The orchestrator's
+   * default suits a single HTML fetch; Movy asks 17 servers and Knaben searches
+   * twice, so both need longer or their answers would always arrive too late.
+   */
+  timeoutMs?: number;
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -554,10 +574,48 @@ function normQuality(value: unknown): string {
 // ── The sources ──────────────────────────────────────────────────────────────
 
 /**
- * Every ported source, in the order VyseTV ships them: the user's own order
- * first (CNO, VidUp, 111477, VidLink), then the rest of the SDK ports.
+ * VyseTV's own built-in sources, ported whole. They are not SDK scrapers: Movy
+ * has 17 servers of its own, and Knaben is a torrent search rather than a
+ * player. VyseTV lists Movy first, ahead of every ported scraper, and Knaben
+ * with the addons — so Knaben sits at the end here, where it cannot outrank a
+ * direct stream that is already playable.
+ */
+const movySource: FilmSource = {
+  id: 'movy',
+  name: 'Movy',
+  note: '17 servers, some in other languages',
+  // 17 servers in parallel, each with a 6.5 s request budget.
+  timeoutMs: 20000,
+  scraper: (q) => findMovyStreams({
+    tmdbId: Number(q.id),
+    series: q.season !== undefined && q.episode !== undefined,
+    season: q.season,
+    episode: q.episode,
+  }),
+};
+
+const knabenSource: FilmSource = {
+  id: 'knaben',
+  name: 'Knaben',
+  note: 'Built in. Torrents for films and shows; they play with P2P streaming or your debrid service.',
+  // Up to two searches (an episode), each allowed 20 s, run in parallel.
+  timeoutMs: 25000,
+  scraper: (q) => findKnabenStreams({
+    title: q.title,
+    series: q.season !== undefined && q.episode !== undefined,
+    year: q.year ? Number(q.year) || undefined : undefined,
+    season: q.season,
+    episode: q.episode,
+  }),
+};
+
+/**
+ * Every source, in the order VyseTV ships them: Movy first, then the user's own
+ * order (CNO, VidUp, 111477, VidLink), then the rest of the SDK ports, then the
+ * built-in torrent search.
  */
 export const FILM_SOURCES: FilmSource[] = [
+  movySource,
   { id: 'cno', name: 'CNO', note: 'Films and shows, up to 4K', scraper: cno },
   { id: 'vidup', name: 'VidUp', note: 'Films and shows, up to 4K', scraper: vidup },
   {
@@ -629,6 +687,7 @@ export const FILM_SOURCES: FilmSource[] = [
   { id: 'hexa', name: 'Hexa', note: 'Films and shows', scraper: hexa },
   { id: 'cinesrc', name: 'CineSrc', note: 'Films and shows', scraper: cinesrc },
   { id: 'mapple', name: 'Mapple', note: 'Films and shows, from 6 servers', scraper: mapple },
+  knabenSource,
 ];
 
 // ── vidlink.js: token from enc-dec.app, streams from vidlink.pro ──────────────

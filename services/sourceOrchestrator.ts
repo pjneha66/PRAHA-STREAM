@@ -1,4 +1,4 @@
-import { FILM_SOURCES, type FilmQuery, type FoundStream } from './filmSources';
+import { FILM_SOURCES, type FilmQuery, type FilmSource, type FoundStream } from './filmSources';
 import { torrServerController } from './p2p/torrServerController';
 import type { MediaItem, StreamResult } from '../types';
 
@@ -57,19 +57,27 @@ export function rankStreams(streams: StreamResult[]): StreamResult[] {
     .map((entry) => entry.stream);
 }
 
-function foundToStream(found: FoundStream, sourceName: string, query: FilmQuery): StreamResult {
+function foundToStream(found: FoundStream, sourceName: string): StreamResult {
+  // A torrent result (Knaben) has no URL: the info hash is what plays, and
+  // PlayerModal turns it into a magnet for TorrServer or WebTorrent.
+  const isTorrent = found.type === 'torrent' || Boolean(found.infoHash && !found.url);
   return {
-    id: `vysetv:${sourceName}:${found.url}`,
+    id: `vysetv:${sourceName}:${found.url || found.infoHash}`,
     url: found.url,
-    title: found.quality || found.server || sourceName,
+    title: found.description || found.quality || found.server || sourceName,
     sourceName: `${sourceName} · ${found.server}`,
     sourceType: 'scraper',
     quality: found.quality,
     provider: sourceName,
-    format: found.type === 'hls' ? 'hls' : found.type === 'dash' ? 'dash' : undefined,
+    format: isTorrent ? undefined : found.type === 'hls' ? 'hls' : found.type === 'dash' ? 'dash' : undefined,
     headers: found.headers,
     referer: found.headers?.Referer || found.headers?.referer,
-    infoHash: query.imdbId,
+    // Only a torrent carries a hash. Putting the title's IMDb id here (as this
+    // used to) made every direct stream read as a torrent to `streamTransport`.
+    infoHash: isTorrent ? found.infoHash : undefined,
+    seeders: found.seeders,
+    size: found.size,
+    language: found.audio,
   };
 }
 
@@ -95,28 +103,48 @@ export async function scrapeFilmSources(
       });
   const timeoutMs = options.timeoutMs ?? 8000;
 
-  const streams: StreamResult[] = [];
-  const failures: ScrapeResult['failures'] = [];
-  // A phone cannot hold 39 concurrent HTML parses, so run them in small waves.
+  /** One source's answer, with its own budget when it asked for one. */
+  const ask = (source: FilmSource) =>
+    Promise.race([
+      source.scraper(query),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), Math.max(timeoutMs, source.timeoutMs ?? 0))),
+    ]);
+
+  // A phone cannot hold 39 concurrent HTML parses, so the ordinary scrapers run
+  // in small waves. The long-budget sources (Movy's 17 servers, Knaben's two
+  // searches) run in their own lane at the same time, or their 20 s would be
+  // spent waiting behind the waves rather than alongside them.
+  const longLane = enabled.filter((source) => (source.timeoutMs ?? 0) > timeoutMs);
+  const wavable = enabled.filter((source) => !longLane.includes(source));
+  const answers = new Map<string, Awaited<ReturnType<FilmSource['scraper']>> | Error>();
+
+  const longJob = (async () => {
+    const settled = await Promise.allSettled(longLane.map(ask));
+    settled.forEach((result, index) => {
+      const source = longLane[index];
+      answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
+    });
+  })();
+
   const CONCURRENCY = 8;
-  for (let offset = 0; offset < enabled.length; offset += CONCURRENCY) {
-    const wave = enabled.slice(offset, offset + CONCURRENCY);
-    const settled = await Promise.allSettled(
-      wave.map((source) =>
-        Promise.race([
-          source.scraper(query),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
-        ]),
-      ),
-    );
+  for (let offset = 0; offset < wavable.length; offset += CONCURRENCY) {
+    const wave = wavable.slice(offset, offset + CONCURRENCY);
+    const settled = await Promise.allSettled(wave.map(ask));
     settled.forEach((result, index) => {
       const source = wave[index];
-      if (result.status === 'fulfilled') {
-        for (const found of result.value) streams.push(foundToStream(found, source.name, query));
-      } else {
-        failures.push({ source: source.name, message: String(result.reason?.message || result.reason) });
-      }
+      answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
     });
+  }
+  await longJob;
+
+  // Emit in FILM_SOURCES order, whatever order the lanes finished in.
+  const streams: StreamResult[] = [];
+  const failures: ScrapeResult['failures'] = [];
+  for (const source of enabled) {
+    const answer = answers.get(source.id);
+    if (answer instanceof Error) failures.push({ source: source.name, message: answer.message });
+    else if (Array.isArray(answer)) for (const found of answer) streams.push(foundToStream(found, source.name));
   }
   return { streams, failures };
 }
