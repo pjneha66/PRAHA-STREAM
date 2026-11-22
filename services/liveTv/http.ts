@@ -4,13 +4,19 @@
 // Android bridge (GPL-3.0-or-later project). No bare `fetch` or axios.
 // Mirrors the small `_httpGet` helper in VyseTV's `iptv_network.dart`.
 
-import { nativeFetchText } from '../androidBridge';
+import { nativeFetchBytes, nativeFetchText } from '../androidBridge';
 
 export interface TextResponse {
   ok: boolean;
   status: number;
   data: string;
   headers?: Record<string, string>;
+}
+
+export interface BytesResponse {
+  ok: boolean;
+  status: number;
+  bytes: Uint8Array | null;
 }
 
 export interface HttpOptions {
@@ -44,6 +50,20 @@ export async function fetchText(url: string, options: HttpOptions = {}): Promise
 export async function getText(url: string, timeoutMs = 8000, headers: Record<string, string> = {}): Promise<string | null> {
   const res = await fetchText(url, { headers, timeoutMs });
   return res.ok && res.status >= 200 && res.status < 300 && res.data ? res.data : null;
+}
+
+/**
+ * Fetch a raw byte body with a timeout. Used for the gzipped Cloud Vault
+ * catalog, whose bytes must not pass through a text decoder. Mirrors
+ * VyseTV's `res.bodyBytes` handling in `iptv_network.dart`.
+ */
+export async function fetchBytes(url: string, headers: Record<string, string> = {}, timeoutMs = 15000): Promise<BytesResponse> {
+  try {
+    const res = await nativeFetchBytes(url, { headers, timeoutMs });
+    return { ok: Boolean(res.ok), status: res.status ?? 0, bytes: res.bytes };
+  } catch {
+    return { ok: false, status: 0, bytes: null };
+  }
 }
 
 /** Parse a JSON response; malformed bodies become `null`. */

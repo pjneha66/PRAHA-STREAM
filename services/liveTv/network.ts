@@ -13,7 +13,7 @@ import type {
   IptvStream,
   VerifiedPortal,
 } from './models';
-import { getJson, getText, probeUrl, fetchText } from './http';
+import { getJson, getText, probeUrl, fetchText, fetchBytes } from './http';
 import { decryptPasteSh } from './pasteDecryptor';
 import { pasteRawUrl, portalKey } from './portal';
 
@@ -479,6 +479,36 @@ function parseCsvLine(line: string): string[] {
   return out;
 }
 
+/**
+ * Decompress a gzip body to text. Mirrors `gzip.decode(bytes)` +
+ * `utf8.decode(..., allowMalformed: true)` in VyseTV's `iptv_network.dart`.
+ *
+ * The Cloud Vault host serves gzip with `Content-Type: application/x-gzip` and
+ * no `Content-Encoding`, so no HTTP layer decompresses it for us. The bytes
+ * must arrive here untouched — routing them through a text decoder first
+ * corrupts them irrecoverably, which is why the catalog used to load empty.
+ */
+async function gunzipText(bytes: Uint8Array): Promise<string> {
+  // Some mirrors serve the CSV uncompressed; detect instead of throwing.
+  const isGzip = bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  if (!isGzip) return new TextDecoder('utf-8').decode(bytes);
+  if (typeof DecompressionStream === 'undefined' || typeof ReadableStream === 'undefined') {
+    throw new Error('This device cannot decompress the Live TV catalog (DecompressionStream is unavailable).');
+  }
+  // Feed the bytes through a ReadableStream rather than `Blob.stream()`: some
+  // WebView / jsdom builds implement Blob without `stream()`, which made this
+  // step throw and the whole catalog load as empty.
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  const decompressed = source.pipeThrough(new DecompressionStream('gzip'));
+  // TextDecoder defaults to non-fatal, matching `allowMalformed: true`.
+  return await new Response(decompressed).text();
+}
+
 const URL_USER_FIRST = /(https?:\/\/[^?\s"'<]+)\?(?:[^\s"'<]*?&)?(?:username|user|usr|login|account)=([^&\s"'<]+)\s*&(?:[^\s"'<]*?&)?(?:password|pass|pwd)=([^&\s"'<]+)/gi;
 const URL_PASS_FIRST = /(https?:\/\/[^?\s"'<]+)\?(?:[^\s"'<]*?&)?(?:password|pass|pwd)=([^&\s"'<]+)\s*&(?:[^\s"'<]*?&)?(?:username|user|usr|login|account)=([^&\s"'<]+)/gi;
 const LABELED = /(?:Portal(?:-URL)?|Host(?:\s*URL)?|Panel|Server|Real-URL|URL|M3U(?:-Link)?|Link|Servidor|H[ôo]te|Сервер|🌐|🌍|🔗|📡)\s*[:=➤\-•*|]?\s*(https?:\/\/[^\s<"'\n]+)[\s\S]{1,600}?(?:Username|User|Usr|Usu[áa]rio|Usuario|Utilisateur|Login|Account|Compte|Логин|👤|🗣️)\s*[:=➤\-•*|]?\s*([^\s|<"'\n]+)[\s\S]{1,300}?(?:Password|Pass|Pwd|Senha|Contrase[ñn]a|Clave|Mot\s*de\s*passe|Пароль|🔑|🔒|🔐)\s*[:=➤\-•*|]?\s*([^\s|<"'\n]+)(?:[\s\S]{1,200}?(?:Port|Porta|Puerto|Порт)\s*[:=➤\-•*|]?\s*(\d+))?/gi;
@@ -505,6 +535,14 @@ export class IptvScraper {
     const acc = new Map<string, IptvPortal>();
     IptvScraper.addExtracted(acc, rawText, source);
     return [...acc.values()];
+  }
+
+  /** In-place Fisher–Yates, standing in for Dart's `List.shuffle()`. */
+  private static shuffle<T>(list: T[]): void {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
   }
 
   private static addExtracted(acc: Map<string, IptvPortal>, rawText: string, source: string): void {
@@ -570,18 +608,12 @@ export class IptvScraper {
       let bytes: Uint8Array | null = null;
       for (const url of [IptvScraper.CLOUD_PRIMARY, IptvScraper.CLOUD_BACKUP]) {
         try {
-          const res = await fetchText(url, { headers: { 'User-Agent': IptvScraper.SCRAPE_UA }, timeoutMs: 15000 });
-          if (res.ok && res.data) { bytes = new TextEncoder().encode(res.data); break; }
+          const res = await fetchBytes(url, { 'User-Agent': IptvScraper.SCRAPE_UA }, 15000);
+          if (res.ok && res.bytes?.length) { bytes = res.bytes; break; }
         } catch { /* try backup */ }
       }
-      if (!bytes) return [];
-      let text: string;
-      if ((globalThis as any).DecompressionStream && typeof Response !== 'undefined') {
-        const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new (globalThis as any).DecompressionStream('gzip'));
-        text = await new Response(stream).text();
-      } else {
-        text = new TextDecoder().decode(bytes);
-      }
+      if (!bytes?.length) return [];
+      const text = await gunzipText(bytes);
       const out: IptvPortal[] = [];
       const seen = new Set<string>();
       for (const line of text.split(/\r?\n/)) {
@@ -595,11 +627,16 @@ export class IptvScraper {
         seen.add(key);
         out.push({ url: host.replace(/\/+$/, ''), username: user, password: pass, source: 'Cloud Vault' });
       }
-      // Deterministic shuffle: keeps pagination stable between calls.
-      out.sort((a, b) => (a.url + a.username).localeCompare(b.url + b.username));
+      // Dart's `list.shuffle()`. Pages are sliced by offset, so the order is
+      // decided once and cached — re-shuffling per call would make the
+      // `cloud:<offset>` cursors repeat and skip entries.
+      IptvScraper.shuffle(out);
       IptvScraper.cachedCloudPortals = out;
       return out;
-    } catch {
+    } catch (error) {
+      // Dart logs this via `debugPrint`; a silent `return []` is what hid the
+      // gzip-decoding bug and made "Live TV shows nothing" undiagnosable.
+      console.warn('[IptvScraper] Error loading Cloud Vault database:', error);
       return [];
     } finally {
       IptvScraper.loadingCloudPortals = false;

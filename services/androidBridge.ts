@@ -650,6 +650,89 @@ export async function nativeFetchText(
   }
 }
 
+export interface NativeBytesResult {
+  ok: boolean;
+  status: number;
+  bytes: Uint8Array | null;
+  headers?: Record<string, string>;
+}
+
+/** Decode the base64 that Capacitor's `arraybuffer` responseType returns. */
+export function base64ToBytes(value: string): Uint8Array {
+  // Android's `Base64.DEFAULT` wraps lines, and the HTML spec says `atob`
+  // strips ASCII whitespace — strip explicitly so behaviour is identical
+  // on every platform.
+  const binary = atob(value.replace(/[\s\r\n]+/g, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Binary-safe sibling of `nativeFetchText`.
+ *
+ * `nativeFetchText` is text-only end to end: the native bridge decodes the body
+ * as UTF-8, which destroys any non-text payload before JavaScript sees it. The
+ * Live TV catalog is a `.gz` file served with `Content-Type: application/x-gzip`
+ * and *no* `Content-Encoding`, so no HTTP client decompresses it automatically —
+ * VyseTV gunzips `res.bodyBytes` itself. This helper keeps the bytes intact:
+ * CapacitorHttp's `arraybuffer` responseType returns base64 of the raw response
+ * stream, and browser `fetch` yields an `ArrayBuffer` directly.
+ */
+export async function nativeFetchBytes(
+  url: string,
+  options: { headers?: Record<string, string>; timeoutMs?: number } = {},
+): Promise<NativeBytesResult> {
+  const headers = options.headers || {};
+  const timeoutMs = options.timeoutMs ?? 20000;
+  // Same SSRF gate as the text path: only absolute http(s) URLs are allowed.
+  const nativeUrl = safeRemoteUrl(url);
+
+  if (nativeUrl && isRateLimited(nativeUrl)) {
+    return { ok: false, status: 429, bytes: null };
+  }
+
+  // 1. CapacitorHttp. The Android plugin reads the raw stream and base64s it
+  //    without consulting Content-Encoding, so gzip survives. Skipped on the
+  //    web, where it is only a fetch wrapper and CORS applies anyway.
+  if (Capacitor.isNativePlatform() && nativeUrl) {
+    try {
+      const response = await CapacitorHttp.request({
+        url: nativeUrl,
+        method: 'GET',
+        headers,
+        responseType: 'arraybuffer',
+        connectTimeout: timeoutMs,
+        readTimeout: timeoutMs,
+      });
+      const status = Number(response.status || 0);
+      if (status === 429) noteRateLimited(nativeUrl);
+      if (status >= 200 && status < 300 && typeof response.data === 'string' && response.data) {
+        return { ok: true, status, bytes: base64ToBytes(response.data) };
+      }
+      return { ok: false, status, bytes: null };
+    } catch {
+      // Fall through to browser fetch.
+    }
+  }
+
+  // 2. Browser fetch. Inside the APK this is still patched by CapacitorHttp;
+  //    on the web it works for CORS-permitting hosts (the catalog bucket
+  //    sends `Access-Control-Allow-Origin: *`).
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    if (!response.ok) return { ok: false, status: response.status, bytes: null };
+    const buffer = await response.arrayBuffer();
+    return { ok: true, status: response.status, bytes: new Uint8Array(buffer) };
+  } catch {
+    return { ok: false, status: 0, bytes: null };
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+}
+
 export async function setImmersiveFullscreen(enabled: boolean, lockLandscape = true): Promise<void> {
   if (bridgeRpcAvailable()) {
     prahaRpcFire('setImmersiveMode', [enabled, lockLandscape]);
