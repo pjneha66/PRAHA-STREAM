@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchSyncedLyrics, activeLyricIndex, type LyricLine } from '../../services/lyricsService';
+import { fetchLyrics, activeLyricIndex, type LyricsData, type SyncedLyricLine } from '../../services/music/lyricsService';
 import { OctaveMusicService, type MusicTrack } from '../../services/musicService';
 
 /**
@@ -57,7 +57,10 @@ export interface MusicPlayerValue {
   streamLoading: boolean;
   streamError: string;
   isFullAudio: boolean;
-  lyrics: LyricLine[] | null;
+  /** Synced lines when lrclib has them, otherwise empty. */
+  lyrics: SyncedLyricLine[] | null;
+  /** Unsynced text, when lrclib only knows the song as plain lyrics. */
+  plainLyrics: string;
   playlists: MusicPlaylist[];
   favorites: MusicTrack[];
   /** Opens Now Playing expanded state. */
@@ -125,12 +128,15 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [streamLoading, setStreamLoading] = useState(false);
   const [streamError, setStreamError] = useState('');
   const [isFullAudio, setIsFullAudio] = useState(false);
-  const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
+  const [lyrics, setLyrics] = useState<SyncedLyricLine[] | null>(null);
+  const [plainLyrics, setPlainLyrics] = useState('');
   const [sheetOpen, setSheetOpen] = useState(false);
   const [playlists, setPlaylists] = useState<MusicPlaylist[]>(() => readStored<MusicPlaylist[]>(PLAYLISTS_KEY, []));
   const [favorites, setFavorites] = useState<MusicTrack[]>(() => readStored<MusicTrack[]>(FAVORITES_KEY, []));
   const [activeLyric, setActiveLyric] = useState(-1);
   const streamSeqRef = useRef(0);
+  /** Fresh addresses asked for after the current song broke. Port of `_retries`. */
+  const streamRetriesRef = useRef(0);
   const shuffleHistoryRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -140,14 +146,25 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     writeStored(FAVORITES_KEY, favorites);
   }, [favorites]);
 
-  // Synced lyrics per track.
+  // Lyrics per track: synced lines when lrclib has them, otherwise plain text.
   useEffect(() => {
     let active = true;
     setLyrics(null);
+    setPlainLyrics('');
     setActiveLyric(-1);
     if (currentTrack?.title && currentTrack?.artist) {
-      fetchSyncedLyrics({ title: currentTrack.title, artist: currentTrack.artist, duration: currentTrack.duration })
-        .then((lines) => { if (active) setLyrics(lines); })
+      fetchLyrics({
+        id: currentTrack.id,
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        album: currentTrack.album,
+        duration: currentTrack.duration,
+      })
+        .then((data: LyricsData) => {
+          if (!active) return;
+          setLyrics(data.isSynced && data.syncedLines.length ? data.syncedLines : null);
+          setPlainLyrics(data.plainLyrics);
+        })
         .catch(() => undefined);
     }
     return () => { active = false; };
@@ -165,6 +182,7 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   /** Loads a resolved stream URL into the audio element. */
   const loadStream = useCallback(async (track: MusicTrack) => {
     const seq = ++streamSeqRef.current;
+    streamRetriesRef.current = 0;
     setStreamLoading(true);
     setStreamError('');
     setIsFullAudio(false);
@@ -176,37 +194,96 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
     };
     try {
-      const full = await OctaveMusicService.resolveFullTrackAudio(track.title, track.artist, track.id);
+      // The VyseTV chain already ends in the Deezer preview, so a resolved
+      // stream is whatever quality is available rather than "full or nothing".
+      const resolved = await OctaveMusicService.resolveTrack(track);
       if (seq !== streamSeqRef.current) return;
-      if (full) {
+      if (resolved?.url) {
         setCurrentTime(0);
         setDuration(track.duration || 0);
-        setIsFullAudio(true);
-        startAudio(full);
+        // A preview is 30 s regardless of the catalog duration.
+        setIsFullAudio(resolved.sourceUrl !== track.previewUrl);
+        startAudio(resolved.url);
+        if (resolved.sourceUrl === track.previewUrl) {
+          setDuration(30);
+          setStreamError('Full stream unavailable — playing the 30-second preview.');
+        }
         return;
       }
-      // Full stream unresolvable — degrade to the 30s preview instead of a
-      // dead player (mirrors the v2.9 behavior).
-      if (track.previewUrl) {
-        setCurrentTime(0);
+      const rateLimited = OctaveMusicService.rateLimitMessage;
+      if (rateLimited) {
+        setStreamError(rateLimited);
+      } else {
+        setStreamError(`Audio stream unavailable for "${track.title}".`);
+      }
+      setIsPlaying(false);
+    } catch {
+      if (seq === streamSeqRef.current) {
+        setStreamError(`Audio stream unavailable for "${track.title}".`);
+        setIsPlaying(false);
+      }
+    } finally {
+      if (seq === streamSeqRef.current) setStreamLoading(false);
+    }
+  }, []);
+
+  /**
+   * A stream that broke mid-play: the URL was refused (403, expired edge) or
+   * the element gave up. Port of `_trouble`: ask for a fresh address and carry
+   * on from the same second — twice for a song that had started, once for one
+   * that never did. After that, drop to the preview rather than stop dead.
+   */
+  const recoverStream = useCallback(async (track: MusicTrack, resumeAt: number) => {
+    const started = resumeAt > 0;
+    const budget = started ? 2 : 1;
+    if (streamRetriesRef.current >= budget) {
+      // Out of fresh addresses. A preview still plays something.
+      const audio = audioRef.current;
+      if (track.previewUrl && audio && audio.src !== track.previewUrl) {
+        setIsFullAudio(false);
         setDuration(30);
-        startAudio(track.previewUrl);
-        setStreamError('Full stream unavailable — playing the 30-second preview.');
+        setStreamError('Stream ended early — playing the 30-second preview.');
+        audio.src = track.previewUrl;
+        audio.currentTime = 0;
+        audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        return;
+      }
+      setStreamError(`Audio stream unavailable for "${track.title}".`);
+      setIsPlaying(false);
+      return;
+    }
+
+    streamRetriesRef.current += 1;
+    // The address we were given is dead; do not let the cache hand it back.
+    OctaveMusicService.forgetStreamUrl(track.id);
+
+    const seq = ++streamSeqRef.current;
+    setStreamLoading(true);
+    try {
+      const resolved = await OctaveMusicService.resolveTrack(track);
+      if (seq !== streamSeqRef.current) return;
+      const audio = audioRef.current;
+      if (resolved?.url && audio) {
+        setIsFullAudio(resolved.sourceUrl !== track.previewUrl);
+        setDuration(track.duration || (resolved.sourceUrl === track.previewUrl ? 30 : 0));
+        audio.src = resolved.url;
+        if (resumeAt > 0) {
+          // Seek once the new source knows its duration.
+          const resume = () => {
+            audio.currentTime = Math.min(resumeAt, Math.max(0, (audio.duration || resumeAt) - 0.5));
+            audio.removeEventListener('loadedmetadata', resume);
+          };
+          audio.addEventListener('loadedmetadata', resume);
+        }
+        audio.play().then(() => { setIsPlaying(true); setStreamError(''); }).catch(() => setIsPlaying(false));
         return;
       }
       setStreamError(`Audio stream unavailable for "${track.title}".`);
       setIsPlaying(false);
     } catch {
       if (seq === streamSeqRef.current) {
-        if (track.previewUrl) {
-          setCurrentTime(0);
-          setDuration(30);
-          startAudio(track.previewUrl);
-          setStreamError('Full stream unavailable — playing the 30-second preview.');
-        } else {
-          setStreamError(`Audio stream unavailable for "${track.title}".`);
-          setIsPlaying(false);
-        }
+        setStreamError(`Audio stream unavailable for "${track.title}".`);
+        setIsPlaying(false);
       }
     } finally {
       if (seq === streamSeqRef.current) setStreamLoading(false);
@@ -464,6 +541,7 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     streamError,
     isFullAudio,
     lyrics,
+    plainLyrics,
     playlists,
     favorites,
     sheetOpen,
@@ -510,15 +588,12 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
           onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
           onEnded={() => advance(1)}
           onError={() => {
-            // Stream URL died mid-play (expired signature, 403) — fall back to
-            // the 30-second preview when one exists.
+            // The address died mid-play (403, expired signature, edge gone).
+            // Re-resolve from the same second before giving up on full audio.
             const track = currentTrack;
-            const audio = audioRef.current;
-            if (track?.previewUrl && audio && audio.src && audio.src !== track.previewUrl) {
-              setIsFullAudio(false);
-              audio.src = track.previewUrl;
-              audio.play().then(() => setIsPlaying(true)).catch(() => undefined);
-            }
+            if (!track) return;
+            const at = audioRef.current?.currentTime ?? 0;
+            void recoverStream(track, at);
           }}
         />
       </MusicPositionContext.Provider>

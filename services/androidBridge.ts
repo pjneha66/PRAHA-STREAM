@@ -399,6 +399,30 @@ export function resolvePlayableStreamUrl(stream: StreamResult, preferNativeProxy
   return stream.url;
 }
 
+/**
+ * Rewrites an already-validated stream URL through the embedded Android local
+ * HTTP proxy so the given headers are sent with it.
+ *
+ * An `<audio>` element cannot set a User-Agent, and a googlevideo CDN URL is
+ * signed for the client that minted it — fetched with any other agent it
+ * answers 403. This is the only way a UA-bound music stream plays in the APK.
+ * On the web (no proxy) the URL is returned unchanged.
+ */
+export function proxyStreamUrlWithHeaders(url: string, headers: Record<string, string>): string {
+  if (!url || !Object.keys(headers).length) return url;
+  const safeUrl = safeRemoteUrl(url);
+  if (!safeUrl) return url;
+  try {
+    if (window.PrahaNative?.proxyStreamUrl) {
+      const proxied = window.PrahaNative.proxyStreamUrl(safeUrl, JSON.stringify(headers));
+      if (proxied) return proxied;
+    }
+  } catch {
+    /* proxy unavailable: fall back to the direct URL */
+  }
+  return url;
+}
+
 const WP_MEDIA_HOST_RE = /(otakudesu|komikstation|bacakomik|komikindo|komikcast|kiryuu|westmanga|samehadaku|anoboy|kuramanime|komiku|mangakita|softkomik)/i;
 const GLOBAL_CDN_HOST_RE = /(^|\.)((i[0-3]\.wp\.com)|(media\.kitsu\.(io|app))|(s4\.anilist\.co)|(cdn\.myanimelist\.net)|(uploads\.mangadex\.org)|(wsrv\.nl)|(duckduckgo\.com))$/i;
 

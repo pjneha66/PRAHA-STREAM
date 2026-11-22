@@ -38,7 +38,7 @@ const NowPlayingSheet: React.FC = () => {
           <button type="button" role="tab" aria-selected={tab === 'player'} className={tab === 'player' ? 'active' : ''} onClick={() => setTab('player')}>
             <Music2 size={13} /> Player
           </button>
-          <button type="button" role="tab" aria-selected={tab === 'lyrics'} className={tab === 'lyrics' ? 'active' : ''} onClick={() => setTab('lyrics')} disabled={!player.lyrics}>
+          <button type="button" role="tab" aria-selected={tab === 'lyrics'} className={tab === 'lyrics' ? 'active' : ''} onClick={() => setTab('lyrics')} disabled={!player.lyrics && !player.plainLyrics}>
             <ScrollText size={13} /> Lyrics
           </button>
           <button type="button" role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'active' : ''} onClick={() => setTab('queue')}>
@@ -127,7 +127,11 @@ const NowPlayingSheet: React.FC = () => {
               >
                 {line.text || '♪'}
               </button>
-            )) : (
+            )) : player.plainLyrics.trim() ? (
+              // lrclib knows the song as unsynced text only, so there is no
+              // line to highlight or seek to — show the block as-is.
+              <div className="music-lyrics-plain">{player.plainLyrics}</div>
+            ) : (
               <p className="music-lyrics-empty"><Mic2 size={22} /> No synced lyrics found for this track.</p>
             )}
           </div>

@@ -1345,6 +1345,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .music-lyric-line:hover { background: var(--surface); color: var(--text); }
 .music-lyric-line.active { color: var(--accent); font-size: 15px; font-weight: 750; }
 .music-lyrics-empty { display: flex; align-items: center; gap: 8px; margin: auto; color: var(--muted); font-size: 12px; }
+/* Unsynced lyrics (lrclib plain text): the same block the Dart renders, 17px/1.7. */
+.music-lyrics-plain { max-width: 560px; margin: 0 auto; padding: 12px 20px 40px; color: var(--text); font-size: 17px; font-weight: 600; line-height: 1.7; white-space: pre-wrap; }
 .music-queue-view { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 14px 20px; }
 .music-queue-actions { display: flex; gap: 8px; margin-bottom: 10px; }
 .music-queue-actions input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 12px; outline: 0; }
