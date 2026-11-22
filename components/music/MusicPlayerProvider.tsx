@@ -237,9 +237,11 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const started = resumeAt > 0;
     const budget = started ? 2 : 1;
     if (streamRetriesRef.current >= budget) {
-      // Out of fresh addresses. A preview still plays something.
+      // Out of fresh addresses. A preview still plays something — but only
+      // once: if the preview itself is what failed, there is nothing left.
       const audio = audioRef.current;
-      if (track.previewUrl && audio && audio.src !== track.previewUrl) {
+      const onPreview = audio?.src === track.previewUrl;
+      if (track.previewUrl && audio && !onPreview) {
         setIsFullAudio(false);
         setDuration(30);
         setStreamError('Stream ended early — playing the 30-second preview.');
@@ -264,10 +266,15 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (seq !== streamSeqRef.current) return;
       const audio = audioRef.current;
       if (resolved?.url && audio) {
-        setIsFullAudio(resolved.sourceUrl !== track.previewUrl);
-        setDuration(track.duration || (resolved.sourceUrl === track.previewUrl ? 30 : 0));
+        const isPreview = resolved.sourceUrl === track.previewUrl;
+        setIsFullAudio(!isPreview);
+        // A preview is 30 s whatever the catalog claims.
+        setDuration(isPreview ? 30 : track.duration || 0);
+        if (isPreview) setStreamError('Full stream unavailable — playing the 30-second preview.');
         audio.src = resolved.url;
-        if (resumeAt > 0) {
+        // Resume only within full audio: a preview starts at its own beginning,
+        // since the second we broke at does not exist in a 30 s clip.
+        if (resumeAt > 0 && !isPreview) {
           // Seek once the new source knows its duration.
           const resume = () => {
             audio.currentTime = Math.min(resumeAt, Math.max(0, (audio.duration || resumeAt) - 0.5));
