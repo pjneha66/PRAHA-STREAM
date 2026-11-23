@@ -1,12 +1,12 @@
 # Workspace Memory — PRAHA-STREAM
 
-_Last updated: 2026-11-17. Everything below is verified against the working tree and build logs._
+_Last updated: 2026-11-24. Everything below is verified against the working tree and build logs._
 
 ## 1. Project overview
 
 - **App:** PRAHA-STREAM — a Capacitor (React + TypeScript + Vite) media streaming app for Android (also a web app).
 - **Package / applicationId:** `com.praha.stream`, label `PRAHA STREAM`.
-- **Version:** 2.11.22, `versionCode 47` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
+- **Version:** 2.11.23, `versionCode 48` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
 - **Key configs:** `capacitor.config.json`, `vite.config.ts`, `android/build.gradle` (AGP `8.13.0`, Gradle 8.13), `android/app/build.gradle`.
 - **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). LibVLC/VLC native libs are bundled in the APK.
 

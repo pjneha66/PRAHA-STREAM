@@ -422,9 +422,9 @@ const SourceModal: React.FC<{
         />
         {onOpenEmbedded && !extensionOnly && (
           <div className="source-embed-fallback">
-            <p>None of the sources above playable? Embedded player sites are a last resort — they run third-party iframes and are slower and less reliable.</p>
-            <button type="button" className="button button-secondary" onClick={onOpenEmbedded}>
-              <MonitorPlay size={15} /> Try embedded players
+            <span className="source-embed-note">Nothing above plays?</span>
+            <button type="button" className="button button-secondary button-small" onClick={onOpenEmbedded}>
+              <MonitorPlay size={14} /> Embedded players
             </button>
           </div>
         )}

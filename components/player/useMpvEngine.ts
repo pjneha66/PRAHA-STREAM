@@ -245,6 +245,48 @@ export function useMpvEngine({
     setEngineLabel('HTML5');
     const shouldAutoplay = autoplay || resumeRef.current !== null;
 
+    /**
+     * Watches the first metadata event after the element is pointed straight at
+     * a URL — the last resort for containers the WebView can decode natively,
+     * and the fallback when the engine for the declared format is missing.
+     *
+     * This path used to be a bare `video.src = url` with `play().catch(noop)`.
+     * When the source was dead the promise rejected into nothing, the element
+     * stayed paused and no metadata ever arrived, so `ready` never became true
+     * and the player sat on "Loading stream…" with no way out. `<video onError>`
+     * did not save it either: it was gated on `nativeActive`, which flips after
+     * this effect runs, and the stall watchdog ignores a paused element. The
+     * watchdog is declared out here so the effect's cleanup can always disarm
+     * it, whichever branch was taken.
+     */
+    let directWatchdog: number | null = null;
+    let onDirectLoaded: (() => void) | null = null;
+    const clearDirectWatchdog = () => {
+      if (directWatchdog !== null) {
+        window.clearTimeout(directWatchdog);
+        directWatchdog = null;
+      }
+      if (onDirectLoaded) {
+        video.removeEventListener('loadedmetadata', onDirectLoaded);
+        onDirectLoaded = null;
+      }
+    };
+    const armDirectWatchdog = (hint: string) => {
+      clearDirectWatchdog();
+      // Armed even without autoplay: assigning `src` starts the metadata fetch
+      // on its own, so a dead URL stalls with the poster up and the loading
+      // chip showing — the state in the bug report.
+      onDirectLoaded = () => clearDirectWatchdog();
+      video.addEventListener('loadedmetadata', onDirectLoaded, { once: true });
+      directWatchdog = window.setTimeout(() => {
+        if (disposed || video.readyState >= 1 || video.error) return;
+        clearDirectWatchdog();
+        onFatalError(
+          `This stream did not start playing — the file may be offline or in a format this device cannot decode. Try another source or an external player.${hint ? ` ${hint}` : ''}`,
+        );
+      }, 15_000);
+    };
+
     if (selected !== 'web') {
       const engineId = selected as NativeEngineId;
       engineNameRef.current = engineId === 'mpv' ? 'mpv (native)' : 'Media3 (native)';
@@ -337,6 +379,25 @@ export function useMpvEngine({
       const preferHls = fmt === 'hls' || isHlsUrl(url);
       const preferDash = fmt === 'dash' || fmt === 'mpd' || isDashUrl(url);
       const preferMpegTs = fmt === 'mpegts' || fmt === 'ts' || fmt === 'flv' || isMpegTsUrl(url);
+
+      // `onPlayFailure` is for the one caller that has a better message than the
+      // generic watchdog one: a live channel whose container turned out not to
+      // be MPEG-TS. It disarms the watchdog first so the same dead source is not
+      // reported twice. Without a handler a rejected `play()` is expected —
+      // autoplay-blocked is not a dead stream — and the watchdog stays armed.
+      const attachDirect = (onPlayFailure?: () => void) => {
+        engineNameRef.current = 'HTML5';
+        setEngineLabel('HTML5');
+        video.src = url;
+        if (shouldAutoplay) {
+          video.play().catch(() => {
+            if (disposed || !onPlayFailure) return;
+            clearDirectWatchdog();
+            onPlayFailure();
+          });
+        }
+        armDirectWatchdog(formatHint);
+      };
 
       if (preferHls && Hls.isSupported()) {
         engineNameRef.current = 'hls.js';
@@ -472,10 +533,7 @@ export function useMpvEngine({
             if (!disposed) onFatalError(`This DASH (.mpd) stream could not be loaded.${formatHint ? ` ${formatHint}` : ''}`);
           });
         }).catch(() => {
-          if (!disposed) {
-            video.src = url;
-            if (shouldAutoplay) video.play().catch(() => undefined);
-          }
+          if (!disposed) attachDirect();
         });
       } else if (preferMpegTs) {
         engineNameRef.current = 'mpegts.js';
@@ -495,10 +553,7 @@ export function useMpvEngine({
               mpegtsRef.current = null;
               // On failure, try native/HLS fallback for live streams that might actually be HLS
               if (isLive) {
-                engineNameRef.current = 'HTML5';
-                setEngineLabel('HTML5');
-                video.src = url;
-                if (shouldAutoplay) video.play().catch(() => onFatalError('This live stream could not be played. Try another channel or open in an external player.'));
+                attachDirect(() => onFatalError('This live stream could not be played. Try another channel or open in an external player.'));
               } else {
                 onFatalError(`This MPEG-TS/FLV source could not be loaded. Try another source or an external player.${formatHint ? ` ${formatHint}` : ''}`);
               }
@@ -508,21 +563,14 @@ export function useMpvEngine({
             if (shouldAutoplay) Promise.resolve(player.play()).catch(() => undefined);
             mpegtsRef.current = player;
           } else {
-            video.src = url;
-            if (shouldAutoplay) video.play().catch(() => undefined);
+            attachDirect();
           }
         }).catch(() => {
-          if (!disposed) {
-            video.src = url;
-            if (shouldAutoplay) video.play().catch(() => undefined);
-          }
+          if (!disposed) attachDirect();
         });
       } else {
         // Direct/native playback (mp4, mkv where supported, etc.)
-        engineNameRef.current = 'HTML5';
-        setEngineLabel('HTML5');
-        video.src = url;
-        if (shouldAutoplay) video.play().catch(() => undefined);
+        attachDirect();
       }
     }
 
@@ -538,6 +586,7 @@ export function useMpvEngine({
 
     return () => {
       disposed = true;
+      clearDirectWatchdog();
       if (video.currentTime > 1 && Number.isFinite(video.duration) && video.duration > 0) {
         onProgressRef.current?.(video.currentTime, video.duration);
       }

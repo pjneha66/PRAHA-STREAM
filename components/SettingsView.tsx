@@ -314,6 +314,18 @@ const SettingsView: React.FC<{
   useEffect(() => setApiDraft(settings.tmdbApiKey || ''), [settings.tmdbApiKey]);
   useEffect(() => { setImdxBaseDraft(settings.imdx.baseUrl); setImdxKeyDraft(settings.imdx.apiKey || ''); }, [settings.imdx.baseUrl, settings.imdx.apiKey]);
 
+  // The bundled engine outlives this screen — it can be started by a playback,
+  // or by "Save & test" — so the status has to be read when the screen opens
+  // rather than assumed to be "Stopped" from a null initial value.
+  useEffect(() => {
+    if (!torrSupported) return;
+    let cancelled = false;
+    void torrServerController.status().then((status) => {
+      if (!cancelled) setTorrStatus(status);
+    });
+    return () => { cancelled = true; };
+  }, [torrSupported]);
+
   const updateImdx = (patch: Partial<AppSettings['imdx']>) => onChange({ ...settings, imdx: { ...settings.imdx, ...patch } });
 
   const checkNetworkCondition = async () => {
@@ -341,6 +353,10 @@ const SettingsView: React.FC<{
     const ok = await TorrentStreamingEngine.checkEngineAvailable(host);
     setTorrentHostStatus(ok ? 'ok' : 'error');
     setTorrentHostMessage(ok ? 'Torrent engine reachable.' : 'Could not reach a TorrServer-compatible engine at this host. Make sure it is running and accessible from this device.');
+    // The test may just have started the bundled engine, so re-read its status.
+    // Without this the badge kept saying "Stopped" beside a green "reachable"
+    // message, which reads as a contradiction.
+    if (ok && torrSupported) setTorrStatus(await torrServerController.status());
   };
 
   const toggleBundledTorrServer = async () => {

@@ -292,7 +292,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
           {errors.map((error, index) => <p key={`${error.sourceName}-${index}`}><strong>{error.sourceName}</strong>{error.message}</p>)}
         </details>
       )}
-      <footer className="source-footer"><ShieldCheck size={14} /><span>PRAHA does not host media. Availability and playback are provided by your installed sources.</span></footer>
+      <footer className="source-footer"><ShieldCheck size={14} /><span>PRAHA hosts no media — playback comes from your sources.</span></footer>
     </>
   );
 };

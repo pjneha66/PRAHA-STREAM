@@ -29,6 +29,27 @@ interface WebTorrentClient {
 
 const VIDEO_FILE_RE = /\.(mp4|mkv|webm|avi|mov|m4v)$/i;
 
+/**
+ * True for a URL that points back at this device. TorrServer is configured by
+ * URL, and both the bundled engine and a loopback-hosted server use one, so the
+ * host — not the caller's intent — decides whether the bundled process should
+ * be started. Anything unparseable is treated as not loopback, leaving the
+ * normal probe as the only path.
+ */
+export function isLoopbackHost(url: string): boolean {
+  // The authority runs to the first `/`, `?` or `#`. Bracketed IPv6 addresses
+  // contain `:` of their own, so they are matched as their own shape instead of
+  // splitting on the port separator — `http://[::1]:8090` has to be recognised
+  // or the bundled engine is skipped on an IPv6 loopback.
+  const authority = url.trim().match(/^[a-z]+:\/\/([^/?#]+)/i)?.[1];
+  if (!authority) return false;
+  const bracketed = authority.match(/^\[([0-9a-f:]+)\]/i);
+  const name = (bracketed ? bracketed[1] : authority.split(':')[0]).toLowerCase();
+  if (name === 'localhost' || name.endsWith('.localhost')) return true;
+  if (name === '::1') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(name);
+}
+
 let webTorrentClient: WebTorrentClient | null = null;
 let activeWebTorrent: WebTorrentInstance | null = null;
 /**
@@ -198,16 +219,25 @@ export class TorrentStreamingEngine {
    * Checks if TorrServer or local torrent streaming proxy is reachable.
    */
   static async checkEngineAvailable(host?: string): Promise<boolean> {
-    // Default to the bundled engine on Android; only fall back to a user-
-    // configured host when the native plugin is not present (web/PWA).
-    const bundled = !host && (await torrServerController.ensureStarted());
     const base = (host || this.getHost()).replace(/\/$/, '');
-    if (bundled || (isAndroidApp() && torrServerController.running && !host)) {
-      try {
-        await new TorrServerClient(base).echo(2500);
-        return true;
-      } catch {
-        return false;
+    // The bundled engine is addressed through the same loopback URL the user
+    // types in Settings, so an explicit host is not evidence that they mean an
+    // external server. "Save & test" always passes a host, and that used to
+    // skip `ensureStarted()` entirely: the badge said "Stopped", nothing
+    // started the process, and the probe hit a closed port.
+    const bundledHost = isLoopbackHost(base);
+    if (bundledHost || !host) {
+      // Returns false on web/PWA, where there is no native engine to start; the
+      // probe below then covers a self-hosted server on the same URL.
+      if (torrServerController.isSupported() && (await torrServerController.ensureStarted())) {
+        // A loopback host means "the bundled engine", whatever port the native
+        // side actually bound to.
+        try {
+          await new TorrServerClient(torrServerController.host || base).echo(2500);
+          return true;
+        } catch {
+          return false;
+        }
       }
     }
     const probes = [`${base}/echo`, `${base}/`];

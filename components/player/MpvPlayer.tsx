@@ -823,8 +823,15 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           background: nativeActive ? 'transparent' : '#000',
         }}
         onError={(event) => {
-          const error = event.currentTarget.error;
-          if (error && !nativeActive) setFatal(mediaErrorMessage(error.code, stream.url, stream.format));
+          const element = event.currentTarget;
+          const error = element.error;
+          // The `nativeActive` prop is not a reliable gate here: it flips after
+          // the attach effect runs, so a real failure could land while it was
+          // still false-but-stale, and it is the native path that *clears* the
+          // element's src. Key off the element instead — no attached source
+          // means there was nothing to fail, which is exactly the native case.
+          const attached = Boolean(element.currentSrc || element.getAttribute('src'));
+          if (error && attached) setFatal(mediaErrorMessage(error.code, stream.url, stream.format));
         }}
       >
         {preparedSubtitles.map((subtitle, index) => (

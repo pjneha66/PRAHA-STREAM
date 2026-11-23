@@ -68,6 +68,7 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
   const [repoUrl, setRepoUrl] = useState('');
 
   const [query, setQuery] = useState('');
+  const [providerFilter, setProviderFilter] = useState('');
   const [searchBatches, setSearchBatches] = useState<CloudStreamSearchBatch[]>([]);
   const [searching, setSearching] = useState(false);
 
@@ -125,42 +126,55 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
    * counter, and only the newest request is allowed to write state.
    */
   const homeRequestRef = useRef(0);
-  const homeAutoLoadedRef = useRef(false);
+  /**
+   * Which provider filter the automatic load has already covered. It replaces a
+   * plain boolean so changing the dropdown refetches, while StrictMode's
+   * mount/unmount/remount — which runs the effect twice with the same filter —
+   * still fetches exactly once. `null` means "not loaded yet".
+   */
+  const requestedFilterRef = useRef<string | null>(null);
 
   const loadHome = useCallback(async () => {
     if (!available) return;
     const request = ++homeRequestRef.current;
     setHomeLoading(true);
     try {
-      const rows = await getHome();
+      // The host filters by provider name, so a single-entry list is the whole
+      // contract for "only this extension's catalogs".
+      const rows = await getHome(providerFilter ? [providerFilter] : undefined);
       if (request === homeRequestRef.current) setHome(rows);
     } catch (err) {
       if (request === homeRequestRef.current) {
         // Let the automatic load try again once, instead of treating a single
         // failed fetch as "already loaded" for the rest of the session.
-        homeAutoLoadedRef.current = false;
+        requestedFilterRef.current = null;
         notify(err instanceof Error ? err.message : 'Home rows could not be loaded.', 'error');
       }
     } finally {
       if (request === homeRequestRef.current) setHomeLoading(false);
     }
-  }, [available, notify]);
+  }, [available, notify, providerFilter]);
 
   // Load the rows as soon as Browse is shown, so switching to it is not a blank
   // screen waiting on a refresh press.
   //
-  // `loadHome` itself no longer refuses to run while a load is in flight (that
+  // `loadHome` itself does not refuse to run while a load is in flight (that
   // guard is what made catalog toggles silently skip their refresh), so the
   // "only once" behaviour has to live here. The ref survives StrictMode's
-  // mount/unmount/remount, so the automatic fetch happens exactly once.
+  // mount/unmount/remount, so the automatic fetch happens exactly once per
+  // provider filter.
+  //
+  // There is deliberately no `homeLoading` check: bailing out early while a
+  // load was in flight used to leave the ref unset, so the effect fired again
+  // as soon as that load settled and the same filter was fetched twice. A
+  // superseded response is discarded by the request id anyway.
   useEffect(() => {
     if (section !== 'browse') return;
-    if (homeAutoLoadedRef.current) return;
-    if (home.length || homeLoading) return;
+    if (requestedFilterRef.current === providerFilter) return;
     if (!plugins.some((plugin) => plugin.loaded)) return;
-    homeAutoLoadedRef.current = true;
+    requestedFilterRef.current = providerFilter;
     void loadHome();
-  }, [section, home.length, homeLoading, loadHome, plugins]);
+  }, [section, loadHome, plugins, providerFilter]);
 
   const handleAddRepository = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -292,12 +306,25 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
     setSearching(true);
     setError('');
     try {
-      setSearchBatches(await search(term));
+      setSearchBatches(await search(term, providerFilter ? [providerFilter] : undefined));
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Search failed.', 'error');
     } finally {
       setSearching(false);
     }
+  };
+
+  /**
+   * Switching provider clears the visible rows first. The refetch is async, and
+   * leaving the previous provider's catalogs on screen while it runs makes it
+   * look as though the new provider returned them.
+   */
+  const handleProviderChange = (name: string) => {
+    if (name === providerFilter) return;
+    setProviderFilter(name);
+    setHome([]);
+    setSearchBatches([]);
+    requestedFilterRef.current = null;
   };
 
   const handleToggleCatalog = async (apiName: string, sectionName: string, enabled: boolean) => {
@@ -314,6 +341,22 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
 
   const loadedPlugins = plugins.filter((plugin) => plugin.loaded).length;
   const failedPlugins = plugins.filter((plugin) => plugin.error).length;
+  /**
+   * Providers are what the host filters on (`api.name`), not extensions — one
+   * extension can register several. Sorted so the list is stable between
+   * reloads, and deduped because a provider name is the only identifier the
+   * filter accepts.
+   */
+  const providerOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return providers
+      .filter((provider) => {
+        if (!provider.name || seen.has(provider.name)) return false;
+        seen.add(provider.name);
+        return true;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [providers]);
   const totalResults = useMemo(
     () => searchBatches.reduce((sum, batch) => sum + batch.items.length, 0),
     [searchBatches],
@@ -370,13 +413,31 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
       {section === 'browse' && (
         <>
           <section className="install-panel cloudstream-search">
+            {providerOptions.length > 0 && (
+              <label className="cloudstream-provider-picker">
+                <Zap size={15} />
+                <select
+                  value={providerFilter}
+                  onChange={(event) => handleProviderChange(event.target.value)}
+                  aria-label="Filter by provider"
+                >
+                  <option value="">All providers ({providerOptions.length})</option>
+                  {providerOptions.map((provider) => (
+                    <option key={provider.name} value={provider.name}>
+                      {provider.name}{provider.lang ? ` · ${provider.lang}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} />
+              </label>
+            )}
             <form onSubmit={handleSearch} className="install-form">
               <div>
                 <Search size={17} />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search every CloudStream provider…"
+                  placeholder={providerFilter ? `Search ${providerFilter}…` : 'Search every CloudStream provider…'}
                   aria-label="Search CloudStream providers"
                 />
               </div>
@@ -424,7 +485,10 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
           ) : (
             <>
               <div className="cloudstream-row-head">
-                <div><h2>Home rows</h2><p>Catalogs from every loaded extension.</p></div>
+                <div>
+                  <h2>Home rows</h2>
+                  <p>{providerFilter ? `Catalogs from ${providerFilter}.` : 'Catalogs from every loaded extension.'}</p>
+                </div>
                 <button className="button button-secondary button-small" onClick={loadHome} disabled={homeLoading}>
                   <RefreshCw size={14} className={homeLoading ? 'spin' : ''} /> Refresh
                 </button>
@@ -463,17 +527,27 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
               {!home.length && !homeLoading && (
                 <div className="empty-state extension-empty">
                   <span><Compass size={27} /></span>
-                  <h2>{loadedPlugins ? 'No home rows' : 'No extensions installed'}</h2>
+                  <h2>
+                    {!loadedPlugins
+                      ? 'No extensions installed'
+                      : providerFilter ? `No rows from ${providerFilter}` : 'No home rows'}
+                  </h2>
                   <p>
-                    {loadedPlugins
-                      ? 'Search above, or refresh to read the catalogs again.'
-                      : 'Open Manage to add a repository and install extensions, then their catalogs appear here.'}
+                    {!loadedPlugins
+                      ? 'Open Manage to add a repository and install extensions, then their catalogs appear here.'
+                      : providerFilter
+                        ? 'This provider has no home catalog. Search it above, or switch back to all providers.'
+                        : 'Search above, or refresh to read the catalogs again.'}
                   </p>
-                  {!loadedPlugins && (
+                  {!loadedPlugins ? (
                     <button className="button button-primary" onClick={() => setSection('manage')}>
                       <Layers size={16} /> Manage extensions
                     </button>
-                  )}
+                  ) : providerFilter ? (
+                    <button className="button button-secondary" onClick={() => handleProviderChange('')}>
+                      Show all providers
+                    </button>
+                  ) : null}
                 </div>
               )}
             </>
