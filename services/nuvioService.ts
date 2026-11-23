@@ -27,6 +27,21 @@ export function normalizeNuvioRepositoryUrl(rawUrl: string) {
 
 const normalizeType = (type: string) => ['series', 'show', 'other'].includes(type.toLowerCase()) ? 'tv' : type.toLowerCase();
 
+/**
+ * Ceiling for one scraper file, in characters.
+ *
+ * A scraper is a small JS module — the largest in the wild is a few tens of KB.
+ * Nothing used to check the size at all, so a hostile or broken repository could
+ * hand us a 50 MB response that we then held in localStorage and re-parsed on
+ * every scrape. Backup import already enforced this limit; the installer did
+ * not, which is where the code actually comes from.
+ *
+ * This rejects an oversized response as soon as it arrives. The bytes still
+ * cross the bridge first (the native transport has no length option), so it
+ * bounds what we keep and re-parse, not what we receive.
+ */
+export const MAX_SCRAPER_CODE_LENGTH = 200_000;
+
 export async function fetchNuvioRepository(rawUrl: string, previous?: NuvioRepository): Promise<NuvioRepository> {
   const manifestUrl = normalizeNuvioRepositoryUrl(rawUrl);
   const payload = await fetchText(manifestUrl);
@@ -47,6 +62,15 @@ export async function fetchNuvioRepository(rawUrl: string, previous?: NuvioRepos
       if (!info.id || !info.name || !info.version || !info.filename) return null;
       const codeUrl = /^https?:\/\//.test(info.filename) ? info.filename : `${baseUrl}/${info.filename.replace(/^\//, '')}`;
       const code = await fetchText(codeUrl);
+      // Checked before the scraper is stored: the per-scraper catch below turns
+      // this into "skipped, with a console warning" rather than failing the
+      // whole repository.
+      if (code.length > MAX_SCRAPER_CODE_LENGTH) {
+        throw new Error(
+          `Scraper ${info.name} is ${Math.round(code.length / 1024)} KB, over the ` +
+          `${MAX_SCRAPER_CODE_LENGTH / 1000} KB limit.`,
+        );
+      }
       const id = `${manifestUrl.toLowerCase()}:${info.id}`;
       const old = previous?.scrapers.find((scraper) => scraper.id === id);
       return {

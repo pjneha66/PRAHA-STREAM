@@ -2,15 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import type { MediaInfo } from 'dashjs';
-import type { MediaItem, PlayerSettings, StreamSubtitle } from '../../types';
+import type { MediaItem, PlayerEngineId, PlayerSettings, StreamSubtitle } from '../../types';
 import {
-  enterNativeAndroidPip, getNativeAudioTracks, getNativeSpuTracks,
-  getSelectedNativeAudioTrack, getSelectedNativeSpuTrack, isNativeVlcAvailable,
-  nativeVlcPlay, nativeVlcPause, nativeVlcResume, nativeVlcStop, nativeVlcSeek,
-  nativeVlcSetVolume, nativeVlcSetRate, nativeVlcSetAspectRatio,
-  setImmersiveFullscreen, setNativeAudioTrack, setNativeSpuTrack,
-  setNativeSubtitleDelay,
+  enterNativeAndroidPip, isAndroidApp, setImmersiveFullscreen,
 } from '../../services/androidBridge';
+import { mpvAvailable } from '../../services/mpvBridge';
+import { media3Available } from '../../services/media3Bridge';
+import {
+  createNativeEngine, type NativeEngineHandle, type NativeEngineId, type NativeSnapshot,
+} from '../../services/nativePlayerAdapter';
+import { startNativePlayback, type NativePlaybackSession } from '../../services/nativePlayback';
+import {
+  fallbackNotice, resolveEngineChain,
+} from '../../services/playerSelection';
 import { formatAudioCodec, formatSubtitleCodec, resolveLanguageName } from '../../services/subtitleService';
 import { clamp } from './format';
 import { formatSupportHint, MAX_STALL_RETRIES, STABLE_PLAYBACK_SECONDS, stallAction, vlcBufferingToWaiting } from './recovery';
@@ -65,8 +69,10 @@ interface EngineOptions {
   url: string;
   /** The raw stream URL; used as a one-shot fallback when `url` is a proxy URL that fails. */
   fallbackUrl?: string;
-  /** Skip LibVLC and use the web engine (in-app P2P blob: streams). */
+  /** Skip the native engines and use the web engine (in-app P2P blob: streams). */
   forceWebEngine?: boolean;
+  /** Preferred native engine on Android (mpv, media3). Falls back automatically. */
+  playerEngine?: PlayerEngineId;
   /** Live source (IPTV): enables the frozen-stream watchdog. */
   isLive?: boolean;
   /** Stream format hint (hls, dash, mpegts, direct, torrent-http) from source metadata. */
@@ -89,6 +95,8 @@ interface EngineOptions {
   onNextEpisode?: () => void;
   onFatalError: (message: string) => void;
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
+  /** Transient notice shown when playback fell back to another engine. */
+  onEngineFallback?: (message: string) => void;
 }
 
 const isHlsUrl = (url: string) => /\.m3u8($|\?)/i.test(url) || /[?&]format=m3u8\b/i.test(url);
@@ -105,6 +113,7 @@ export function useMpvEngine({
   url,
   fallbackUrl,
   forceWebEngine = false,
+  playerEngine = 'mpv',
   isLive = false,
   streamFormat,
   streamHeaders,
@@ -121,6 +130,7 @@ export function useMpvEngine({
   onNextEpisode,
   onFatalError,
   onSettingsChange,
+  onEngineFallback,
 }: EngineOptions) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -130,10 +140,21 @@ export function useMpvEngine({
   const mpegtsRef = useRef<{ destroy: () => void } | null>(null);
   const recoveredRef = useRef({ network: 0, media: 0 });
   const resumeRef = useRef<number | null>(null);
-  // VLC escalation budget: per-URL, survives engine reloads (reloadKey), so a
-  // dead stream cannot ping-pong LibVLC ↔ web engine forever.
-  const vlcEscalationRef = useRef<{ url: string; count: number }>({ url: '', count: 0 });
-  const [escalateToWeb, setEscalateToWeb] = useState(false);
+  /**
+   * Which engine in the preferred chain is being tried for the current URL, and
+   * the live native session driving it. The index only ever moves forward and
+   * resets when the URL changes, so a dead stream cannot ping-pong between mpv
+   * and Media3 — the same reason the old VLC escalation budget existed.
+   */
+  const nativeChainRef = useRef<{ url: string; index: number }>({ url: '', index: 0 });
+  const nativeSessionRef = useRef<NativePlaybackSession | null>(null);
+  /**
+   * Last position the native engine reported. Kept apart from `currentTime`
+   * state so a fallback can resume where the previous engine stopped without
+   * waiting for a render.
+   */
+  const lastNativeTimeRef = useRef(0);
+  const [nativeActive, setNativeActive] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const attemptsRef = useRef(0);
@@ -182,18 +203,34 @@ export function useMpvEngine({
   const playingRef = useRef(playing);
   playingRef.current = playing;
 
-  /** Attach the source: hls.js for HLS, dashjs for MPD, mpegts.js for TS/FLV, or native <video>. */
+  /**
+   * Attach the source. On Android the order is the user's preferred engine
+   * first — mpv by default — then the next installed engine, ending at the web
+   * player (hls.js / dash.js / mpegts.js / plain <video>), which every build has.
+   *
+   * The web path is unchanged: it is the `else` branch, reached when the chain
+   * selects `web` or a native engine failed and the fallback advanced past it.
+   */
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
     let disposed = false;
-    let proxyFallbackTried = false;
-    // A new source resets the web-engine escalation, but engine reloads of the
-    // same URL keep drawing from the same one-shot budget.
-    if (vlcEscalationRef.current.url !== url) {
-      vlcEscalationRef.current = { url, count: 0 };
-      if (escalateToWeb) setEscalateToWeb(false);
+
+    // A new source restarts the chain. Engine reloads of the same URL (a
+    // fallback, or a user retry) keep the position already reached.
+    if (nativeChainRef.current.url !== url) {
+      nativeChainRef.current = { url, index: 0 };
+      lastNativeTimeRef.current = 0;
     }
+
+    const chain = resolveEngineChain({
+      preferred: playerEngine,
+      forceWeb: forceWebEngine,
+      availability: { mpv: mpvAvailable(), media3: media3Available() },
+      host: isAndroidApp() ? 'android' : 'web',
+    });
+    const chainIndex = Math.min(nativeChainRef.current.index, chain.length - 1);
+    const selected = chain[chainIndex] ?? 'web';
 
     setReady(false);
     setLevels([]);
@@ -207,228 +244,96 @@ export function useMpvEngine({
     engineNameRef.current = 'HTML5';
     setEngineLabel('HTML5');
     const shouldAutoplay = autoplay || resumeRef.current !== null;
-    const formatHint = formatSupportHint(url, streamFormat);
 
-    if (!forceWebEngine && !escalateToWeb && isNativeVlcAvailable()) {
-      engineNameRef.current = 'LibVLC (Hardware)';
-      setEngineLabel('LibVLC');
+    if (selected !== 'web') {
+      const engineId = selected as NativeEngineId;
+      engineNameRef.current = engineId === 'mpv' ? 'mpv (native)' : 'Media3 (native)';
+      setEngineLabel(engineId === 'mpv' ? 'mpv' : 'Media3');
+      setNativeActive(true);
+      setRecoveryStatus('');
+      // The SurfaceView draws behind the WebView, so the element only provides
+      // geometry and captures pointer events for the React chrome on top.
       video.style.opacity = '0';
-      const resumeMs = resumeRef.current != null ? Math.round(resumeRef.current * 1000) : Math.round(initialTime * 1000);
-      nativeVlcPlay(url, streamHeaders || {}, resumeMs);
 
-      // Black-screen guard: re-arming. Every (re)start gets a full 12s deadline;
-      // a dead stream escalates step by step — proxy/direct fallback → same-URL
-      // retry → full engine reload (optionally onto the web engine) → honest
-      // error. A single one-shot timer both killed slow-but-alive streams and
-      // left retried streams without any further check (IPTV black preview fix).
-      let sawVlcOutput = false;
-      let lastVlcTimeSec = resumeMs / 1000;
-      const GUARD_MS = 12000;
-      let guardAttempt = 0;
-      let guardDeadline = Date.now() + GUARD_MS;
-      const rearmGuard = () => { guardAttempt += 1; guardDeadline = Date.now() + GUARD_MS; };
-      // Frozen-live watchdog (port of PlayTorrio): a live stream whose position
-      // stops advancing while claiming to play is reconnecting, not paused.
-      let liveLastTime = 0;
-      let liveStallTicks = 0;
-      const vlcReadyInterval = window.setInterval(() => {
-        if (disposed) return;
-        if (!sawVlcOutput) {
-          runStartGuard();
-          return;
-        }
-        // Playback has produced output — watch live streams for freezes.
-        if (!isLive || !playingRef.current) { liveStallTicks = 0; return; }
-        if (lastVlcTimeSec > liveLastTime + 0.5) {
-          liveLastTime = lastVlcTimeSec;
-          liveStallTicks = 0;
-          return;
-        }
-        liveStallTicks += 1;
-        if (liveStallTicks < 6) return; // ~12s frozen
-        liveStallTicks = 0;
-        // Reconnect once at the same position before giving the error path a try.
-        if (vlcEscalationRef.current.count < 1) {
-          vlcEscalationRef.current = { url, count: 1 };
-          resumeRef.current = lastVlcTimeSec;
-          setRecoveryStatus('Live stream froze — reconnecting…');
-          setReloadKey((key) => key + 1);
-        } else {
-          setRecoveryStatus('');
-          onFatalError('This live stream froze. Try another channel or source.');
-        }
-      }, 2000);
+      const resumeSeconds = resumeRef.current ?? (lastNativeTimeRef.current || initialTime);
 
-      function runStartGuard() {
-        if (Date.now() < guardDeadline) return;
-        if (guardAttempt === 0) {
-          if (!proxyFallbackTried && fallbackUrl && fallbackUrl !== url && !fallbackUrl.startsWith('magnet:')) {
-            proxyFallbackTried = true;
-            rearmGuard();
-            setRecoveryStatus('Reconnecting via direct stream…');
-            nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
-            return;
-          }
-          if (!proxyFallbackTried) {
-            proxyFallbackTried = true;
-            // Retry the same URL once — a dead first connection is common for IPTV.
-            rearmGuard();
-            setRecoveryStatus('Reconnecting stream…');
-            nativeVlcPlay(url, streamHeaders || {}, 0);
-            return;
-          }
-        }
-        // Fallbacks exhausted. Escalate once to the web engine (hls.js/dash.js/
-        // mpegts can play streams LibVLC cannot), then surface the error.
-        if (guardAttempt === 1 && vlcEscalationRef.current.count < 1) {
-          vlcEscalationRef.current = { url, count: 1 };
-          rearmGuard();
-          resumeRef.current = lastVlcTimeSec;
-          setRecoveryStatus('Switching to the web engine…');
-          setEscalateToWeb(true);
-          setReloadKey((key) => key + 1);
-          return;
-        }
-        window.clearInterval(vlcReadyInterval);
-        setWaiting(false);
-        onFatalError('This stream did not start. Try another source or an external player.');
-      }
-
-      let recoveryCleared = false;
-      const onVlcTime = (e: any) => {
-        if (disposed) return;
-        sawVlcOutput = true;
-        if (!recoveryCleared) { recoveryCleared = true; setRecoveryStatus(''); }
-        const detail = e.detail || {};
-        const cur = (detail.time || 0) / 1000;
-        const dur = (detail.duration || 0) / 1000;
-        const previousTime = lastVlcTimeSec;
-        if (cur > 0) lastVlcTimeSec = cur;
-        // Forward progress is proof we are not stalled. A late or duplicate
-        // buffer event must never leave the spinner on top of moving video.
-        if (cur > previousTime + 0.05) setWaiting(false);
-        if (cur >= 0) setCurrentTime(cur);
-        if (dur > 0) {
-          setDuration(dur);
-          setReady(true);
-        }
-        onProgressRef.current?.(cur, dur);
-      };
-
-      const onVlcState = (e: any) => {
-        if (disposed) return;
-        const detail = e.detail || {};
-        setPlaying(Boolean(detail.playing));
-        setWaiting(Boolean(detail.buffering));
-        if (detail.playing) {
-          // Only actual playback output cancels the guard — Stopped/Paused
-          // events from a previous stream can arrive after this effect's
-          // listeners attach and would otherwise fake "output seen".
-          sawVlcOutput = true;
-          setReady(true);
-        }
-      };
-
-      const onVlcBuffering = (e: any) => {
-        if (disposed) return;
-        // detail.buffer is a 0–100 fill percentage, not a boolean (see
-        // vlcBufferingToWaiting). Late/duplicate events are also neutralised by
-        // the forward-progress check in onVlcTime and by vlc-state events.
-        setWaiting(vlcBufferingToWaiting(e.detail?.buffer, playingRef.current));
-      };
-
-      const onVlcTracks = () => {
-        if (disposed) return;
-        const nativeAudios = getNativeAudioTracks();
-        if (nativeAudios.length > 0) {
-          setAudioTracks(nativeAudios.map((t, idx) => ({
-            id: `vlc-audio:${t.id}`,
-            trackNumber: t.trackNumber || (idx + 1),
-            label: t.name || (nativeAudios.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
-            language: t.language || undefined,
-            languageName: t.languageName || resolveLanguageName(t.language),
-            codec: t.codec || undefined,
-            codecLabel: formatAudioCodec(t.codec),
-          })));
-          const selAudio = getSelectedNativeAudioTrack();
-          setCurrentAudio(selAudio >= 0 ? `vlc-audio:${selAudio}` : '');
-        }
-
-        const nativeSpus = getNativeSpuTracks();
-        if (nativeSpus.length > 0) {
-          setTextTracks(nativeSpus.map((t, idx) => ({
-            id: `vlc-spu:${t.id}`,
-            trackNumber: t.trackNumber || (idx + 1),
-            label: t.name || `Subtitle ${idx + 1}`,
-            language: t.language || undefined,
-            languageName: t.languageName || resolveLanguageName(t.language),
-            codec: t.codec || undefined,
-            codecLabel: formatSubtitleCodec(t.codec),
-          })));
-          const selSpu = getSelectedNativeSpuTrack();
-          setCurrentText(selSpu >= 0 ? `vlc-spu:${selSpu}` : '');
-        }
-      };
-
-      const onVlcError = (e: any) => {
-        if (disposed) return;
-        const detail = e.detail || {};
-        const msg = detail.message || 'Native player playback error';
-        console.error('[useMpvEngine] VLC error:', msg);
-        // One-shot fallback: when playback through the local header proxy
-        // fails, retry once with the direct stream URL — LibVLC applies the
-        // Referer/User-Agent headers natively, so the proxy is not required.
-        if (
-          !proxyFallbackTried
-          && fallbackUrl
-          && fallbackUrl !== url
-          && url.startsWith('http://127.0.0.1:')
-          && !fallbackUrl.startsWith('magnet:')
-        ) {
-          proxyFallbackTried = true;
-          rearmGuard();
-          nativeVlcPlay(fallbackUrl, streamHeaders || {}, 0);
-          return;
-        }
-        // LibVLC also emits EncounteredError for transient network blips.
-        // Mirror the web engine's bounded recovery: escalate once to the web
-        // engine before surfacing a fatal error.
-        if (vlcEscalationRef.current.count < 1) {
-          vlcEscalationRef.current = { url, count: 1 };
-          rearmGuard();
-          resumeRef.current = lastVlcTimeSec;
-          setRecoveryStatus('Switching to the web engine…');
-          setEscalateToWeb(true);
-          setReloadKey((key) => key + 1);
-          return;
-        }
-        window.clearInterval(vlcReadyInterval);
-        setWaiting(false);
-        onFatalError(msg);
-      };
-
-      window.addEventListener('praha:vlc-time', onVlcTime);
-      window.addEventListener('praha:vlc-state', onVlcState);
-      window.addEventListener('praha:vlc-buffering', onVlcBuffering);
-      window.addEventListener('praha:vlc-tracks', onVlcTracks);
-      window.addEventListener('praha:vlc-error', onVlcError);
-
-      setTimeout(onVlcTracks, 800);
-      setTimeout(onVlcTracks, 2000);
+      nativeSessionRef.current?.stop();
+      const session = startNativePlayback({
+        engine: engineId,
+        chain,
+        surface: video,
+        url,
+        fallbackUrl: fallbackUrl && fallbackUrl !== url ? fallbackUrl : undefined,
+        headers: streamHeaders,
+        startSeconds: resumeSeconds > 1 ? resumeSeconds : undefined,
+        autoplay: shouldAutoplay,
+        isLive,
+        volume,
+        rate: speed,
+        handlers: {
+          onState(state) {
+            if (disposed) return;
+            lastNativeTimeRef.current = state.currentTime;
+            setPlaying(!state.paused && !state.eofReached);
+            setWaiting(state.buffering && !state.eofReached);
+            if (Number.isFinite(state.currentTime)) setCurrentTime(state.currentTime);
+            if (state.duration > 0) {
+              setDuration(state.duration);
+              setReady(true);
+            }
+            onProgressRef.current?.(state.currentTime, state.duration);
+          },
+          onTracks(audio, text, currentAudioId, currentTextId) {
+            if (disposed) return;
+            setAudioTracks(audio.map((track, index) => ({ ...track, trackNumber: index + 1 })));
+            setTextTracks(text.map((track, index) => ({ ...track, trackNumber: index + 1 })));
+            setCurrentAudio(currentAudioId);
+            setCurrentText(currentTextId);
+          },
+          onEnd() {
+            if (disposed) return;
+            setPlaying(false);
+            setWaiting(false);
+            onEndedRef.current?.();
+          },
+          onFallback(message, nextId) {
+            if (disposed) return;
+            if (!nextId) {
+              setNativeActive(false);
+              onFatalError(message);
+              return;
+            }
+            // Advance the chain and reload the effect onto the next engine. The
+            // chain always ends at `web`, so this never loops.
+            nativeChainRef.current = { url, index: chain.indexOf(nextId) };
+            resumeRef.current = lastNativeTimeRef.current || null;
+            setWaiting(false);
+            setRecoveryStatus(message);
+            // A toast, not just an inline status: the user did not ask for this
+            // swap and needs to know why the picture changed.
+            onEngineFallback?.(message);
+            setReloadKey((key) => key + 1);
+          },
+        },
+      });
+      nativeSessionRef.current = session;
 
       return () => {
         disposed = true;
-        window.clearInterval(vlcReadyInterval);
-        window.removeEventListener('praha:vlc-time', onVlcTime);
-        window.removeEventListener('praha:vlc-state', onVlcState);
-        window.removeEventListener('praha:vlc-buffering', onVlcBuffering);
-        window.removeEventListener('praha:vlc-tracks', onVlcTracks);
-        window.removeEventListener('praha:vlc-error', onVlcError);
-        nativeVlcStop();
+        // Never keep the previous engine alive while another one starts: libmpv
+        // owns one global context and Media3 one audio focus session.
+        session.stop();
+        if (nativeSessionRef.current === session) nativeSessionRef.current = null;
+        setNativeActive(false);
         video.style.opacity = '1';
       };
-    } else {
+    }
+
+    setNativeActive(false);
+    // Everything below is the unchanged web path.
+    {
       const fmt = (streamFormat || '').toLowerCase();
+      const formatHint = formatSupportHint(url, streamFormat);
       const preferHls = fmt === 'hls' || isHlsUrl(url);
       const preferDash = fmt === 'dash' || fmt === 'mpd' || isDashUrl(url);
       const preferMpegTs = fmt === 'mpegts' || fmt === 'ts' || fmt === 'flv' || isMpegTsUrl(url);
@@ -648,7 +553,7 @@ export function useMpvEngine({
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, forceWebEngine, escalateToWeb, autoplay, onFatalError, reloadKey, streamFormat, isLive]);
+  }, [url, forceWebEngine, playerEngine, autoplay, onFatalError, onEngineFallback, reloadKey, streamFormat, isLive, fallbackUrl, streamHeaders, initialTime]);
 
   /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {
@@ -710,24 +615,8 @@ export function useMpvEngine({
       }
     };
     const syncTextTracks = () => {
-      if (isNativeVlcAvailable()) {
-        const nativeSpus = getNativeSpuTracks();
-        if (nativeSpus.length > 0) {
-          const selected = getSelectedNativeSpuTrack();
-          setTextTracks(nativeSpus.map((t, idx) => ({
-            id: `vlc-spu:${t.id}`,
-            trackNumber: t.trackNumber || (idx + 1),
-            label: t.name || `Subtitle ${idx + 1}`,
-            language: t.language || undefined,
-            languageName: t.languageName || resolveLanguageName(t.language),
-            codec: t.codec || undefined,
-            codecLabel: t.codecLabel || formatSubtitleCodec(t.codec),
-            isExternal: Boolean(t.isExternal),
-          })));
-          setCurrentText(selected >= 0 ? `vlc-spu:${selected}` : '');
-          return;
-        }
-      }
+      // Native (mpv/Media3) subtitle tracks arrive through the session's
+      // onTracks callback, not the <video> element, so this stays web-only.
       const list = video.textTracks;
       const options: TrackOption[] = [];
       let active = '';
@@ -754,25 +643,8 @@ export function useMpvEngine({
     };
     const nativeTracks = (video as VideoWithAudioTracks).audioTracks;
     const syncNativeAudio = () => {
-      if (isNativeVlcAvailable()) {
-        const nativeAudios = getNativeAudioTracks();
-        if (nativeAudios.length > 0) {
-          const selected = getSelectedNativeAudioTrack();
-          setAudioTracks(nativeAudios.map((t, idx) => ({
-            id: `vlc-audio:${t.id}`,
-            trackNumber: t.trackNumber || (idx + 1),
-            label: t.name || (nativeAudios.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
-            language: t.language || undefined,
-            languageName: t.languageName || resolveLanguageName(t.language),
-            codec: t.codec || undefined,
-            codecLabel: t.codecLabel || formatAudioCodec(t.codec, t.channels),
-            channels: t.channels,
-            bitrate: t.bitrate,
-          })));
-          setCurrentAudio(selected >= 0 ? `vlc-audio:${selected}` : (selected === -1 ? 'audio:off' : ''));
-          return;
-        }
-      }
+      // Native audio tracks come from the session's onTracks callback. This
+      // listener only serves the MediaStream/audioTracks web path.
       if (hlsRef.current || dashRef.current || !nativeTracks) return;
       const options: TrackOption[] = [];
       let selected = '';
@@ -795,12 +667,15 @@ export function useMpvEngine({
     };
 
     const onVlcTracks = (e: Event) => {
+      // The old LibVLC shim in MainActivity is a stub, so this event never fires
+      // in a shipped build. Kept as a passive listener only: if a legacy bridge
+      // still emits it, surface the tracks rather than dropping them.
       const custom = e as CustomEvent;
       const detail = custom.detail;
       if (!detail) return;
       if (Array.isArray(detail.audioTracks)) {
         setAudioTracks(detail.audioTracks.map((t: any, idx: number) => ({
-          id: `vlc-audio:${t.id}`,
+          id: `native-audio:${t.id}`,
           trackNumber: t.trackNumber || (idx + 1),
           label: t.name || (detail.audioTracks.length > 1 ? `Audio Track ${idx + 1}` : 'Audio Track'),
           language: t.language || undefined,
@@ -811,12 +686,12 @@ export function useMpvEngine({
           bitrate: t.bitrate,
         })));
         if (detail.selectedAudio !== undefined) {
-          setCurrentAudio(detail.selectedAudio >= 0 ? `vlc-audio:${detail.selectedAudio}` : (detail.selectedAudio === -1 ? 'audio:off' : ''));
+          setCurrentAudio(detail.selectedAudio >= 0 ? `native-audio:${detail.selectedAudio}` : (detail.selectedAudio === -1 ? 'audio:off' : ''));
         }
       }
       if (Array.isArray(detail.spuTracks)) {
         setTextTracks(detail.spuTracks.map((t: any, idx: number) => ({
-          id: `vlc-spu:${t.id}`,
+          id: `native-spu:${t.id}`,
           trackNumber: t.trackNumber || (idx + 1),
           label: t.name || `Subtitle ${idx + 1}`,
           language: t.language || undefined,
@@ -826,7 +701,7 @@ export function useMpvEngine({
           isExternal: Boolean(t.isExternal),
         })));
         if (detail.selectedSpu !== undefined) {
-          setCurrentText(detail.selectedSpu >= 0 ? `vlc-spu:${detail.selectedSpu}` : '');
+          setCurrentText(detail.selectedSpu >= 0 ? `native-spu:${detail.selectedSpu}` : '');
         }
       }
     };
@@ -899,7 +774,11 @@ export function useMpvEngine({
 
   const retry = useCallback(() => {
     const video = videoRef.current;
-    resumeRef.current = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    // Native engines report through the session, not the element, so the
+    // element's currentTime is 0 there and would restart the stream from the top.
+    resumeRef.current = nativeSessionRef.current
+      ? (lastNativeTimeRef.current || null)
+      : (video && Number.isFinite(video.currentTime) ? video.currentTime : 0);
     attemptsRef.current = 0;
     setRecoveryAttempts(0);
     setRecoveryStatus('Retrying source…');
@@ -1050,8 +929,9 @@ export function useMpvEngine({
   }, [currentLevel]);
 
   const play = useCallback(() => {
-    if (isNativeVlcAvailable()) {
-      nativeVlcResume();
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.play().catch(() => undefined);
       setPlaying(true);
       return;
     }
@@ -1059,8 +939,9 @@ export function useMpvEngine({
   }, []);
 
   const pause = useCallback(() => {
-    if (isNativeVlcAvailable()) {
-      nativeVlcPause();
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.pause().catch(() => undefined);
       setPlaying(false);
       return;
     }
@@ -1068,12 +949,13 @@ export function useMpvEngine({
   }, []);
 
   const toggle = useCallback(() => {
-    if (isNativeVlcAvailable()) {
+    const native = nativeSessionRef.current;
+    if (native) {
       if (playing) {
-        nativeVlcPause();
+        void native.handle.pause().catch(() => undefined);
         setPlaying(false);
       } else {
-        nativeVlcResume();
+        void native.handle.play().catch(() => undefined);
         setPlaying(true);
       }
       return;
@@ -1085,8 +967,10 @@ export function useMpvEngine({
   }, [playing]);
 
   const seekTo = useCallback((seconds: number) => {
-    if (isNativeVlcAvailable()) {
-      nativeVlcSeek(Math.round(seconds * 1000));
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.seekTo(seconds).catch(() => undefined);
+      lastNativeTimeRef.current = seconds;
       setCurrentTime(seconds);
       return;
     }
@@ -1097,7 +981,7 @@ export function useMpvEngine({
   }, []);
 
   const seekBy = useCallback((delta: number) => {
-    if (isNativeVlcAvailable()) {
+    if (nativeSessionRef.current) {
       seekTo(currentTime + delta);
       return;
     }
@@ -1107,7 +991,7 @@ export function useMpvEngine({
   }, [currentTime, seekTo]);
 
   const seekToPercent = useCallback((percent: number) => {
-    if (isNativeVlcAvailable()) {
+    if (nativeSessionRef.current) {
       if (duration > 0) seekTo(duration * (percent / 100));
       return;
     }
@@ -1118,6 +1002,12 @@ export function useMpvEngine({
 
   /** mpv-style single-frame stepping. */
   const stepFrame = useCallback((direction: 1 | -1) => {
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.pause().catch(() => undefined);
+      void native.handle.seekBy(direction * (1 / 30)).catch(() => undefined);
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
     video.pause();
@@ -1125,13 +1015,19 @@ export function useMpvEngine({
   }, []);
 
   const setVolume = useCallback((percent: number) => {
-    if (isNativeVlcAvailable()) {
-      nativeVlcSetVolume(percent);
+    const next = clamp(Math.round(percent), 0, 100);
+    if (next > 0) lastAudibleVolumeRef.current = next;
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.setVolume(next).catch(() => undefined);
+      void native.handle.setMuted(next === 0).catch(() => undefined);
+      setCurrentVolume(next);
+      setMuted(next === 0);
+      onSettingsChange({ volume: next });
+      return;
     }
     const video = videoRef.current;
     if (!video) return;
-    const next = clamp(Math.round(percent), 0, 100);
-    if (next > 0) lastAudibleVolumeRef.current = next;
     video.volume = next / 100;
     video.muted = next === 0;
     setCurrentVolume(next);
@@ -1140,9 +1036,9 @@ export function useMpvEngine({
   }, [onSettingsChange]);
 
   const toggleMute = useCallback(() => {
-    // Native LibVLC owns audio on Android; the <video> element is only a
+    // Native engines own audio on Android; the <video> element is only a
     // transparent surface there, so muting it has no audible effect.
-    if (isNativeVlcAvailable()) {
+    if (nativeSessionRef.current) {
       if (currentVolume === 0) setVolume(lastAudibleVolumeRef.current);
       else {
         if (currentVolume > 0) lastAudibleVolumeRef.current = currentVolume;
@@ -1167,11 +1063,13 @@ export function useMpvEngine({
 
   const setSpeed = useCallback((next: number) => {
     const value = clamp(Number(next.toFixed(2)), 0.25, 4);
-    if (isNativeVlcAvailable()) {
-      nativeVlcSetRate(value);
+    const native = nativeSessionRef.current;
+    if (native) {
+      void native.handle.setRate(value).catch(() => undefined);
+    } else {
+      const video = videoRef.current;
+      if (video) video.playbackRate = value;
     }
-    const video = videoRef.current;
-    if (video) video.playbackRate = value;
     setRate(value);
     onSettingsChange({ speed: value });
   }, [onSettingsChange]);
@@ -1195,8 +1093,11 @@ export function useMpvEngine({
 
   const selectAudio = useCallback((id: string) => {
     if (id === 'audio:off' || id === 'off' || id === '-1') {
-      if (isNativeVlcAvailable()) {
-        setNativeAudioTrack(-1);
+      const native = nativeSessionRef.current;
+      if (native) {
+        // The engine's own track id is 0 = auto, so it has no "off"; muting is
+        // the honest equivalent here and matches what the web path does below.
+        void native.handle.setMuted(true).catch(() => undefined);
       }
       // hls.js/dash.js do not expose audioTracks on the <video> element, so
       // disabling those alone leaves audio playing on the primary web paths.
@@ -1210,10 +1111,11 @@ export function useMpvEngine({
       return;
     }
 
-    if (id.startsWith('vlc-audio:')) {
-      const vlcId = Number(id.slice(10));
-      if (Number.isInteger(vlcId)) {
-        setNativeAudioTrack(vlcId);
+    if (id.startsWith('native-audio:')) {
+      const trackId = Number(id.slice(13));
+      const native = nativeSessionRef.current;
+      if (native && Number.isInteger(trackId)) {
+        void native.handle.selectAudio(trackId).catch(() => undefined);
         setCurrentAudio(id);
       }
       return;
@@ -1245,8 +1147,9 @@ export function useMpvEngine({
 
   const selectText = useCallback((id: string) => {
     if (id === '' || id === 'off') {
-      if (isNativeVlcAvailable()) {
-        setNativeSpuTrack(-1);
+      const native = nativeSessionRef.current;
+      if (native) {
+        void native.handle.disableSubtitles().catch(() => undefined);
       }
       const video = videoRef.current;
       if (video) {
@@ -1258,10 +1161,11 @@ export function useMpvEngine({
       return;
     }
 
-    if (id.startsWith('vlc-spu:')) {
-      const vlcId = Number(id.slice(8));
-      if (Number.isInteger(vlcId)) {
-        setNativeSpuTrack(vlcId);
+    if (id.startsWith('native-spu:')) {
+      const trackId = Number(id.slice(11));
+      const native = nativeSessionRef.current;
+      if (native && Number.isInteger(trackId)) {
+        void native.handle.selectSubtitle(trackId).catch(() => undefined);
         setCurrentText(id);
       }
       return;
@@ -1366,6 +1270,8 @@ export function useMpvEngine({
     audioTracks, currentAudio, textTracks, currentText, stats, loop, canCast,
     play, pause, toggle, seekTo, seekBy, seekToPercent, stepFrame,
     engineLabel,
+    /** True while mpv/Media3 draws the picture; the <video> is then a surface. */
+    nativeActive,
     setVolume, toggleMute, setSpeed, setLevel,
     selectAudio, cycleAudio, selectText, cycleText,
     toggleFullscreen, togglePip, promptCast, saveFrame, toggleLoop, retry, recoveryAttempts, recoveryStatus,

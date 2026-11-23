@@ -30,6 +30,19 @@ interface SourceGroup {
 const hostOf = (template: string) => { try { return new URL(template).hostname; } catch { return 'Invalid URL'; } };
 
 /**
+ * Normalises a numeric input to a positive integer, falling back to the value
+ * already held when the box is empty, negative, fractional or non-numeric.
+ *
+ * Keeping the previous value rather than writing 0 matters: `buildEmbedUrl`
+ * rejects a non-positive season, so a transient 0 would turn the next Play press
+ * into an error the user never caused.
+ */
+function clampPositiveInt(raw: string, current: number): number {
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : current;
+}
+
+/**
  * Last-resort playback screen.
  *
  * This is the screen reached when the direct source list had nothing playable,
@@ -257,8 +270,12 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
         <p className="embed-frame-note"><CircleAlert size={13} /> Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p>
       </div> : <>
         {media.type === 'series' && <div className="embed-episode">
-          <label>Season <input type="number" min="1" value={season} onChange={(e) => setSeason(Number(e.target.value))} /></label>
-          <label>Episode <input type="number" min="1" value={episode} onChange={(e) => setEpisode(Number(e.target.value))} /></label>
+          {/* `Number('')` is 0 and `Number('1.5')` is 1.5; both reach
+              buildEmbedUrl, which throws on anything but a positive integer.
+              Clamping on the way in keeps the state valid at all times, so the
+              user can clear the box to retype without an error flash. */}
+          <label>Season <input type="number" min="1" value={season} onChange={(e) => setSeason(clampPositiveInt(e.target.value, season))} /></label>
+          <label>Episode <input type="number" min="1" value={episode} onChange={(e) => setEpisode(clampPositiveInt(e.target.value, episode))} /></label>
         </div>}
 
         <div className="embed-body">

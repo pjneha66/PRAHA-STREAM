@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight, Boxes, Check, ChevronDown, ChevronUp, CircleAlert, Compass, Download,
   ExternalLink, Layers, Loader2, PackageOpen, Plug, RefreshCw, Search, ShieldCheck,
@@ -116,24 +116,50 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
     return () => window.removeEventListener('focus', clear);
   }, [busy]);
 
+  /**
+   * Guards against a stale response overwriting a newer one. It is a ref rather
+   * than the `homeLoading` state so reloading right after a catalog toggle is
+   * not swallowed while the first fetch is still in flight — which is exactly
+   * what happened when the toggle's `await loadHome()` ran during the initial
+   * load. StrictMode's double mount is safe: the first pair of effects bumps the
+   * counter, and only the newest request is allowed to write state.
+   */
+  const homeRequestRef = useRef(0);
+  const homeAutoLoadedRef = useRef(false);
+
   const loadHome = useCallback(async () => {
-    if (!available || homeLoading) return;
+    if (!available) return;
+    const request = ++homeRequestRef.current;
     setHomeLoading(true);
     try {
-      setHome(await getHome());
+      const rows = await getHome();
+      if (request === homeRequestRef.current) setHome(rows);
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Home rows could not be loaded.', 'error');
+      if (request === homeRequestRef.current) {
+        // Let the automatic load try again once, instead of treating a single
+        // failed fetch as "already loaded" for the rest of the session.
+        homeAutoLoadedRef.current = false;
+        notify(err instanceof Error ? err.message : 'Home rows could not be loaded.', 'error');
+      }
     } finally {
-      setHomeLoading(false);
+      if (request === homeRequestRef.current) setHomeLoading(false);
     }
-  }, [available, homeLoading, notify]);
+  }, [available, notify]);
 
   // Load the rows as soon as Browse is shown, so switching to it is not a blank
   // screen waiting on a refresh press.
+  //
+  // `loadHome` itself no longer refuses to run while a load is in flight (that
+  // guard is what made catalog toggles silently skip their refresh), so the
+  // "only once" behaviour has to live here. The ref survives StrictMode's
+  // mount/unmount/remount, so the automatic fetch happens exactly once.
   useEffect(() => {
-    if (section === 'browse' && !home.length && !homeLoading && plugins.some((plugin) => plugin.loaded)) {
-      void loadHome();
-    }
+    if (section !== 'browse') return;
+    if (homeAutoLoadedRef.current) return;
+    if (home.length || homeLoading) return;
+    if (!plugins.some((plugin) => plugin.loaded)) return;
+    homeAutoLoadedRef.current = true;
+    void loadHome();
   }, [section, home.length, homeLoading, loadHome, plugins]);
 
   const handleAddRepository = async (event: React.FormEvent) => {

@@ -675,10 +675,27 @@ const DESKTOP_CHROME_UA =
 const CHAPTER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
 const AUDIONEST_SEARCH_URL = 'https://search.audionestapp.com/indexes/trackfiles/search';
-const AUDIONEST_SEARCH_KEY = 'MWJiNWM0MjA2N2ZkM2RiMDNhNWFmNGNk';
+
+/**
+ * AudioNest / Firestore credentials.
+ *
+ * These are read from the build environment first so a fork, a CI secret, or a
+ * local `.env.local` can supply its own values without touching source. The
+ * literals are the fallback so the shipped build keeps working.
+ *
+ * NOTE: this does **not** remove the keys from the bundle. Vite inlines
+ * `import.meta.env.VITE_*` at build time, so when the fallback is used the same
+ * two strings still end up in the JS a user downloads. Treat these as public
+ * client identifiers — the real fix is to stop depending on a third party's
+ * project credentials entirely, which is a change of data source, not of
+ * configuration. The env indirection only buys the ability to swap them.
+ */
+const AUDIONEST_SEARCH_KEY =
+  (import.meta.env?.VITE_AUDIONEST_SEARCH_KEY as string | undefined) || 'MWJiNWM0MjA2N2ZkM2RiMDNhNWFmNGNk';
 const AUDIONEST_FIRESTORE_URL =
   'https://firestore.googleapis.com/v1/projects/learningfirebase-ae02f/databases/(default)/documents:runQuery';
-const AUDIONEST_API_KEY = 'AIzaSyAG-z_yl0_55NEYTEKGoVJyixtHG-FhnfA';
+const AUDIONEST_API_KEY =
+  (import.meta.env?.VITE_AUDIONEST_API_KEY as string | undefined) || 'AIzaSyAG-z_yl0_55NEYTEKGoVJyixtHG-FhnfA';
 
 /** Builds the `Referer: https://{host}/` every source request needs. */
 function refererFor(url: string): string {

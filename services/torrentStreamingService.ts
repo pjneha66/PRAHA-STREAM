@@ -31,6 +31,12 @@ const VIDEO_FILE_RE = /\.(mp4|mkv|webm|avi|mov|m4v)$/i;
 
 let webTorrentClient: WebTorrentClient | null = null;
 let activeWebTorrent: WebTorrentInstance | null = null;
+/**
+ * Bumped by every `destroyWebTorrent()`. A resolve that started before the bump
+ * is abandoned: it drops whatever torrent it attached and settles null instead
+ * of leaving a download running behind a player the user already closed.
+ */
+let webTorrentEpoch = 0;
 
 async function getWebTorrentClient(): Promise<WebTorrentClient | null> {
   if (webTorrentClient) return webTorrentClient;
@@ -121,20 +127,47 @@ export class TorrentStreamingEngine {
     }
 
     const timeoutMs = options.timeoutMs ?? 90000;
+    const epoch = webTorrentEpoch;
     return new Promise((resolve) => {
       let settled = false;
+      /**
+       * Settles the promise, and tears the torrent down again when it settled
+       * without a playable URL.
+       *
+       * A timeout used to leave the torrent attached to the client with nothing
+       * consuming it: it kept announcing to trackers, kept downloading, and kept
+       * the previous `activeWebTorrent` slot occupied until the next magnet
+       * replaced it. On a phone that is bandwidth and battery spent on a stream
+       * the user has already given up on.
+       */
       const finish = (result: { url: string; fileName: string; infoHash: string } | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(result);
+        // An abandoned epoch means the player closed: drop the torrent whether
+        // or not it produced a URL, and report failure so no caller starts
+        // playback from a URL that is about to be revoked.
+        const abandoned = epoch !== webTorrentEpoch;
+        if (!result || abandoned) {
+          if (activeWebTorrent) {
+            try { client.remove(activeWebTorrent); } catch { /* already gone */ }
+            activeWebTorrent = null;
+          }
+        }
+        resolve(abandoned ? null : result);
       };
       const timer = setTimeout(() => finish(null), timeoutMs);
 
       try {
         client.add(magnetLink, { strategy: 'sequential' }, (torrent: WebTorrentInstance) => {
+          // The callback can still run after a timeout settled the promise.
+          // Attaching it then would silently re-download a stream nobody wants,
+          // so drop it on the floor instead of assigning it.
+          if (settled) {
+            try { client.remove(torrent); } catch { /* already gone */ }
+            return;
+          }
           activeWebTorrent = torrent;
-          if (settled) return;
           const file = pickVideoFile(torrent.files, options.title);
           if (!file) { finish(null); return; }
           file.streamToURL()
@@ -152,6 +185,9 @@ export class TorrentStreamingEngine {
   }
 
   static destroyWebTorrent(): void {
+    // Invalidate any resolve still in flight before tearing down, so it cannot
+    // re-attach the torrent after this returns.
+    webTorrentEpoch += 1;
     if (activeWebTorrent) {
       try { webTorrentClient?.remove(activeWebTorrent); } catch { /* noop */ }
       activeWebTorrent = null;

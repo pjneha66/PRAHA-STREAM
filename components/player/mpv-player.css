@@ -1128,6 +1128,17 @@ body.player-vlc-active,
   background-color: transparent !important;
 }
 
+/* A native engine (mpv/Media3) draws to a SurfaceView behind the WebView, so
+   the fullscreen root must not paint over it. Scoped to the class the player
+   adds only while a native session is live, so the web fallback keeps its black
+   backdrop. `!important` beats the root's inline background. */
+html.player-vlc-active .player-fullscreen-root,
+body.player-vlc-active .player-fullscreen-root,
+#root.player-vlc-active .player-fullscreen-root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 .playtorrio-bottom-bar {
   position: absolute;
   bottom: 0;

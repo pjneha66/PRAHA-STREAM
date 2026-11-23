@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { matchBadgeRule } from '../services/badgeRules';
 import { downloadStreamFile } from '../services/androidBridge';
+import { copyText } from '../services/clipboard';
 import {
   ArrowDownToLine, Blocks, Check, ChevronDown, CircleAlert, Copy, Film, HardDrive,
   Languages, Play, RefreshCw, ShieldCheck, SlidersHorizontal, Star, Users, X, Zap,
@@ -112,9 +113,15 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   const play = (stream: StreamResult) => onPlay(stream, allRanked.filter((candidate) => candidate !== stream));
 
   const copyStream = async (stream: StreamResult) => {
-    await navigator.clipboard.writeText(stream.url);
-    setCopied(stream.id);
-    window.setTimeout(() => setCopied(''), 1500);
+    if (await copyText(stream.url)) {
+      setCopied(stream.id);
+      window.setTimeout(() => setCopied(''), 1500);
+    } else {
+      // The WebView denied the write (no secure context, or the permission is
+      // off). Say so rather than leaving a button that appears to do nothing.
+      setDownloadHint('Copying is blocked here — use Download, or open the stream in your browser.');
+      window.setTimeout(() => setDownloadHint(''), 3500);
+    }
   };
 
   const seasonOptions = useMemo(() => {
@@ -133,6 +140,12 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   }, [episodes, seasons, season]);
 
   const checkedProviders = health.filter((item) => item.status !== 'searching').length;
+  // How many providers are actually still running. This used to print the total
+  // provider count, so after the first provider answered the line kept claiming
+  // every provider was searching and never appeared to make progress.
+  const searchingProviders = health.length
+    ? health.filter((item) => item.status === 'searching').length
+    : providerCount;
   const summary = sourceSummary || (providerCount === 1 ? '1 provider' : `${providerCount} providers`);
 
   return (
@@ -173,7 +186,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
         <div className="source-search-status">
           <span className={`status-dot ${loading ? 'pulse' : ''}`} />
           <strong>{filtered.length}</strong>
-          <span>{filtered.length === 1 ? 'stream' : 'streams'}{loading ? ` · searching ${providerCount}…` : ' found'}</span>
+          <span>{filtered.length === 1 ? 'stream' : 'streams'}{loading ? ` · searching ${searchingProviders}…` : ' found'}</span>
         </div>
         <div className="quality-filters" role="group" aria-label="Filter by quality">
           {['all', '4K', '1080p', '720p', '480p'].map((value) => (

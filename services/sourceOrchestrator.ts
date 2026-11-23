@@ -5,7 +5,8 @@ import type { MediaItem, StreamResult } from '../types';
 /**
  * The single source-priority chain for PRAHA.
  *
- *   1. VyseTV's 39 scrapers + Movy  ← FIRST, before anything we had before
+ *   1. VyseTV's scrapers (see FILM_SOURCES) + Movy  ← FIRST, before anything
+ *      we had before
  *   2. Debrid (RD / AD / Premiumize / Debrid-Link / TorBox)
  *   3. TorrServer (bundled on Android)
  *   4. Nuvio + Stremio addons
@@ -90,7 +91,7 @@ export interface ScrapeResult {
  * Stage 1: ask every enabled VyseTV scraper in parallel, but keep results in
  * FILM_SOURCES order so the best-known sources appear at the top.
  *
- * `onPartial` fires as each lane lands, so the UI can show the 39 fast scrapers
+ * `onPartial` fires as each lane lands, so the UI can show the fast scrapers
  * instead of staring at a spinner until Knaben's 25 s budget runs out. The
  * promise still resolves with the complete, FILM_SOURCES-ordered list.
  */
@@ -120,8 +121,8 @@ export async function scrapeFilmSources(
         setTimeout(() => reject(new Error('timeout')), Math.max(timeoutMs, source.timeoutMs ?? 0))),
     ]);
 
-  // A phone cannot hold 39 concurrent HTML parses, so the ordinary scrapers run
-  // in small waves. The long-budget sources (Movy's 17 servers, Knaben's two
+  // A phone cannot hold every scraper's concurrent HTML parses, so the ordinary
+  // scrapers run in small waves. The long-budget sources (Movy's 17 servers, Knaben's two
   // searches) run in their own lane at the same time, or their 20 s would be
   // spent waiting behind the waves rather than alongside them.
   const longLane = enabled.filter((source) => (source.timeoutMs ?? 0) > timeoutMs);

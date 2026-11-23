@@ -1,4 +1,5 @@
 import type { AppSettings, DiscoverFilters, HomeCatalog, ImdxSettings, InstalledAddon, PlayerSettings, UserProfile } from '../types';
+import { normalizePlayerEngine } from '../services/playerSelection';
 
 /** Empty starting point for the TMDB-driven home screen. */
 export const EMPTY_HOME_CATALOG: HomeCatalog = { hero: [], trending: [], movies: [], series: [], topRated: [] };
@@ -52,6 +53,8 @@ export const DEFAULT_DISCOVER_FILTERS: DiscoverFilters = {
 
 /** mpvRx-style player defaults. Everything is user-adjustable in Settings → Player. */
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
+  // mpv is the first-choice engine on Android; see services/playerSelection.
+  playerEngine: 'mpv',
   theme: 'mpvrx',
   seekStep: 10,
   oscTimeout: 2600,
@@ -149,6 +152,9 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
     player: {
       ...DEFAULT_PLAYER_SETTINGS,
       ...(base.player || {}),
+      // Coerced, not just merged: an unknown value from an old or hand-edited
+      // settings file must mean "mpv", and an explicit media3/web must survive.
+      playerEngine: normalizePlayerEngine((base.player || {}).playerEngine),
     },
     dnsProvider: typeof base.dnsProvider === 'string' ? base.dnsProvider : DEFAULT_SETTINGS.dnsProvider,
     dnsFallback: typeof base.dnsFallback === 'boolean' ? base.dnsFallback : DEFAULT_SETTINGS.dnsFallback,

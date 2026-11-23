@@ -7,6 +7,7 @@ import {
   cloudStreamAvailable, getLinks, prefetch, toStreamResults,
 } from '../services/cloudstreamService';
 import { filmQueryFromMedia, rankStreams, scrapeFilmSources } from '../services/sourceOrchestrator';
+import { FILM_SOURCES } from '../services/filmSources';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
 import type {
@@ -73,6 +74,20 @@ const SourceModal: React.FC<{
 
   const animeSlug = media.anime?.slug || (media.source === 'anicore' ? media.id.slice('anicore:'.length) : '');
 
+  /**
+   * A title that came out of a CloudStream extension is not a TMDB title: the
+   * extension handed us the exact episode payload to load links from. Asking
+   * Stremio/Nuvio/VyseTV for the same name would mix unrelated rips into a list
+   * the user opened from one extension, and could even surface a different film
+   * with the same title. So the other providers stay off.
+   *
+   * Declared once, above the load effect that reads it: a second copy further
+   * down the component could drift from this one.
+   */
+  const extensionOnly = Boolean(
+    media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
+  );
+
   // Load real season metadata from AniCore (anime) or TMDB for series
   useEffect(() => {
     if (media.type !== 'series') return;
@@ -116,7 +131,18 @@ const SourceModal: React.FC<{
         .then((list) => {
           if (!active) return;
           const seasonEps = list.filter((entry) => entry.season === season);
-          setEpisodes(seasonEps.length ? seasonEps : list);
+          const resolved = seasonEps.length ? seasonEps : list;
+          setEpisodes(resolved);
+          // Functional update: `episode` is deliberately not a dependency (it
+          // would refetch the season on every pick), so reading it from this
+          // closure meant switching seasons kept replaying the *previous*
+          // season's episode number — and could leave an episode selected that
+          // does not exist in the new list.
+          if (resolved.length) {
+            setEpisode((current) =>
+              resolved.some((ep) => ep.episode === current) ? current : resolved[0].episode,
+            );
+          }
         })
         .catch(() => { if (active) setEpisodes([]); });
       return () => { active = false; };
@@ -130,8 +156,10 @@ const SourceModal: React.FC<{
       .then((list) => {
         if (!active) return;
         setEpisodes(list);
-        if (list.length && !list.some((ep) => ep.episode === episode)) {
-          setEpisode(list[0].episode);
+        if (list.length) {
+          setEpisode((current) =>
+            list.some((ep) => ep.episode === current) ? current : list[0].episode,
+          );
         }
       })
       .catch(() => { if (active) setEpisodes([]); });
@@ -153,9 +181,7 @@ const SourceModal: React.FC<{
     // Stremio/Nuvio/VyseTV for the same name would mix unrelated rips into a
     // list the user opened from one extension, and could even surface a
     // different film with the same title. So the other providers stay off.
-    const extensionOnly = Boolean(
-      media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
-    );
+    // (`extensionOnly` is computed once, above.)
     const enabledAddons = extensionOnly
       ? []
       : addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream'));
@@ -166,7 +192,9 @@ const SourceModal: React.FC<{
     setHealth(extensionOnly
       ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
       : [
-          { id: 'vysetv:scrapers', name: 'VyseTV scrapers + Movy (39 sources)', status: 'searching' as const },
+          // Counted from the source list itself: the literal said 39 while the
+          // list had grown to 41, so the health row under-reported the work.
+          { id: 'vysetv:scrapers', name: `VyseTV scrapers + Movy (${FILM_SOURCES.length} sources)`, status: 'searching' as const },
           { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
           ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
           ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
@@ -188,6 +216,9 @@ const SourceModal: React.FC<{
     };
     const load = async () => {
       // Don't let slow/dead providers keep the UI in a "searching" state forever.
+      // The cap has to be cleared on the way out: `clearLoading` is idempotent, so
+      // leaving it armed was harmless, but a live timer firing 4.5 s after the
+      // modal closed kept the closure (and everything it captured) alive.
       const loadingCap = window.setTimeout(clearLoading, 4500);
       try {
         const idJob = extensionOnly
@@ -220,10 +251,11 @@ const SourceModal: React.FC<{
         const knownImdb = media.imdbId || (media.id.startsWith('tt') ? media.id : undefined);
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
 
-        // Stage 1 — the 39 VyseTV scrapers + Movy. They publish as they finish
-        // in waves, and rankStreams keeps them at the top of the list. Movy and
-        // Knaben have their own longer budgets, so their results arrive last;
-        // the fast scrapers must not be held back waiting for them.
+        // Stage 1 — the VyseTV scrapers (see FILM_SOURCES) plus Movy. They
+        // publish as they finish in waves, and rankStreams keeps them at the top
+        // of the list. Movy and Knaben have their own longer budgets, so their
+        // results arrive last; the fast scrapers must not be held back waiting
+        // for them.
         const filmJob = extensionOnly ? Promise.resolve() : runProvider('vysetv:scrapers', async () => {
           const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep), {
             onPartial: (partial) => {
@@ -321,6 +353,7 @@ const SourceModal: React.FC<{
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
       } finally {
+        window.clearTimeout(loadingCap);
         if (!cancelled) clearLoading();
       }
     };
@@ -338,9 +371,6 @@ const SourceModal: React.FC<{
     };
   }, [onClose, suspended]);
 
-  const extensionOnly = Boolean(
-    media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
-  );
   const activeStreamAddons = addons.filter((addon) => addon.enabled && addon.manifest.resources.some((resource) => resource.name === 'stream')).length;
   const activeScrapers = repositories.filter((repo) => repo.enabled).reduce((sum, repo) => sum + repo.scrapers.filter((scraper) => scraper.enabled).length, 0);
   // A CloudStream title has exactly one provider: the extension that supplied

@@ -310,6 +310,16 @@ class MpvEngine {
     await PrahaMpv.setRate({ rate: Math.max(0.25, Math.min(4, rate)) });
   }
 
+  /**
+   * Zoom the picture to fill the surface. mpv letterboxes by default
+   * (`panscan=0`); `1.0` crops the overflow instead, which is what the player's
+   * "Crop (Cover)" fit means. mpv has no CSS-style stretch, so there is no
+   * third mode here.
+   */
+  async setPanscan(value: number): Promise<void> {
+    await PrahaMpv.setProperty({ name: 'panscan', value: String(Math.max(0, Math.min(1, value))) });
+  }
+
   // ── Tracks ─────────────────────────────────────────────────────────────
 
   async refreshTracks(): Promise<MpvTrack[]> {

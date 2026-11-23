@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { isAndroidApp } from './services/androidBridge';
 import './index.css';
 
@@ -9,7 +10,11 @@ if (!rootElement) throw new Error('Could not find the PRAHA root element.');
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <App />
+    {/* A render-time throw anywhere in App used to blank the whole page, which
+        on Android is indistinguishable from a failed launch. */}
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );
 

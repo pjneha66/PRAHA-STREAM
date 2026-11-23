@@ -42,7 +42,7 @@ function rpc<T>(method: string, args: unknown[], timeoutMs = EXTENSION_TIMEOUT):
 
 export async function getRepositories(): Promise<CloudStreamRepository[]> {
   const raw = await rpc<string>('csRepositories', [], NETWORK_TIMEOUT);
-  return parseJson<CloudStreamRepository[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamRepository>(raw);
 }
 
 export async function addRepository(input: string): Promise<CloudStreamRepository> {
@@ -58,14 +58,14 @@ export async function removeRepository(url: string): Promise<void> {
 
 export async function getRepositoryPlugins(repositoryUrl: string): Promise<CloudStreamAvailablePlugin[]> {
   const raw = await rpc<string>('csRepoPlugins', [repositoryUrl], NETWORK_TIMEOUT);
-  return parseJson<CloudStreamAvailablePlugin[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamAvailablePlugin>(raw);
 }
 
 // ── Installed extensions ────────────────────────────────────────────────────
 
 export async function getInstalledPlugins(): Promise<CloudStreamPlugin[]> {
   const raw = await rpc<string>('csPlugins', [], NETWORK_TIMEOUT);
-  return parseJson<CloudStreamPlugin[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamPlugin>(raw);
 }
 
 export async function installPlugin(repositoryUrl: string, internalName: string): Promise<boolean> {
@@ -79,13 +79,13 @@ export async function uninstallPlugin(internalName: string): Promise<void> {
 /** Returns the internal names that were updated. */
 export async function updatePlugins(): Promise<string[]> {
   const raw = await rpc<string>('csUpdatePlugins', [], NETWORK_TIMEOUT * 2);
-  return parseJson<string[]>(raw) ?? [];
+  return parseJsonArray<string>(raw);
 }
 
 /** Installs missing files, and with `includeNew` every extension the repos offer. */
 export async function installMissing(includeNew: boolean, languages: string[] = []): Promise<string[]> {
   const raw = await rpc<string>('csInstallMissing', [includeNew, languages], NETWORK_TIMEOUT * 2);
-  return parseJson<string[]>(raw) ?? [];
+  return parseJsonArray<string>(raw);
 }
 
 /** Installs a `.cs3` the user picked from storage (a `content://` uri). */
@@ -111,14 +111,14 @@ export async function getPluginFile(internalName: string): Promise<string | null
 
 export async function getProviders(): Promise<CloudStreamProvider[]> {
   const raw = await rpc<string>('csProviders', [], EXTENSION_TIMEOUT);
-  return parseJson<CloudStreamProvider[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamProvider>(raw);
 }
 
 // ── Home ────────────────────────────────────────────────────────────────────
 
 export async function getHome(apiNames?: string[]): Promise<CloudStreamHomeSection[]> {
   const raw = await rpc<string>('csHome', [apiNames ?? null], EXTENSION_TIMEOUT);
-  return parseJson<CloudStreamHomeSection[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamHomeSection>(raw);
 }
 
 export interface CloudStreamCatalogEntry {
@@ -130,7 +130,7 @@ export interface CloudStreamCatalogEntry {
 
 export async function getCatalogs(apiNames?: string[]): Promise<CloudStreamCatalogEntry[]> {
   const raw = await rpc<string>('csCatalogs', [apiNames ?? null], EXTENSION_TIMEOUT);
-  return parseJson<CloudStreamCatalogEntry[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamCatalogEntry>(raw);
 }
 
 export async function setCatalogEnabled(apiName: string, section: string, enabled: boolean): Promise<void> {
@@ -147,7 +147,7 @@ export interface CloudStreamSearchBatch {
 
 export async function search(query: string, apiNames?: string[]): Promise<CloudStreamSearchBatch[]> {
   const raw = await rpc<string>('csSearch', [query, apiNames ?? null], EXTENSION_TIMEOUT);
-  return parseJson<CloudStreamSearchBatch[]>(raw) ?? [];
+  return parseJsonArray<CloudStreamSearchBatch>(raw);
 }
 
 // ── Title page and sources ──────────────────────────────────────────────────
@@ -274,31 +274,46 @@ function qualityLabel(quality: number): string | undefined {
 /**
  * Turns the extension's links into PRAHA's [StreamResult] shape, so the existing
  * source list and player can play them without a CloudStream-specific path.
+ *
+ * The payload comes from a third-party extension, so its shape is a claim, not a
+ * guarantee: an extension built against a different host version can omit
+ * `links`, send `subtitles` as an object, or put a number where a URL belongs.
+ * Calling `.map` on the missing field threw and took the whole CloudStream lane
+ * down (the other providers' results were already rendered, so the symptom was a
+ * silently short list). Entries without a usable URL are dropped instead — a
+ * stream with no URL cannot be played and used to render a button that did
+ * nothing.
  */
 export function toStreamResults(
   apiName: string,
-  links: CloudStreamLinks,
+  links: CloudStreamLinks | null | undefined,
 ): StreamResult[] {
-  const subtitles: StreamSubtitle[] = links.subtitles.map((sub, index) => ({
-    id: `cs-sub-${index}`,
-    url: sub.url,
-    language: sub.lang,
-    headers: sub.headers,
-  }));
+  const rawSubtitles = Array.isArray(links?.subtitles) ? links.subtitles : [];
+  const subtitles: StreamSubtitle[] = rawSubtitles
+    .filter((sub) => typeof sub?.url === 'string' && sub.url)
+    .map((sub, index) => ({
+      id: `cs-sub-${index}`,
+      url: sub.url,
+      language: sub.lang,
+      headers: sub.headers,
+    }));
 
-  return links.links.map((link, index) => ({
-    id: `cloudstream:${apiName}:${index}`,
-    title: link.name || link.source,
-    url: link.url,
-    sourceName: link.source || apiName,
-    sourceType: 'cloudstream' as const,
-    quality: qualityLabel(link.quality),
-    provider: apiName,
-    headers: link.headers,
-    referer: link.referer || undefined,
-    format: link.type === 'M3U8' ? 'hls' : link.type === 'DASH' ? 'dash' : undefined,
-    subtitles: subtitles.length ? subtitles : undefined,
-  }));
+  const rawLinks = Array.isArray(links?.links) ? links.links : [];
+  return rawLinks
+    .filter((link) => typeof link?.url === 'string' && link.url)
+    .map((link, index) => ({
+      id: `cloudstream:${apiName}:${index}`,
+      title: link.name || link.source || '',
+      url: link.url,
+      sourceName: link.source || apiName,
+      sourceType: 'cloudstream' as const,
+      quality: qualityLabel(link.quality),
+      provider: apiName,
+      headers: link.headers,
+      referer: link.referer || undefined,
+      format: link.type === 'M3U8' ? 'hls' : link.type === 'DASH' ? 'dash' : undefined,
+      subtitles: subtitles.length ? subtitles : undefined,
+    }));
 }
 
 function parseJson<T>(raw: string | null | undefined): T | null {
@@ -308,4 +323,18 @@ function parseJson<T>(raw: string | null | undefined): T | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * `parseJson` for a call that promises a list.
+ *
+ * `JSON.parse` succeeds on `{}`, `"text"` and `null`, so a host that answered
+ * with an object instead of an array produced a value whose `.map`/`.length`
+ * threw at the call site — far from the parse, and in a `finally`-less effect
+ * that meant the whole screen stalled. Anything that is not an array becomes an
+ * empty list, which every caller already handles.
+ */
+function parseJsonArray<T>(raw: string | null | undefined): T[] {
+  const parsed = parseJson<unknown>(raw);
+  return Array.isArray(parsed) ? parsed as T[] : [];
 }

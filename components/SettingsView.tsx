@@ -21,7 +21,7 @@ import { PROFILE_PALETTE, ProfileAvatar } from './ProfilePicker';
 import {
   APP_VERSION,
   AppSettings, AppThemeAccent, DebridProvider, InstalledAddon, NsfwMode, NuvioRepository,
-  PlayerSettings, UserProfile,
+  PlayerEngineId, PlayerSettings, UserProfile,
 } from '../types';
 
 export const Toggle: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label: string }> = ({ checked, onChange, label }) => (
@@ -1074,6 +1074,24 @@ const SettingsView: React.FC<{
           {/* Player */}
           <section className="settings-card player-settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Player</h2><p>Built-in HLS, DASH (.mpd), and MPEG-TS player modelled on mpvRx.</p></div></div>
+            <div className="setting-row">
+              <div>
+                <strong>Playback engine</strong>
+                <p>
+                  Android plays through this engine first and falls back automatically
+                  (mpv → Media3 → web). Browser builds always use the web player.
+                </p>
+              </div>
+              <select
+                className="settings-select"
+                value={settings.player.playerEngine || 'mpv'}
+                onChange={(event) => updatePlayer({ playerEngine: event.target.value as PlayerEngineId })}
+              >
+                <option value="mpv">mpv (recommended)</option>
+                <option value="media3">Media3 / ExoPlayer</option>
+                <option value="web">Web player</option>
+              </select>
+            </div>
             <div className="setting-row"><div><strong>Controller theme</strong><p>Colors the on-screen controller, menus, and statistics overlay.</p></div></div>
             <div className="player-theme-grid">
               {PLAYER_THEMES.map((theme) => (

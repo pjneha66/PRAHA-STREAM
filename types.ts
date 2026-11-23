@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.21';
+export const APP_VERSION = '2.11.22';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
@@ -469,8 +469,20 @@ export type PlayerThemeId =
 export type SubtitleOutline = 'none' | 'thin' | 'medium' | 'thick' | 'shadow';
 export type SubtitlePosition = 'bottom' | 'top' | 'middle';
 
+/**
+ * Playback engine preference. On Android `mpv` is tried first, then Media3,
+ * then the in-WebView player; the order is fixed by `services/playerSelection`.
+ * There is no browser mpv, so the web build always ends up on `web`.
+ */
+export type PlayerEngineId = 'mpv' | 'media3' | 'web';
+
 /** Settings for the built-in mpvRx-style player. Persisted with the rest of the app. */
 export interface PlayerSettings {
+  /**
+   * Engine to try first on Android. Unset or unrecognised values mean `mpv`,
+   * so existing installs get it without a migration.
+   */
+  playerEngine?: PlayerEngineId;
   /** Color scheme for the on-screen controller, inspired by mpvRx themes. */
   theme: PlayerThemeId;
   /** Seconds used by ←/→ and the back/forward buttons. */

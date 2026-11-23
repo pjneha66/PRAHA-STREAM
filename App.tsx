@@ -45,7 +45,7 @@ import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } fro
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import { OctaveMusicService, type MusicTrack } from './services/musicService';
 import { noteSearchTerm } from './services/searchHistory';
-import { hashPin } from './services/profilePin';
+import { hashPin, verifyPin, isPbkdf2Hash } from './services/profilePin';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
 import { buildIptvPlayback, IptvZapStore } from './services/iptvService';
 import { loadTitle } from './services/cloudstreamService';
@@ -102,16 +102,28 @@ const ProfilePinGate: React.FC<{
   profile: UserProfile;
   onUnlocked: () => void;
   onCancel: () => void;
-}> = ({ profile, onUnlocked, onCancel }) => {
+  /** Called after a successful unlock of a pre-PBKDF2 PIN, to upgrade the stored hash. */
+  onLegacyUnlock?: (pin: string) => void;
+}> = ({ profile, onUnlocked, onCancel, onLegacyUnlock }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const submit = async () => {
-    const hash = await hashPin(pin);
-    if (hash === profile.pinHash) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (!(await verifyPin(pin, profile.pinHash))) {
+        setError('Wrong PIN.');
+        setPin('');
+        return;
+      }
+      // PINs set before PBKDF2 are still a bare SHA-256 digest, which a 4-digit
+      // search breaks instantly. This is the one moment the plaintext is
+      // available, so upgrade it now rather than leaving it weak forever.
+      if (!isPbkdf2Hash(profile.pinHash)) onLegacyUnlock?.(pin);
       onUnlocked();
-    } else {
-      setError('Wrong PIN.');
-      setPin('');
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -131,7 +143,10 @@ const ProfilePinGate: React.FC<{
         {error && <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#f87171' }}>{error}</p>}
         <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
           <button onClick={onCancel} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: '1px solid #30363d', background: '#21262d', color: '#c9d1d9', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => void submit()} disabled={pin.length < 4} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: 'none', background: pin.length >= 4 ? '#ef4444' : '#3a3f46', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: pin.length >= 4 ? 'pointer' : 'default' }}>Unlock</button>
+          {/* PBKDF2 at 210k iterations takes a visible moment, so the button
+              reports that it is working instead of appearing to swallow the tap
+              and inviting a second press on top of the first. */}
+          <button onClick={() => void submit()} disabled={pin.length < 4 || busy} style={{ flex: 1, padding: '9px 0', borderRadius: '9px', border: 'none', background: pin.length >= 4 && !busy ? '#ef4444' : '#3a3f46', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: pin.length >= 4 && !busy ? 'pointer' : 'default' }}>{busy ? 'Checking…' : 'Unlock'}</button>
         </div>
       </section>
     </div>
@@ -506,8 +521,12 @@ const App: React.FC = () => {
 
     window.addEventListener('praha:hardware-back', onHardwareBack);
     return () => window.removeEventListener('praha:hardware-back', onHardwareBack);
-    // State is read through refs above, so this listener is registered once and
-    // never re-subscribed mid-interaction.
+    // Everything the handler reads *after* the PIN gate goes through refs, so it
+    // stays correct without re-subscribing. These four are the exception: they
+    // are read as plain state at the top of the chain and would otherwise be
+    // captured from the first render. Re-subscribing when they change is
+    // harmless — the listener is a single function swap, not a re-render — so
+    // the dependency list is accurate rather than aspirational.
   }, [pinGateProfile, profileSwitcherOpen, notify, closePlayer]);
 
   // Warm the player chunk while the user browses. It is ~800KB of player code
@@ -537,7 +556,13 @@ const App: React.FC = () => {
   useEffect(() => {
     const url = (settings.customBackground || '').trim();
     if (url && /^https?:\/\//.test(url)) {
-      document.body.style.backgroundImage = `linear-gradient(rgba(8,9,11,.82), rgba(8,9,11,.9)), url("${url.replace(/"/g, '')}")`;
+      // The URL is interpolated into a CSS `url("…")` token inside a style
+      // string, so a quote or a closing paren in it ends the token early and the
+      // rest is parsed as CSS. Only `"` used to be stripped. Escaping the CSS
+      // metacharacters (and stripping the newlines that would break the
+      // declaration outright) keeps the whole value inside the url() token.
+      const safe = url.replace(/["'()\\\r\n]/g, '');
+      document.body.style.backgroundImage = `linear-gradient(rgba(8,9,11,.82), rgba(8,9,11,.9)), url("${safe}")`;
       document.body.style.backgroundSize = 'cover';
       document.body.style.backgroundPosition = 'center';
       document.body.style.backgroundAttachment = 'fixed';
@@ -990,6 +1015,42 @@ const App: React.FC = () => {
     playbackPositionRef.current = resumeTime;
     latestProgressRef.current = null;
     lastProgressFlushRef.current = 0;
+    setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
+  };
+
+  /**
+   * Play from the embed screen.
+   *
+   * That screen is opened straight from the details page (and from the source
+   * list's "Try embedded players" button), and both paths leave `sourceState`
+   * null. `playStream` reads its media from `sourceState`, so pressing Play on a
+   * direct stream there returned on its first line and did nothing at all, with
+   * no message. The media comes from `embedState` instead, and closing the player
+   * lands back on the page the embed screen was opened from.
+   */
+  const playStreamFromEmbed = (
+    stream: StreamResult,
+    season?: number,
+    episode?: number,
+    episodeTitle?: string,
+    alternatives: StreamResult[] = [],
+  ) => {
+    const media = embedStateRef.current?.media;
+    if (!media) return;
+    const existing = history.find((entry) =>
+      entry.media.id === media.id &&
+      (media.type === 'movie' || (entry.season === season && entry.episode === episode)),
+    );
+    const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
+
+    upsertHistory({ media, stream, season, episode, episodeTitle });
+    // There is no source list mounted under this screen, so the origin records
+    // only the page behind it — closing the player must not try to restore one.
+    rememberPlaybackOrigin(null);
+    playbackPositionRef.current = resumeTime;
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
+    setEmbedState(null);
     setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
   };
 
@@ -1604,7 +1665,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} onPlay={playStream} />}
+      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} onPlay={playStreamFromEmbed} />}
 
       {sourceState && (
         <SourceModal
@@ -1692,6 +1753,15 @@ const App: React.FC = () => {
       {pinGateProfile && (
         <ProfilePinGate
           profile={pinGateProfile}
+          onLegacyUnlock={(pin) => {
+            // Fire-and-forget: the unlock must not wait on the re-hash, and a
+            // failure here only means the old digest stays for another attempt.
+            void hashPin(pin)
+              .then((pinHash) => setProfiles((cur) => cur.map((prof) => (
+                prof.id === pinGateProfile.id ? { ...prof, pinHash } : prof
+              ))))
+              .catch(() => { /* keep the existing hash */ });
+          }}
           onUnlocked={() => {
             const targetId = pendingPinProfileRef.current || pinGateProfile.id;
             pendingPinProfileRef.current = null;

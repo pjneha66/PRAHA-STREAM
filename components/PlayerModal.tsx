@@ -11,12 +11,14 @@ import { IptvZapStore } from '../services/iptvService';
 import { findStremioSubtitles } from '../services/stremioService';
 import { fetchIntroSegments } from '../services/introService';
 import { buildMagnetUri, isMagnetOrTorrent, resolveDebridStream } from '../services/debridService';
+import { copyText } from '../services/clipboard';
 import { TorrentStreamingEngine, type TorrentStreamStats } from '../services/torrentStreamingService';
 import {
-  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, isNativeVlcAvailable, nativeVlcStop, openExternalPlayer,
+  extractStreamHeaders, hasNativeHeaderProxy, isAndroidApp, openExternalPlayer,
   resolvePlayableStreamUrl, setImmersiveFullscreen,
 } from '../services/androidBridge';
 import MpvPlayer from './player/MpvPlayer';
+import { stopNativePlayback } from '../services/nativePlayback';
 
 /** Stream URLs come from untrusted addons/Nuvio plugins. Only http(s) may be framed. */
 function safeFrameUrl(raw: string): string | null {
@@ -89,9 +91,28 @@ const PlayerModal: React.FC<{
   const [torrentError, setTorrentError] = useState('');
   const [torrentStats, setTorrentStats] = useState<TorrentStreamStats | null>(null);
   const torrentUnsubRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => {
-    torrentUnsubRef.current?.();
-    torrentUnsubRef.current = null;
+  const webTorrentTeardownRef = useRef<number | null>(null);
+  useEffect(() => {
+    // A teardown scheduled by a previous mount is cancelled here. This matters
+    // under StrictMode, which unmounts and immediately remounts: the auto-resolve
+    // effect only fires once per magnet, so destroying the torrent on that first
+    // cleanup would leave the magnet resolved to a URL that no longer exists.
+    if (webTorrentTeardownRef.current !== null) {
+      window.clearTimeout(webTorrentTeardownRef.current);
+      webTorrentTeardownRef.current = null;
+    }
+    return () => {
+      torrentUnsubRef.current?.();
+      torrentUnsubRef.current = null;
+      // Closing the player has to stop the in-app P2P engine too. Without this
+      // the torrent stayed attached after playback ended and kept downloading in
+      // the background for as long as the app lived. Deferred by a tick so a
+      // StrictMode remount can cancel it.
+      webTorrentTeardownRef.current = window.setTimeout(() => {
+        webTorrentTeardownRef.current = null;
+        TorrentStreamingEngine.destroyWebTorrent();
+      }, 0);
+    };
   }, []);
   const [addonSubtitles, setAddonSubtitles] = useState<StreamSubtitle[]>([]);
   const [introSegments, setIntroSegments] = useState<IntroSegment[]>([]);
@@ -190,7 +211,7 @@ const PlayerModal: React.FC<{
 
   const copyLink = async () => {
     const targetUrl = isMagnet ? buildMagnetUri(activeStream) : activeStream.url;
-    await navigator.clipboard.writeText(targetUrl);
+    if (!(await copyText(targetUrl))) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   };
@@ -311,7 +332,9 @@ const PlayerModal: React.FC<{
 
   const handleClose = () => {
     try {
-      nativeVlcStop();
+      // The player hook tears its own session down, but the modal can close on
+      // paths where that effect has not run yet (magnet resolve, embed switch).
+      stopNativePlayback();
       document.documentElement.classList.remove('player-vlc-active');
       document.body.classList.remove('player-vlc-active');
       document.getElementById('root')?.classList.remove('player-vlc-active');
@@ -319,34 +342,24 @@ const PlayerModal: React.FC<{
     onClose();
   };
 
+  // The native surface is drawn outside the WebView. `MpvPlayer` adds the
+  // transparency class once a session is actually live, so nothing here needs
+  // to guess whether mpv/Media3 is present. Still stop the engine if the modal
+  // itself unmounts.
   useEffect(() => {
-    if (isNativeVlcAvailable() && isNative) {
-      document.documentElement.classList.add('player-vlc-active');
-      document.body.classList.add('player-vlc-active');
-      document.getElementById('root')?.classList.add('player-vlc-active');
-      return () => {
-        document.documentElement.classList.remove('player-vlc-active');
-        document.body.classList.remove('player-vlc-active');
-        document.getElementById('root')?.classList.remove('player-vlc-active');
-        nativeVlcStop();
-      };
-    } else {
-      return () => {
-        nativeVlcStop();
-      };
-    }
+    return () => {
+      stopNativePlayback();
+    };
   }, [isNative]);
 
   if (isNative) {
     return (
-      <div
-        className={`player-fullscreen-root ${isNativeVlcAvailable() ? 'vlc-transparent' : ''}`}
-        style={{ background: isNativeVlcAvailable() ? 'transparent' : '#000' }}
-      >
+      <div className="player-fullscreen-root">
         <MpvPlayer
           stream={activeStream}
           effectiveUrl={effectiveUrl}
           forceWebEngine={isBlobStream}
+          playerEngine={playerSettings.playerEngine}
           externalSubtitles={addonSubtitles}
           introSegments={introSegments}
           initialTime={initialTime}

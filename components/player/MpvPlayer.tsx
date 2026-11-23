@@ -5,12 +5,15 @@ import {
   PictureInPicture2, Play, Repeat, Repeat1, RotateCcw, Scissors, Settings2,
   SkipBack, SkipForward, SlidersHorizontal, Smartphone, Sun, Upload, Volume1, Volume2, VolumeX, X,
 } from 'lucide-react';
-import type { IntroSegment, MediaItem, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
+import type { IntroSegment, MediaItem, PlayerEngineId, PlayerSettings, StreamResult, StreamSubtitle } from '../../types';
 import { parseLocalSubtitleFile, prepareSubtitleUrl } from '../../services/subtitleService';
 import {
-  extractStreamHeaders, isAndroidApp, isNativeVlcAvailable, nativeVlcSetAspectRatio,
+  extractStreamHeaders, isAndroidApp,
   openExternalPlayer, openNativeSubtitlePicker, setImmersiveFullscreen,
 } from '../../services/androidBridge';
+import { mpvEngine } from '../../services/mpvEngine';
+import { mpvAvailable } from '../../services/mpvBridge';
+import { media3Available } from '../../services/media3Bridge';
 import AudioSubtitleDialog from './AudioSubtitleDialog';
 import { clamp, formatBitrate, formatBytes, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
@@ -76,8 +79,10 @@ const PlayerMenu: React.FC<{ id: Exclude<MenuId, null>; title: string; active: M
 interface MpvPlayerProps {
   stream: StreamResult;
   effectiveUrl: string;
-  /** In-app P2P blob streams must use the web engine (LibVLC cannot read blob:). */
+  /** In-app P2P blob streams must use the web engine (mpv/Media3 cannot read blob:). */
   forceWebEngine?: boolean;
+  /** Preferred native engine on Android; falls back automatically. */
+  playerEngine?: PlayerEngineId;
   externalSubtitles?: StreamSubtitle[];
   introSegments?: IntroSegment[];
   initialTime?: number;
@@ -111,6 +116,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   stream,
   effectiveUrl,
   forceWebEngine = false,
+  playerEngine = 'mpv' as PlayerEngineId,
   externalSubtitles = NO_SUBTITLES,
   introSegments = NO_INTRO_SEGMENTS,
   initialTime = 0,
@@ -165,17 +171,6 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   const [aspectFit, setAspectFit] = useState<'contain' | 'cover' | 'fill'>('contain');
   const [audioOnly, setAudioOnly] = useState(false);
 
-  const toggleAspectFit = () => {
-    setAspectFit((curr) => {
-      const next = curr === 'contain' ? 'cover' : curr === 'cover' ? 'fill' : 'contain';
-      flash(next === 'contain' ? 'Aspect: Fit (Contain)' : next === 'cover' ? 'Aspect: Crop (Cover)' : 'Aspect: Stretch (Fill)');
-      if (isNativeVlcAvailable()) {
-        nativeVlcSetAspectRatio(next);
-      }
-      return next;
-    });
-  };
-
   const displayTitle = useMemo(() => {
     if (!media) return stream.title;
     if (media.type === 'series' && season) {
@@ -204,17 +199,23 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
   //    landing exactly while the video was starting, which is a big part of why
   //    opening the player felt frozen. Now the list is published at once (the
   //    menu shows every track, and track indices stay stable) with placeholder
-  //    sources, and the real conversion runs afterwards a few at a time. Under
-  //    LibVLC it is delayed further still, since LibVLC renders subtitles itself.
+  //    sources, and the real conversion runs afterwards a few at a time. Under a
+  //    native engine it is delayed further still, since mpv/Media3 render
+  //    subtitles themselves.
   // 2. Subtitle addons answer a second or two after mount, so this effect used
   //    to re-run and re-convert everything from scratch. Converted URLs are now
   //    cached by source URL + offset, making later runs nearly free.
   useEffect(() => {
     let active = true;
-    // LibVLC draws its own subtitles, so the web <track> pipeline is only a
-    // fallback there — and even then only if playback escalates to the web
-    // engine. Delay it rather than skip it, so a fallback still has tracks.
-    const nativePassive = isNativeVlcAvailable() && !forceWebEngine;
+    // mpv and Media3 draw their own subtitles, so the web <track> pipeline is
+    // only a fallback there — and even then only if playback falls back to the
+    // web engine. Delay it rather than skip it, so a fallback has tracks ready.
+    //
+    // `nativeActive` is state, but it flips *after* this effect has run for the
+    // first time (the session attaches asynchronously). Treat "native is
+    // available on this platform" as the passivity signal instead, which is
+    // known synchronously: on the web it is false and conversion starts now.
+    const nativePassive = !forceWebEngine && (mpvAvailable() || media3Available());
     const all = rawSubtitles.slice(0, 20);
     const offset = settings.subtitleOffset || 0;
     const cacheKey = (sub: StreamSubtitle) => `${offset}|${sub.url}`;
@@ -341,9 +342,10 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
 
   const engine = useMpvEngine({
     url: effectiveUrl,
-    // Raw stream URL for the one-shot proxy→direct VLC fallback.
+    // Raw stream URL for the one-shot proxy→direct native fallback.
     fallbackUrl: stream.url && stream.url !== effectiveUrl ? stream.url : undefined,
     forceWebEngine,
+    playerEngine,
     // Live sources get the frozen-stream watchdog in the engine.
     isLive: media?.source === 'iptv' || stream?.sourceType === 'iptv',
     streamFormat: stream.format,
@@ -361,11 +363,28 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     onNextEpisode,
     onFatalError,
     onSettingsChange,
+    // The hook has no toast of its own; the OSD is the player's own notice.
+    onEngineFallback: (message) => flash(message),
   });
   const {
     videoRef, ready, waiting, playing, currentTime, duration, buffered, volume, muted, rate,
     levels, currentLevel, audioTracks, currentAudio, textTracks, currentText, stats, loop, canCast,
+    nativeActive,
   } = engine;
+
+  const toggleAspectFit = useCallback(() => {
+    setAspectFit((curr) => {
+      const next = curr === 'contain' ? 'cover' : curr === 'cover' ? 'fill' : 'contain';
+      flash(next === 'contain' ? 'Aspect: Fit (Contain)' : next === 'cover' ? 'Aspect: Crop (Cover)' : 'Aspect: Stretch (Fill)');
+      // mpv renders outside the WebView, so CSS object-fit cannot reach it. Its
+      // equivalent of "Cover" is panscan, which crops the letterbox overflow.
+      // Media3 exposes no aspect API, so there the button stays cosmetic.
+      if (nativeActive && playerEngine === 'mpv') {
+        mpvEngine.setPanscan(next === 'cover' ? 1 : 0).catch(() => undefined);
+      }
+      return next;
+    });
+  }, [flash, nativeActive, playerEngine]);
 
   const theme = getTheme(settings.theme);
   const themeVars = useMemo(() => theme.vars as React.CSSProperties, [theme]);
@@ -389,18 +408,19 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     if (menu) setControlsVisible(true);
   }, [menu]);
 
+  // While a native engine draws the picture, the WebView must be transparent so
+  // mpv's SurfaceView shows through. The class is what the CSS keys off.
   useEffect(() => {
-    if (isNativeVlcAvailable()) {
-      document.documentElement.classList.add('player-vlc-active');
-      document.body.classList.add('player-vlc-active');
-      document.getElementById('root')?.classList.add('player-vlc-active');
-      return () => {
-        document.documentElement.classList.remove('player-vlc-active');
-        document.body.classList.remove('player-vlc-active');
-        document.getElementById('root')?.classList.remove('player-vlc-active');
-      };
-    }
-  }, []);
+    if (!nativeActive) return;
+    document.documentElement.classList.add('player-vlc-active');
+    document.body.classList.add('player-vlc-active');
+    document.getElementById('root')?.classList.add('player-vlc-active');
+    return () => {
+      document.documentElement.classList.remove('player-vlc-active');
+      document.body.classList.remove('player-vlc-active');
+      document.getElementById('root')?.classList.remove('player-vlc-active');
+    };
+  }, [nativeActive]);
 
   useEffect(() => {
     if (isAndroidApp()) {
@@ -748,7 +768,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || isNativeVlcAvailable()) { setAudioOnly(false); return; }
+    if (!video || nativeActive) { setAudioOnly(false); return; }
     const check = () => setAudioOnly(Boolean(playing) && (video.videoWidth || 0) === 0);
     check();
     video.addEventListener('loadedmetadata', check);
@@ -759,7 +779,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       video.removeEventListener('resize', check);
       window.clearInterval(id);
     };
-  }, [playing, media?.id]);
+  }, [playing, media?.id, nativeActive]);
 
   const progressRatio = duration ? currentTime / duration : 0;
   const bufferedRatio = duration ? buffered / duration : 0;
@@ -776,7 +796,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
       className={`mpv-stage ${controlsVisible ? 'controls-on' : 'controls-off'} ${waiting ? 'is-buffering' : ''}`}
       style={{
         ...themeVars,
-        background: isNativeVlcAvailable() ? 'transparent' : '#000',
+        background: nativeActive ? 'transparent' : '#000',
       }}
       onMouseMove={wakeControls}
       onMouseLeave={() => { if (!menu && settings.oscTimeout > 0) setControlsVisible(false); }}
@@ -798,13 +818,13 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
         style={{
           filter: settings.brightness === 100 ? undefined : `brightness(${settings.brightness}%)`,
           objectFit: aspectFit,
-          opacity: isNativeVlcAvailable() ? 0 : 1,
-          pointerEvents: isNativeVlcAvailable() ? 'none' : 'auto',
-          background: isNativeVlcAvailable() ? 'transparent' : '#000',
+          opacity: nativeActive ? 0 : 1,
+          pointerEvents: nativeActive ? 'none' : 'auto',
+          background: nativeActive ? 'transparent' : '#000',
         }}
         onError={(event) => {
           const error = event.currentTarget.error;
-          if (error && !isNativeVlcAvailable()) setFatal(mediaErrorMessage(error.code, stream.url, stream.format));
+          if (error && !nativeActive) setFatal(mediaErrorMessage(error.code, stream.url, stream.format));
         }}
       >
         {preparedSubtitles.map((subtitle, index) => (
