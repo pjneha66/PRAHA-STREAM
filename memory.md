@@ -1,8 +1,50 @@
 # Workspace Memory — PRAHA-STREAM
 
-_Last updated: 2026-11-24. Everything below is verified against the working tree and build logs._
+_Last updated: 2026-11-25. Everything below is verified against the working tree and build logs._
 
-## 0. The 2.11.24 native-player fixes (most recent work)
+## 0. The 2.11.25 VyseTV live-TV player port (most recent work)
+
+Both of VyseTV's live players are now ported, plus the pane the second one lives in.
+
+1. **`LiveTvPlayer`** (`components/player/LiveTvPlayer.tsx`) — the standalone
+   full-window player, VyseTV's `lib/screens/live_tv/live_tv_player_page.dart`.
+2. **`BrowserLivePlayer`** (`components/player/BrowserLivePlayer.tsx`) — the
+   inline player inside the portal browser's watch pane, VyseTV's
+   `lib/screens/live_tv/portal_browser_player.dart`. Distinct from the above: it
+   has no open/close, `expanded` only moves it (pane ↔ full window), and it takes
+   `onStep`/`onExpand`/`guide` as props.
+3. **The watch pane** in `components/liveTv/pages.tsx` — VyseTV's
+   `_watchPane`/`_ChannelDetails` and the measured three-pane rule from
+   `_panes`: categories ≤ 300 px, list ≤ 440 px, gap 14 px, and the picture must
+   get ≥ 340 px on a screen ≥ 420 px tall.
+
+Two things worth remembering about the port:
+
+- **`expanded` must not remount.** VyseTV returns the player *instead of* the
+  panes under a `GlobalKey`, so full screen only moves the widget. In React, a
+  different render branch remounts and tears the stream down — so the pane keeps
+  one `BrowserLivePlayer` element and full screen is the `is-full` class
+  (`position: fixed; inset: 0`). `tests/livetv-pane.test.tsx` asserts the mock
+  engine opened exactly once across pane → full screen → pane.
+- **An inline native surface needs `player-pane-active`, not
+  `player-vlc-active`.** `index.css`'s `.player-vlc-active` hides `.app-shell`,
+  which is right for a fullscreen player and wrong for a pane. The new class only
+  clears backgrounds on `html`/`body`/`#root`/`.app-shell`/`.main-column`/
+  `.ltv-root`.
+- **`pages.tsx` must lazy-load `BrowserLivePlayer`.** A static import pulls
+  `hls.js` + `p2p-media-loader-hlsjs` into every test that renders `App`, and
+  that throws `SyntaxError: Named export 'debug' not found` in jsdom. Same reason
+  `App.tsx` already lazy-loads `LiveTvPlayer`.
+- **VyseTV's `short` layout (height < 520) is now wired**: the sub-page drops its
+  subtitle, shrinks the title to 17 px, and folds both pane searches behind
+  icons. The categories pane also gained its own search (`_catText`) and its own
+  A→Z toggle (`_catAz`), separate from the channel list's.
+
+**Verification:** `tsc --noEmit` clean; `vitest run` 56 files / 511 tests pass.
+**Not verified:** the native `SurfaceView` rendering inside an inline pane, and
+`expanded` on a real Android TV remote — both need hardware.
+
+## 0a. The 2.11.24 native-player fixes
 
 Three separate faults all produced the same user-visible symptom — every IPTV
 channel showed "Media3 (ExoPlayer) could not play this stream — switched to Web
@@ -52,7 +94,7 @@ a run on hardware.
 
 - **App:** PRAHA-STREAM — a Capacitor (React + TypeScript + Vite) media streaming app for Android (also a web app).
 - **Package / applicationId:** `com.praha.stream`, label `PRAHA STREAM`.
-- **Version:** 2.11.24, `versionCode 49` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
+- **Version:** 2.11.25, `versionCode 50` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
 - **Key configs:** `capacitor.config.json`, `vite.config.ts`, `android/build.gradle` (AGP `8.13.0`, Gradle 8.13), `android/app/build.gradle`.
 - **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). Playback is **libmpv** (`com.praha.stream.mpv.PrahaMpvPlugin`, from the `edde746:mpv-android` AAR) with Media3/ExoPlayer and a web player as fallbacks. There is no LibVLC in the build any more — the `player-vlc-active` CSS class name is a leftover from that era.
 

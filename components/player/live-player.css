@@ -1,0 +1,845 @@
+/* The Live TV player — VyseTV's `live_tv_player_page.dart` chrome
+   (GPL-3.0-or-later), in CSS.
+
+   Two things here are load-bearing rather than cosmetic:
+
+   1. `.ltvp-root` must be transparent while a native engine draws. mpv and
+      Media3 render to a SurfaceView *behind* the WebView, so an opaque root
+      hides the picture entirely. `.is-native` plus the `player-vlc-active`
+      class the component puts on html/body/#root is what makes it visible;
+      the class alone was not enough before 2.11.24.
+   2. `.chrome-off` sets `cursor: none`, because VyseTV's page hides the
+      pointer with the controls. */
+
+.ltvp-root {
+  /* VyseTV's VyseColors.accent / accentHot / text / textDim. */
+  --ltvp-accent: #ffa53a;
+  --ltvp-hot: #ff6a00;
+  --ltvp-text: #f4f5fb;
+  --ltvp-dim: #a3a8c3;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #000;
+  color: var(--ltvp-text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  font-family: inherit;
+}
+
+/* A native engine owns the picture; the root is only a hit-test surface. */
+.ltvp-root.is-native,
+html.player-vlc-active .ltvp-root,
+body.player-vlc-active .ltvp-root,
+#root.player-vlc-active .ltvp-root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.ltvp-root.chrome-off {
+  cursor: none;
+}
+
+.ltvp-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* ── loading ────────────────────────────────────────────────────────────── */
+
+.ltvp-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  pointer-events: none;
+}
+
+.ltvp-spinner span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 2.6px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--ltvp-accent);
+  border-radius: 50%;
+  animation: ltvp-spin 0.9s linear infinite;
+}
+
+@keyframes ltvp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── error card ─────────────────────────────────────────────────────────── */
+
+.ltvp-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(86vw, 340px);
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(10, 11, 17, 0.86);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--ltvp-text);
+  text-align: center;
+}
+
+.ltvp-error > svg {
+  color: var(--ltvp-hot);
+}
+
+.ltvp-error h2 {
+  margin: 10px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ltvp-error p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--ltvp-dim);
+}
+
+.ltvp-error-detail {
+  margin-top: 8px !important;
+  font-size: 11.5px !important;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+}
+
+.ltvp-error-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.ltvp-error-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ltvp-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ltvp-error-actions button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ── top bar ────────────────────────────────────────────────────────────── */
+
+.ltvp-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 40px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0));
+  opacity: 1;
+  transition: opacity 110ms ease;
+}
+
+.chrome-off .ltvp-top,
+.chrome-off .ltvp-bottom {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 280ms ease;
+}
+
+@media (min-width: 720px) {
+  .ltvp-top {
+    padding: 12px 24px 40px;
+  }
+}
+
+.ltvp-glass {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ltvp-text);
+  cursor: pointer;
+}
+
+.ltvp-glass:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ltvp-glass.is-on {
+  border-color: rgba(255, 165, 58, 0.5);
+  background: rgba(255, 165, 58, 0.18);
+  color: var(--ltvp-accent);
+}
+
+.ltvp-logo {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.ltvp-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ltvp-titles strong {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltvp-titles span {
+  font-size: 12px;
+  color: var(--ltvp-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* VyseTV's `_LiveBadge`: 8×4 padding, #0xFFE5383B, a 7px white dot, 10.5px. */
+.ltvp-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #e5383b;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.ltvp-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* ── bottom bar ─────────────────────────────────────────────────────────── */
+
+.ltvp-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 50px 12px calc(18px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0));
+  opacity: 1;
+  transition: opacity 110ms ease;
+}
+
+@media (min-width: 720px) {
+  .ltvp-bottom {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+.ltvp-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+
+.ltvp-guide-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ltvp-guide-now {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: var(--ltvp-accent);
+}
+
+.ltvp-guide-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltvp-guide-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--ltvp-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ltvp-guide-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.ltvp-guide-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ltvp-accent);
+  transition: width 200ms linear;
+}
+
+.ltvp-guide-next {
+  font-size: 12px;
+  color: var(--ltvp-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltvp-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ltvp-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ltvp-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ltvp-key:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ltvp-play {
+  width: 52px;
+  height: 52px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ltvp-play:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.ltvp-spacer {
+  flex: 1 1 auto;
+}
+
+.ltvp-volume {
+  flex: 0 1 120px;
+  width: 120px;
+  min-width: 60px;
+  height: 20px;
+  margin: 0 4px;
+  accent-color: #fff;
+  cursor: pointer;
+}
+
+/* ── channel list ───────────────────────────────────────────────────────── */
+
+/* VyseTV: AnimatedPositioned, 320ms easeOutCubic, right 16 → -360, 280 wide on
+   a phone and 340 otherwise, top 70, bottom 110. */
+.ltvp-panel {
+  position: absolute;
+  top: 70px;
+  bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+  right: -360px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(10, 11, 17, 0.82);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: right 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+
+@media (min-width: 720px) {
+  .ltvp-panel {
+    width: 340px;
+  }
+}
+
+.ltvp-panel.is-open {
+  right: 16px;
+}
+
+.ltvp-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ltvp-dim);
+}
+
+.ltvp-panel header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ltvp-text);
+  cursor: pointer;
+}
+
+.ltvp-panel ul {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ltvp-panel li {
+  margin: 0;
+}
+
+/* The windowed list: one spacer item owns the full height, the rows it holds are
+   positioned at their own offsets so 5,000 channels cost one item, not 5,000. */
+.ltvp-panel .ltvp-panel-spacer {
+  list-style: none;
+}
+
+.ltvp-panel .ltvp-panel-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+/* VyseTV's row: 52 high, 40×28 logo, accent tint on the channel that is on. */
+.ltvp-panel li button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 52px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ltvp-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ltvp-panel li button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.ltvp-panel li button.is-current {
+  background: rgba(255, 165, 58, 0.16);
+  color: var(--ltvp-accent);
+  font-weight: 700;
+}
+
+.ltvp-panel li button img {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.ltvp-panel-blank {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 28px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ltvp-panel li button > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A TV is driven by its remote: bigger targets, no pointer affordances. */
+@media (pointer: coarse) {
+  .ltvp-key {
+    width: 48px;
+    height: 48px;
+  }
+  .ltvp-glass {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ── the portal browser's pane player ─────────────────────────────────────
+   VyseTV's `portal_browser_player.dart` (GPL-3.0-or-later). Unlike `.ltvp-root`
+   this is not fixed to the window: it fills the pane it is given, and only
+   expands to the screen when the page puts it there. */
+
+/* Inline playback, so backgrounds above it must clear while a native engine
+   draws — but only down the chain to this pane, never the sibling panes. The
+   app shell's own backdrop is what has to go; `index.css` hides the shell
+   outright for the full player, which would take the browser with it. */
+html.player-pane-active,
+body.player-pane-active,
+#root.player-pane-active {
+  background: transparent !important;
+}
+
+html.player-pane-active .app-shell,
+body.player-pane-active .app-shell,
+#root.player-pane-active .app-shell,
+html.player-pane-active .main-column,
+body.player-pane-active .main-column,
+#root.player-pane-active .main-column,
+html.player-pane-active .ltv-root,
+body.player-pane-active .ltv-root,
+#root.player-pane-active .ltv-root {
+  background: transparent !important;
+}
+
+.blp-root {
+  --blp-accent: #ffa53a;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+  color: #f4f5fb;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  font-family: inherit;
+}
+
+/* Full screen: VyseTV moves the widget to the whole window (`fullWindow`). */
+.blp-root.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+}
+
+/* A native engine owns the picture; the pane is only a hit-test surface. */
+.blp-root.is-native {
+  background: transparent !important;
+}
+
+.blp-root.chrome-off {
+  cursor: none;
+}
+
+.blp-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.blp-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0 0 0 -18px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* VyseTV: 36 px full screen, 28 in the pane. */
+.blp-spinner[data-size='full'] { width: 36px; height: 36px; margin-left: -18px; }
+.blp-spinner[data-size='pane'] { width: 28px; height: 28px; margin-left: -14px; }
+
+.blp-spinner span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 2.4px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--blp-accent);
+  border-radius: 50%;
+  animation: ltvp-spin 0.9s linear infinite;
+}
+
+/* The chrome column: top bar (full screen only), then the bottom bar. */
+.blp-chrome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transition: opacity 110ms ease;
+}
+
+.chrome-off .blp-chrome {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 280ms ease;
+}
+
+.blp-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 22px 40px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0));
+}
+
+.blp-glass {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  cursor: pointer;
+}
+
+.blp-glass:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.blp-logo {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.blp-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.blp-titles strong {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blp-titles span {
+  font-size: 12px;
+  color: #a3a8c3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* VyseTV's `_LiveBadge`: the full player's red, so both say "on air". */
+.blp-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #e5383b;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.blp-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.blp-bottom {
+  margin-top: auto;
+  padding: 26px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+}
+
+/* VyseTV: 50 above the transport in full screen, 26 in the pane. */
+.blp-root.is-full .blp-bottom {
+  padding: 50px 22px calc(18px + env(safe-area-inset-bottom, 0px));
+}
+
+.blp-guide-slot {
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.blp-transport {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* VyseTV's `_button`: a circle, black .5 with .74 on hover, glyph at 52 % of
+   the circle. The size comes from the component (44 touch / 36 otherwise). */
+.blp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+}
+
+.blp-btn:hover {
+  background: rgba(0, 0, 0, 0.74);
+}
+
+.blp-spacer {
+  flex: 1 1 auto;
+}
+
+.blp-volume {
+  flex: 0 0 auto;
+  max-width: 130px;
+  height: 20px;
+  margin: 0 8px;
+  accent-color: #fff;
+  cursor: pointer;
+}
+
+/* VyseTV's `_errorCard`: a fit-scaled card so it still fits a small pane. */
+.blp-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(86%, 320px);
+  padding: 18px 22px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(10, 11, 17, 0.94);
+  color: #f4f5fb;
+  text-align: center;
+}
+
+.blp-error > svg {
+  color: #ff6a00;
+}
+
+.blp-error h2 {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.blp-error p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: #a3a8c3;
+}
+
+.blp-error-detail {
+  margin-top: 6px !important;
+  font-size: 11.5px !important;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+}
+
+.blp-error-actions {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.blp-error-actions button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--blp-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.blp-error-actions button:hover {
+  background: rgba(255, 165, 58, 0.14);
+}

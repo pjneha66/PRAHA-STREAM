@@ -47,7 +47,7 @@ import { OctaveMusicService, type MusicTrack } from './services/musicService';
 import { noteSearchTerm } from './services/searchHistory';
 import { hashPin, verifyPin, isPbkdf2Hash } from './services/profilePin';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
-import { buildIptvPlayback, IptvZapStore } from './services/iptvService';
+import { buildIptvPlayback, IptvZapStore, type IptvPlayback } from './services/iptvService';
 import { loadTitle } from './services/cloudstreamService';
 import {
   APP_VERSION,
@@ -59,6 +59,9 @@ import {
 const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
+// The dedicated live-channel player, a port of VyseTV's `LiveTvPlayerPage`.
+// Loaded like `PlayerModal`, so neither is in the first bundle.
+const LiveTvPlayer = React.lazy(() => import('./components/player/LiveTvPlayer'));
 
 const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
 
@@ -95,6 +98,13 @@ interface ActivePlayerState {
   episodeTitle?: string;
   initialTime?: number;
   alternatives?: StreamResult[];
+  /**
+   * Set for a Live TV channel. Its presence is what routes to the dedicated
+   * live player instead of the film modal — VyseTV's split between
+   * `LiveTvPlayerPage` and `PlayerPage`. It carries the channel list the
+   * channel was opened from, so ↑/↓ and the panel walk that list.
+   */
+  iptv?: IptvPlayback;
 }
 
 /** Profile PIN gate: shown instead of switching when the target profile has a PIN. */
@@ -1068,13 +1078,20 @@ const App: React.FC = () => {
   const zapIptvChannel = useCallback((direction: 1 | -1) => {
     const channel = IptvZapStore.neighbor(direction);
     if (!channel) return;
-    const { media, stream } = buildIptvPlayback(channel);
+    // The bar steps the persisted list, which carries no guide loader or
+    // favourites key (neither survives JSON). Rebuild the whole list from the
+    // store so zapping stays a list operation, the way the live player does it,
+    // and hand the new channel over at its own place in it.
+    const zap = IptvZapStore.get();
+    const items = (zap?.channels ?? [channel]).map((entry) => ({ ...entry }));
+    const index = Math.max(0, items.findIndex((entry) => entry.url === channel.url));
+    const playback = buildIptvPlayback(channel, { items, index });
     if (!playbackOriginRef.current) {
       playbackOriginRef.current = { view, source: null, scrollY: window.scrollY || 0 };
     }
     latestProgressRef.current = null;
     lastProgressFlushRef.current = 0;
-    setPlayer({ media, stream, initialTime: 0 });
+    setPlayer({ media: playback.media, stream: playback.stream, initialTime: 0, iptv: playback });
   }, [view]);
 
   const handlePlayerProgress = useCallback((currentTime: number, duration: number) => {
@@ -1467,14 +1484,24 @@ const App: React.FC = () => {
   } else if (view === 'livetv') {
     page = (
       <LiveTvView
-        onPlayStream={(media, stream) => {
+        playerSettings={settings.player}
+        onPlayerSettingsChange={updatePlayerSettings}
+        onPlayStream={(playback) => {
           // Record where playback started so closing the player lands back on
           // Live TV with the same channel list, not on Home.
           rememberPlaybackOrigin(null);
           playbackPositionRef.current = 0;
           latestProgressRef.current = null;
           lastProgressFlushRef.current = 0;
-          setPlayer({ media, stream, initialTime: 0 });
+          // A live channel opens the channel player (`LiveTvPlayerPage`); a
+          // portal's film or episode is VOD and belongs to the film player,
+          // which is exactly the split VyseTV makes in `iptv_playback.dart`.
+          setPlayer({
+            media: playback.media,
+            stream: playback.stream,
+            initialTime: 0,
+            iptv: playback,
+          });
         }}
       />
     );
@@ -1691,7 +1718,20 @@ const App: React.FC = () => {
         />
       )}
 
-      {player && (
+      {player && player.iptv?.live.live && (
+        <React.Suspense fallback={<div className="player-backdrop"><div className="player-loading"><span className="brand-mark"><span /></span><p>Tuning in…</p></div></div>}>
+          <LiveTvPlayer
+            playback={player.iptv}
+            settings={settings.player}
+            onSettingsChange={updatePlayerSettings}
+            autoplay={settings.autoplay}
+            onNotice={notify}
+            onClose={closePlayer}
+          />
+        </React.Suspense>
+      )}
+
+      {player && !player.iptv?.live.live && (
         <React.Suspense fallback={<div className="player-backdrop"><div className="player-loading"><span className="brand-mark"><span /></span><p>Preparing your stream…</p></div></div>}>
           <PlayerModal
             key={playerIdentity || undefined}

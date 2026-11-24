@@ -1139,6 +1139,11 @@
 /* Sub-page scaffold (_LivePage). */
 .ltv-subpage { padding-bottom: 24px; }
 
+/* `_topBar(compact: short)`: a phone on its side keeps the name at 17 px and
+   drops the line under it, so the panes start higher up the screen. */
+.ltv-subpage.is-compact .ltv-section-header h2 { font-size: 17px; }
+.ltv-subpage.is-compact .ltv-subpage-head { margin-bottom: 10px; }
+
 .ltv-subpage-head {
   display: flex;
   align-items: flex-start;
@@ -1206,6 +1211,13 @@
   align-items: start;
 }
 
+/* VyseTV's `_panes`: with room for the picture, the browser is categories ·
+   list · watch pane, 14 px apart, the list clamped the way Dart clamps it. */
+.ltv-browser-panes.has-watch {
+  grid-template-columns: minmax(190px, min(300px, 24%)) minmax(340px, min(440px, 30%)) minmax(340px, 1fr);
+  align-items: stretch;
+}
+
 .ltv-pane {
   border: 1px solid var(--ltv-line);
   border-radius: 14px;
@@ -1225,6 +1237,35 @@
 
 .ltv-pane-head span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ltv-pane-head small { font-size: 11px; font-weight: 500; color: var(--ltv-faint); }
+
+/* The pane's own controls: the search toggle and the A→Z toggle, in the head. */
+.ltv-pane-icon {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ltv-muted);
+  cursor: pointer;
+}
+.ltv-pane-icon:hover { background: rgba(255, 255, 255, 0.08); color: var(--ltv-text); }
+.ltv-pane-icon.on { color: var(--ltv-accent); }
+
+/* The pane search sits under its heading, 10 px down, as `_PaneSearch` does. */
+.ltv-pane-search { flex: 1 1 auto; width: 100%; margin-bottom: 10px; font-size: 12.5px; }
+.ltv-pane-head .ltv-pane-search { margin-bottom: 0; padding: 6px 10px; }
+
+.ltv-pane-quiet {
+  margin: 6px 2px;
+  font-size: 12px;
+  color: var(--ltv-faint);
+}
 
 .ltv-cat-list { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; }
 
@@ -1247,8 +1288,7 @@
 
 .ltv-cat-item:hover { background: rgba(255, 255, 255, 0.06); color: var(--ltv-text); }
 .ltv-cat-item.active { background: rgba(108, 140, 255, 0.18); color: #fff; font-weight: 700; }
-.ltv-cat-item span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ltv-cat-item em { font-style: normal; font-size: 10.5px; color: var(--ltv-faint); font-variant-numeric: tabular-nums; }
+.ltv-cat-item span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.ltv-cat-item em { font-style: normal; font-size: 10.5px; color: var(--ltv-faint); font-variant-numeric: tabular-nums; }
 .ltv-cat-item svg { width: 14px; height: 14px; flex: 0 0 auto; }
 
 .ltv-poster-grid {
@@ -1298,7 +1338,260 @@
 }
 
 @media (max-width: 719px) {
-  .ltv-browser-panes { grid-template-columns: minmax(0, 1fr); }
+  .ltv-browser-panes,
+  .ltv-browser-panes.has-watch { grid-template-columns: minmax(0, 1fr); }
   .ltv-cat-list { max-height: 260px; }
   .ltv-match-shelf { grid-auto-columns: minmax(240px, 260px); }
+}
+
+/* ── the watch pane ──────────────────────────────────────────────────────
+   VyseTV's `_watchPane` and `_ChannelDetails`
+   (`lib/screens/live_tv/portal_browser_page.dart`, GPL-3.0-or-later). */
+
+.ltv-watch-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--ltv-line);
+  border-radius: 14px;
+  background: var(--ltv-tile);
+  /* Not clipped: nothing sits between the picture and the window but paint. */
+  overflow: visible;
+}
+
+/* Full screen: the player inside is `position: fixed`, so this only has to get
+   out of its way without collapsing the grid. */
+.ltv-watch-pane.is-expanded {
+  position: static;
+  border-color: transparent;
+  background: transparent;
+}
+
+.ltv-watch-pane.is-expanded .ltv-watch-frame {
+  position: static;
+}
+
+.ltv-watch-frame {
+  flex: 0 0 auto;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100% - 210px);
+  min-height: 120px;
+  margin: 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+
+.ltv-watch-pane.is-expanded .ltv-watch-frame {
+  aspect-ratio: auto;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+}
+
+.ltv-watch-details {  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 18px 18px;
+}
+
+.ltv-pane-note {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--ltv-muted);
+}
+
+/* The pane player's Suspense fallback, while the engine chunk loads. */
+.ltv-watch-loading {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 12.5px;
+  color: var(--ltv-muted);
+  background: #000;
+}
+
+.ltv-pane-note svg { opacity: 0.55; }
+.ltv-pane-note strong { font-size: 15px; font-weight: 700; color: var(--ltv-text); }
+.ltv-pane-note p { margin: 0; font-size: 12.5px; line-height: 1.5; max-width: 260px; }
+
+.ltv-watch-info { display: flex; flex-direction: column; min-width: 0; }
+
+.ltv-watch-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+
+.ltv-watch-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ltv-muted);
+  overflow: hidden;
+}
+
+.ltv-watch-logo img { width: 100%; height: 100%; object-fit: contain; }
+
+.ltv-watch-names { display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-width: 0; }
+.ltv-watch-names strong {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ltv-watch-names span {
+  font-size: 12.5px;
+  color: var(--ltv-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ltv-watch-star {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ltv-faint);
+  cursor: pointer;
+}
+
+.ltv-watch-star:hover { background: rgba(255, 255, 255, 0.06); }
+.ltv-watch-star.on { color: var(--ltv-star); }
+
+.ltv-watch-label {
+  margin: 20px 0 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--ltv-accent);
+}
+
+.ltv-watch-title { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.25; }
+
+.ltv-watch-time {
+  margin: 4px 0 10px;
+  font-size: 12.5px;
+  color: var(--ltv-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ltv-watch-blurb {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ltv-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+
+.ltv-watch-quiet { margin: 20px 0 0; font-size: 13px; color: var(--ltv-faint); }
+
+.ltv-watch-upnext {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ltv-watch-upnext li { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.ltv-watch-upnext em {
+  flex: 0 0 auto;
+  min-width: 50px;
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--ltv-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ltv-watch-upnext span {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* `_Progress`: a thin track with the accent fill. */
+.ltv-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.ltv-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ltv-accent), #8fa8ff);
+}
+
+/* `_NowNextStrip`: now / next over the picture, full screen only. */
+.ltv-nownext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+.ltv-nownext-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ltv-nownext-top em {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  color: var(--ltv-accent);
+}
+.ltv-nownext-top strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ltv-nownext-top span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--ltv-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ltv-nownext-next {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ltv-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The channel playing in the pane, marked in the list (`_ChannelRow(selected:)`). */
+.ltv-row.is-watching {
+  background: rgba(108, 140, 255, 0.1);
+  box-shadow: inset 2px 0 0 var(--ltv-accent);
 }

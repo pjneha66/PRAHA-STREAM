@@ -4,6 +4,7 @@ import { cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LiveTvView from '../components/LiveTvView';
 import * as androidBridge from '../services/androidBridge';
+import { DEFAULT_PLAYER_SETTINGS } from '../data/defaults';
 
 const BIG = Array.from({ length: 5000 }, (_, index) => ({
   name: `Channel ${index}`,
@@ -46,14 +47,14 @@ describe('Live TV port UI', () => {
   });
 
   it('lands on Matches when nothing is starred, like VyseTV', async () => {
-    const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
+    const { container } = render(<LiveTvView onPlayStream={vi.fn()} playerSettings={DEFAULT_PLAYER_SETTINGS} onPlayerSettingsChange={vi.fn()} />);
     await waitFor(() => expect(container.textContent).toContain('Fixtures from ESPN'));
     const active = container.querySelector('.ltv-tab.active');
     expect((active?.textContent || '').trim()).toBe('Matches');
   });
 
   it('mounts only a small window of rows for a 5,000-channel playlist', async () => {
-    const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
+    const { container } = render(<LiveTvView onPlayStream={vi.fn()} playerSettings={DEFAULT_PLAYER_SETTINGS} onPlayerSettingsChange={vi.fn()} />);
     await waitFor(() => expect(container.textContent).toContain('5,000 channels'));
     openChannelsTab(container);
     await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
@@ -64,7 +65,7 @@ describe('Live TV port UI', () => {
   });
 
   it('exposes five mobile tabs and a channel action sheet', async () => {
-    const { container } = render(<LiveTvView onPlayStream={vi.fn()} />);
+    const { container } = render(<LiveTvView onPlayStream={vi.fn()} playerSettings={DEFAULT_PLAYER_SETTINGS} onPlayerSettingsChange={vi.fn()} />);
     expect(container.querySelectorAll('.ltv-tab').length).toBe(5);
     openChannelsTab(container);
     await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
@@ -77,18 +78,28 @@ describe('Live TV port UI', () => {
     expect(container.textContent).toContain('Next source');
   });
 
-  it('plays a channel through the unchanged onPlayStream contract', async () => {
+  it('plays a channel by handing the player the whole list and its index', async () => {
     const onPlay = vi.fn();
-    const { container } = render(<LiveTvView onPlayStream={onPlay} />);
+    const { container } = render(<LiveTvView onPlayStream={onPlay} playerSettings={DEFAULT_PLAYER_SETTINGS} onPlayerSettingsChange={vi.fn()} />);
     openChannelsTab(container);
     await waitFor(() => expect(container.querySelectorAll('.ltv-channel').length).toBeGreaterThan(0));
     const play = container.querySelector('.ltv-card-main') as HTMLButtonElement;
     play.click();
     await waitFor(() => expect(onPlay).toHaveBeenCalledTimes(1));
-    expect(onPlay.mock.calls[0][1]).toMatchObject({
+
+    // VyseTV's `openLivePlayer(context, items, i)`: the stream, plus the list it
+    // came from and where in it the channel sits, so the player can zap.
+    const playback = onPlay.mock.calls[0][0];
+    expect(playback.stream).toMatchObject({
       sourceType: 'iptv',
       url: BIG[0].url,
       format: 'hls',
     });
+    expect(playback.live.live).toBe(true);
+    expect(playback.items.length).toBeGreaterThan(1);
+    expect(playback.index).toBe(0);
+    expect(playback.items[playback.index].url).toBe(BIG[0].url);
+    // A playlist channel's star: every entry carries its own favourites key.
+    expect(playback.items[playback.index].favoriteKey).toBeTruthy();
   });
 });

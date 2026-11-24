@@ -7,14 +7,18 @@
 // same copy, the same filters and the same empty states.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CirclePlay, Info, ListVideo, Search, Star, Tv, X } from 'lucide-react';
+import { ArrowDownAZ, CirclePlay, Info, ListVideo, Search, Star, Tv, X } from 'lucide-react';
 import {
+  epgProgress,
   fetchSeriesEpisodes,
+  guideTime,
   hitTagsOf,
   IptvAliveStore,
   IptvClient,
   liveGuide,
   liveItemFromEpisode,
+  liveItemFromHit,
+  liveItemFromStream,
   LiveFavorites,
   MatchFinder,
   nowNext,
@@ -22,6 +26,7 @@ import {
   portalKey,
   portalLabel,
   toEpochMs,
+  upcomingGuide,
   type ChannelHit,
   type EpgEntry,
   type HardcodedChannel,
@@ -34,6 +39,12 @@ import {
   type ScheduleMatch,
   type VerifiedPortal,
 } from '../../services/iptvService';
+import type { PlayerSettings } from '../../types';
+
+// The pane player pulls in the engine layer (hls.js, p2p-media-loader), which
+// is only needed once a channel is picked — the same reason App.tsx lazy-loads
+// `LiveTvPlayer`. A static import here would load it for anyone browsing Live TV.
+const BrowserLivePlayer = React.lazy(() => import('../player/BrowserLivePlayer'));
 import {
   counted,
   EmptyState,
@@ -64,7 +75,12 @@ export interface LiveChannelPageProps {
   channel: HardcodedChannel;
   /** The fixture whose feed you are looking for, when you arrived from a match. */
   match?: ScheduleMatch | null;
-  onPlay: (item: LiveItem) => void;
+  /**
+   * Play one of the sources. `items` is every source under the current
+   * filters, in the order they are shown, and `index` is the row that was
+   * tapped — VyseTV's `openLivePlayer(context, items, i)`.
+   */
+  onPlay: (item: LiveItem, items: LiveItem[], index: number) => void;
   onBack: () => void;
 }
 
@@ -153,6 +169,14 @@ export function LiveChannelPage({ channel, match, onPlay, onBack }: LiveChannelP
   const hitCount = results.length;
   const hasFilters = num !== null || lang !== null || quality !== null;
 
+  // VyseTV: `final items = [for (final h in hits) LiveItem.hit(h, channelName: ch.name)]`.
+  // Built from the filtered, guide-ordered list, so zapping walks what the page
+  // is showing and each source carries its own guide loader and star.
+  const items = useMemo(
+    () => visible.map((hit) => liveItemFromHit(hit, channel.name)),
+    [visible, channel.name],
+  );
+
   const subtitle = `${channel.category}  ·  ${
     hitCount ? `${results.length.toLocaleString()} sources found` : 'Search your portals for this channel'
   }`;
@@ -164,7 +188,7 @@ export function LiveChannelPage({ channel, match, onPlay, onBack }: LiveChannelP
           icon={CirclePlay}
           label="Watch"
           disabled={!visible.length}
-          onClick={() => visible[0] && onPlay({ title: channel.name, url: visible[0].streamUrl, live: true })}
+          onClick={() => items[0] && onPlay(items[0], items, 0)}
         />
         <ToolButton
           icon={Search}
@@ -220,7 +244,7 @@ export function LiveChannelPage({ channel, match, onPlay, onBack }: LiveChannelP
         />
       ) : (
         <div>
-          {visible.map((hit) => (
+          {visible.map((hit, index) => (
             <HitRow
               key={hit.streamUrl}
               channel={channel}
@@ -228,15 +252,7 @@ export function LiveChannelPage({ channel, match, onPlay, onBack }: LiveChannelP
               guide={playing?.entryFor(hit) ?? null}
               favorite={controller.isFavoriteHit(channel.id, hit)}
               onToggleFavorite={() => void controller.toggleFavoriteHit(channel.id, hit)}
-              onPlay={() =>
-                onPlay({
-                  title: channel.name,
-                  url: hit.streamUrl,
-                  subtitle: [portalLabel(hit.portal), hit.stream.name].filter(Boolean).join('  ·  '),
-                  logo: hit.stream.icon || channel.logo,
-                  live: true,
-                })
-              }
+              onPlay={() => onPlay(items[index] ?? liveItemFromHit(hit, channel.name), items, index)}
             />
           ))}
         </div>
@@ -358,7 +374,8 @@ function HitRow({
 
 export interface M3uPlaylistPageProps {
   playlist: M3uPlaylist;
-  onPlay: (channel: M3uChannel) => void;
+  /** `items` is the filtered channel list as shown, `index` the tapped card. */
+  onPlay: (channel: M3uChannel, items: M3uChannel[], index: number) => void;
   onBack: () => void;
 }
 
@@ -409,12 +426,12 @@ export function M3uPlaylistPage({ playlist, onPlay, onBack }: M3uPlaylistPagePro
         <EmptyState icon={Search} title="No matches" body="Try another group or filter." />
       ) : (
         <div className="ltv-stream-grid">
-          {visible.map((channel) => (
+          {visible.map((channel, index) => (
             <StreamCard
               key={`${channel.url}-${channel.name}`}
               name={channel.name}
               logo={channel.logo}
-              onClick={() => onPlay(channel)}
+              onClick={() => onPlay(channel, visible, index)}
             />
           ))}
         </div>
@@ -428,7 +445,8 @@ export function M3uPlaylistPage({ playlist, onPlay, onBack }: M3uPlaylistPagePro
 export interface SeriesPageProps {
   portal: VerifiedPortal;
   series: IptvStream;
-  onPlay: (item: LiveItem) => void;
+  /** Episodes are VOD (`live: false`), so the film player opens, not the channel player. */
+  onPlay: (item: LiveItem, items: LiveItem[], index: number) => void;
   onBack: () => void;
 }
 
@@ -477,6 +495,14 @@ export function SeriesPage({ portal, series, onPlay, onBack }: SeriesPageProps) 
     [episodes, season],
   );
 
+  // Every episode of the chosen season, as the player's list: `PlayerModal`
+  // gets the one that was tapped, and `items` would drive a Next button if the
+  // film player used it.
+  const items = useMemo(
+    () => visible.map((episode) => liveItemFromEpisode(portal, series, episode)),
+    [visible, portal, series],
+  );
+
   return (
     <SubPage
       title={series.name}
@@ -515,7 +541,7 @@ export function SeriesPage({ portal, series, onPlay, onBack }: SeriesPageProps) 
       ) : null}
 
       {!loading && !error
-        ? visible.map((episode) => (
+        ? visible.map((episode, index) => (
             <div className="ltv-row" key={episode.id}>
               <span className="ltv-episode-art">
                 {episode.image ? <img src={episode.image} alt="" loading="lazy" /> : <ListVideo size={22} />}
@@ -524,7 +550,7 @@ export function SeriesPage({ portal, series, onPlay, onBack }: SeriesPageProps) 
                 type="button"
                 className="ltv-row-body"
                 style={{ background: 'none', border: 0, padding: 0, textAlign: 'left', cursor: 'pointer' }}
-                onClick={() => onPlay(liveItemFromEpisode(portal, series, episode))}
+                onClick={() => onPlay(items[index] ?? liveItemFromEpisode(portal, series, episode), items, index)}
               >
                 <span className="ltv-row-title">
                   {`E${episode.episode}  ${episode.title}`.trim()}
@@ -564,14 +590,37 @@ export interface PortalBrowserPageProps {
   portal: VerifiedPortal;
   section: IptvSection;
   onSection: (section: IptvSection) => void;
-  onPlay: (item: LiveItem) => void;
+  /**
+   * A live channel: `items` is the filtered list on screen and `index` the row
+   * that was tapped. A film is VOD and only its own item is used.
+   */
+  onPlay: (item: LiveItem, items: LiveItem[], index: number) => void;
   onOpenSeries: (series: IptvStream) => void;
   onBack: () => void;
+  /** The watch pane's player preferences — the same ones the full player gets. */
+  playerSettings: PlayerSettings;
+  onPlayerSettingsChange: (patch: Partial<PlayerSettings>) => void;
 }
 
 /**
+ * VyseTV decides between the three-pane browser and the stepped layouts by
+ * measuring, not by a media query: the picture needs a pane worth watching
+ * (`_panes`: `cw - catW - listW - gap * 2 >= 340 && size.height >= 420`).
+ * The widths below are VyseTV's clamps.
+ */
+const PANE_GAP = 14;
+/** `_stepped`: `w < 640 || w - inset - right < 560`. */
+const STEPPED_MAX_WIDTH = 640;
+/** `_panes`: `size.height < 520` is "a phone on its side". */
+const SHORT_HEIGHT = 520;
+const MIN_VIDEO_PANE = 340;
+/** `_panes`: the picture needs this much height to be worth a pane. */
+const MIN_THREE_PANE_HEIGHT = 420;
+
+/**
  * One portal, browsed the way its own app lists it: categories on the left,
- * what is in the chosen one on the right.
+ * what is in the chosen one in the middle, and — where there is room — the
+ * channel playing in a pane of its own.
  */
 export function PortalBrowserPage({
   portal,
@@ -580,17 +629,61 @@ export function PortalBrowserPage({
   onPlay,
   onOpenSeries,
   onBack,
+  playerSettings,
+  onPlayerSettingsChange,
 }: PortalBrowserPageProps) {
   const controller = useIptvController();
   const key = portalKey(portal.portal);
   const [sort, setSort] = useState<SortMode>('portal');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [liveOnly, setLiveOnly] = useState(() => IptvAliveStore.loadLiveOnly(key));
+  // The categories pane keeps its own search and its own A→Z toggle, separate
+  // from the list's — VyseTV's `_catText` and `_catAz`.
+  const [catSearch, setCatSearch] = useState('');
+  const [catAz, setCatAz] = useState(false);
+  /** The compact layout hides each search behind an icon until it is asked for. */
+  const [catSearchOpen, setCatSearchOpen] = useState(false);
+  const [listSearchOpen, setListSearchOpen] = useState(false);
+  /** The channel in the watch pane, and whether it has been taken full screen. */
+  const [watching, setWatching] = useState<IptvStream | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const panesRef = useRef<HTMLDivElement | null>(null);
+
+  // VyseTV's `LayoutBuilder`: the pane rules come from the pane row's own box,
+  // not the window, because the rails take a slice of the width. The height
+  // that matters is what is left on screen below the bar, not the row's
+  // content height — the row grows with the channel list.
+  useEffect(() => {
+    const el = panesRef.current;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setSize({
+        width: el.clientWidth,
+        height: Math.max(0, (window.innerHeight || 0) - Math.max(0, rect.top)),
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(el);
+    return () => {
+      window.removeEventListener('resize', measure);
+      observer?.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     setFavoritesOnly(false);
     setSort('portal');
     setLiveOnly(IptvAliveStore.loadLiveOnly(key));
+    // VyseTV's `_open`: leaving Live forgets the channel — there is nothing to
+    // watch in a grid of films.
+    if (section !== 'live') {
+      setWatching(null);
+      setExpanded(false);
+    }
     void controller.openSection(portal, section);
   }, [controller, portal, section, key]);
 
@@ -615,6 +708,21 @@ export function PortalBrowserPage({
     const filtered = all.filter((category) => (counts.get(category.id) || 0) > 0);
     return filtered.length ? filtered : all;
   }, [controller.categories, counts]);
+
+  // `_cats()`: the portal's own categories narrowed by the pane's search and
+  // ordered the pane's way — "Favorites" and "All" follow below, in the render.
+  const shownCategories = useMemo(() => {
+    const needle = catSearch.trim().toLowerCase();
+    const list = categories.filter((category) => !needle || category.name.toLowerCase().includes(needle));
+    // VyseTV compares lower-cased names, so "aBc" and "ABC" sort together.
+    if (catAz) list.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    return list;
+  }, [categories, catSearch, catAz]);
+  /** `_catHit` for the two rows built in the render. */
+  const catHit = (name: string) => {
+    const needle = catSearch.trim().toLowerCase();
+    return !needle || name.toLowerCase().includes(needle);
+  };
 
   const favoriteCount = useMemo(
     () => controller.browserAllStreams.filter((stream) => LiveFavorites.has(portal, stream)).length,
@@ -651,18 +759,82 @@ export function PortalBrowserPage({
     });
   }, [key]);
 
+  /** `_resetList`: picking a category starts the list over, with no search. */
+  const resetList = useCallback(() => {
+    setListSearchOpen(false);
+    controller.setBrowserSearch('');
+  }, [controller]);
+
+  const pickCategory = useCallback((id: string) => {
+    resetList();
+    setFavoritesOnly(false);
+    controller.selectBrowserCategory(id);
+  }, [controller, resetList]);
+
+  // ── the three-pane rule ────────────────────────────────────────────────
+  // VyseTV's `_panes`, measured: the categories take at most 300 px, the list
+  // up to 440, and the picture gets what is left — which must be a pane worth
+  // watching, on a screen with the height for one.
+  const narrow = size !== null && size.width < STEPPED_MAX_WIDTH;
+  /** "A phone on its side": the bar loses its subtitle and both searches fold into icons. */
+  const short = size !== null && size.height < SHORT_HEIGHT;
+  const three = Boolean(
+    size
+    && section === 'live'
+    && !narrow
+    && size.height >= MIN_THREE_PANE_HEIGHT
+    && size.width - Math.min(300, size.width * 0.24) - Math.min(440, size.width * 0.3) - PANE_GAP * 2 >= MIN_VIDEO_PANE,
+  );
+
+  // No pane to play in: forget the channel, exactly as VyseTV does when its
+  // `three` test fails.
+  useEffect(() => {
+    if (three) return;
+    setWatching(null);
+    setExpanded(false);
+  }, [three]);
+
+  const categoryName = categories.find((category) => category.id === watching?.categoryId)?.name ?? '';
+
   const playStream = useCallback(
-    (stream: IptvStream) => {
+    (stream: IptvStream, list: readonly IptvStream[], index: number) => {
       const url = IptvClient.streamUrl(portal.portal, stream);
-      onPlay({
-        title: stream.name,
-        subtitle: portalLabel(portal),
-        logo: stream.icon || undefined,
-        url,
-        live: section === 'live',
-      });
+      const items = list.map((entry) => liveItemFromStream(portal, entry, section));
+      // VyseTV's `_tapStream(list, i, embedded: three)`: in the three-pane
+      // browser a live channel plays *here*; a film still hands over to the
+      // film player (`openIptvVideo`). With no pane to play in — a phone, a
+      // narrow window — the channel opens the full player as before.
+      if (three && section === 'live') {
+        setWatching(stream);
+        return;
+      }
+      onPlay(
+        items[index] ?? {
+          title: stream.name,
+          subtitle: portalLabel(portal),
+          logo: stream.icon || undefined,
+          url,
+          live: section === 'live',
+        },
+        items,
+        index,
+      );
     },
-    [onPlay, portal, section],
+    [onPlay, portal, section, three],
+  );
+
+  /** VyseTV's `_stepChannel`: wrap around the list on screen, keeping its row visible. */
+  const stepChannel = useCallback(
+    (direction: 1 | -1) => {
+      const list = visible;
+      if (!list.length) return;
+      const at = list.findIndex((entry) => entry.streamId === watching?.streamId);
+      const next = at < 0 ? 0 : (at + direction + list.length) % list.length;
+      setWatching(list[next]);
+      const row = panesRef.current?.querySelector<HTMLElement>(`[data-stream-id="${list[next].streamId}"]`);
+      row?.scrollIntoView?.({ block: 'nearest' });
+    },
+    [visible, watching],
   );
 
   const emptyNote = (() => {
@@ -680,7 +852,24 @@ export function PortalBrowserPage({
   })();
 
   return (
-    <SubPage title={title} subtitle={meta} onBack={onBack}>
+    <SubPage
+      title={title}
+      // `_topBar`: a "phone on its side" keeps the name and drops the line under it.
+      subtitle={short ? undefined : meta}
+      compact={short}
+      onBack={onBack}
+      actions={
+        <button
+          type="button"
+          className={`ltv-tool${controller.isFavoritePortal(key) ? ' on' : ''}`}
+          style={controller.isFavoritePortal(key) ? { color: 'var(--ltv-star)' } : undefined}
+          onClick={() => void controller.toggleFavoritePortal(key)}
+        >
+          <Star size={15} />
+          {controller.isFavoritePortal(key) ? 'Favorited' : 'Favorite'}
+        </button>
+      }
+    >
       <div className="ltv-browser-bar">
         <div className="ltv-chips" style={{ padding: 0 }}>
           {(['live', 'vod', 'series'] as const).map((value) => (
@@ -692,78 +881,166 @@ export function PortalBrowserPage({
             />
           ))}
         </div>
-        <button
-          type="button"
-          className={`ltv-tool${controller.isFavoritePortal(key) ? ' on' : ''}`}
-          style={controller.isFavoritePortal(key) ? { color: 'var(--ltv-star)' } : undefined}
-          onClick={() => void controller.toggleFavoritePortal(key)}
-        >
-          <Star size={15} />
-          {controller.isFavoritePortal(key) ? 'Favorited' : 'Favorite'}
-        </button>
       </div>
 
-      <div className="ltv-browser-panes">
+      {/* VyseTV holds the player under a GlobalKey and returns it *instead of*
+          the panes, so full screen only moves the widget: the stream never
+          reconnects. In React, rendering it under a different branch would
+          remount it and tear the stream down — so the pane keeps the one
+          element and full screen is a class on it. */}
+
+      <div
+        ref={panesRef}
+        className={`ltv-browser-panes${three ? ' has-watch' : ''}`}
+      >
         <div className="ltv-pane">
-          <div className="ltv-pane-head">
-            <span>Categories</span>
-            <small>{counted(categories.length, 'category').replace('categorys', 'categories')}</small>
-          </div>
+          {/* `_catHeader`: compact and searching, the bar *is* the field; otherwise
+              the heading with its two icons, and the field sits under it. */}
+          {short && (catSearchOpen || catSearch.trim()) ? (
+            <div className="ltv-pane-head">
+              <input
+                className="ltv-search ltv-pane-search"
+                value={catSearch}
+                placeholder="Search categories"
+                aria-label="Search categories"
+                autoFocus
+                onChange={(event) => setCatSearch(event.target.value)}
+              />
+              <button
+                type="button"
+                className="ltv-pane-icon"
+                aria-label="Close category search"
+                onClick={() => { setCatSearch(''); setCatSearchOpen(false); }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="ltv-pane-head">
+              <span>Categories</span>
+              <small>{counted(categories.length, 'category').replace('categorys', 'categories')}</small>
+              {short ? (
+                <button
+                  type="button"
+                  className="ltv-pane-icon"
+                  aria-label="Search categories"
+                  onClick={() => setCatSearchOpen(true)}
+                >
+                  <Search size={14} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`ltv-pane-icon${catAz ? ' on' : ''}`}
+                aria-label={catAz ? 'Back to portal order' : 'Sort A to Z'}
+                aria-pressed={catAz}
+                onClick={() => setCatAz((value) => !value)}
+              >
+                <ArrowDownAZ size={14} />
+              </button>
+            </div>
+          )}
+          {!short ? (
+            <input
+              className="ltv-search ltv-pane-search"
+              value={catSearch}
+              placeholder="Search categories"
+              aria-label="Search categories"
+              onChange={(event) => setCatSearch(event.target.value)}
+            />
+          ) : null}
           <div className="ltv-cat-list">
-            <button
-              type="button"
-              className={`ltv-cat-item${favoritesOnly ? ' active' : ''}`}
-              onClick={() => {
-                setFavoritesOnly(true);
-                controller.selectBrowserCategory('');
-              }}
-            >
-              <Star size={14} />
-              <span>Favorites</span>
-              <em>{favoriteCount}</em>
-            </button>
-            <button
-              type="button"
-              className={`ltv-cat-item${!favoritesOnly && !categoryId ? ' active' : ''}`}
-              onClick={() => {
-                setFavoritesOnly(false);
-                controller.selectBrowserCategory('');
-              }}
-            >
-              <span>{`All ${nouns}`}</span>
-              <em>{controller.browserAllStreams.length}</em>
-            </button>
-            {categories.map((category) => (
+            {catHit('Favorites') ? (
+              <button
+                type="button"
+                className={`ltv-cat-item${favoritesOnly ? ' active' : ''}`}
+                onClick={() => {
+                  resetList();
+                  setFavoritesOnly(true);
+                  controller.selectBrowserCategory('');
+                }}
+              >
+                <Star size={14} />
+                <span>Favorites</span>
+                <em>{favoriteCount}</em>
+              </button>
+            ) : null}
+            {catHit(`All ${nouns}`) ? (
+              <button
+                type="button"
+                className={`ltv-cat-item${!favoritesOnly && !categoryId ? ' active' : ''}`}
+                onClick={() => pickCategory('')}
+              >
+                <span>{`All ${nouns}`}</span>
+                <em>{controller.browserAllStreams.length}</em>
+              </button>
+            ) : null}
+            {shownCategories.map((category) => (
               <button
                 key={category.id}
                 type="button"
                 className={`ltv-cat-item${!favoritesOnly && categoryId === category.id ? ' active' : ''}`}
-                onClick={() => {
-                  setFavoritesOnly(false);
-                  controller.selectBrowserCategory(category.id);
-                }}
+                onClick={() => pickCategory(category.id)}
               >
                 <span>{category.name}</span>
                 <em>{counts.get(category.id) || 0}</em>
               </button>
             ))}
+            {!shownCategories.length && !catHit('Favorites') && !catHit(`All ${nouns}`) ? (
+              <p className="ltv-pane-quiet">No category matches</p>
+            ) : null}
           </div>
         </div>
 
         <div className="ltv-pane">
-          <div className="ltv-pane-head">
-            <span>{currentTitle}</span>
-            <small>{counted(visible.length, noun, nouns)}</small>
-          </div>
-
-          <div className="ltv-toolbar-row">
+          {/* `_listHeader`: same shape as the categories header — compact folds
+              the search into an icon, roomy draws it under the heading. */}
+          {short && (listSearchOpen || search) ? (
+            <div className="ltv-pane-head">
+              <input
+                className="ltv-search ltv-pane-search"
+                value={search}
+                placeholder={favoritesOnly || !categoryId ? `Search all ${nouns}` : `Search in ${currentTitle}`}
+                aria-label="Search this portal"
+                autoFocus
+                onChange={(event) => controller.setBrowserSearch(event.target.value)}
+              />
+              <button
+                type="button"
+                className="ltv-pane-icon"
+                aria-label="Close search"
+                onClick={() => { controller.setBrowserSearch(''); setListSearchOpen(false); }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className="ltv-pane-head">
+              <span>{currentTitle}</span>
+              <small>{counted(visible.length, noun, nouns)}</small>
+              {short ? (
+                <button
+                  type="button"
+                  className="ltv-pane-icon"
+                  aria-label="Search this portal"
+                  onClick={() => setListSearchOpen(true)}
+                >
+                  <Search size={14} />
+                </button>
+              ) : null}
+            </div>
+          )}
+          {!short ? (
             <input
-              className="ltv-search"
+              className="ltv-search ltv-pane-search"
               value={search}
               placeholder={favoritesOnly || !categoryId ? `Search all ${nouns}` : `Search in ${currentTitle}`}
               aria-label="Search this portal"
               onChange={(event) => controller.setBrowserSearch(event.target.value)}
             />
+          ) : null}
+
+          <div className="ltv-toolbar-row">
             {section === 'live' ? (
               <>
                 <FilterChipPill
@@ -823,33 +1100,259 @@ export function PortalBrowserPage({
             />
           ) : section === 'live' ? (
             <div>
-              {visible.map((stream) => (
+              {visible.map((stream, index) => (
                 <BrowserChannelRow
                   key={stream.streamId}
                   portal={portal}
                   stream={stream}
                   alive={controller.aliveStreamIds.has(stream.streamId)}
                   checked={controller.aliveCheckedAt !== null}
-                  onPlay={() => playStream(stream)}
+                  selected={three && watching?.streamId === stream.streamId}
+                  onPlay={() => playStream(stream, visible, index)}
                 />
               ))}
             </div>
           ) : (
             <div className="ltv-poster-grid">
-              {visible.map((stream) => (
+              {visible.map((stream, index) => (
                 <StreamCard
                   key={stream.streamId}
                   name={stream.name}
                   logo={stream.icon || undefined}
                   poster
-                  onClick={() => (section === 'series' ? onOpenSeries(stream) : playStream(stream))}
+                  onClick={() => (section === 'series' ? onOpenSeries(stream) : playStream(stream, visible, index))}
                 />
               ))}
             </div>
           )}
         </div>
+
+        {three ? <WatchPane
+          portal={portal}
+          stream={watching}
+          category={categoryName}
+          expanded={expanded}
+          onExpand={() => setExpanded((value) => !value)}
+          onStep={visible.length > 1 ? stepChannel : undefined}
+          playerSettings={playerSettings}
+          onPlayerSettingsChange={onPlayerSettingsChange}
+        /> : null}
       </div>
     </SubPage>
+  );
+}
+
+/**
+ * VyseTV's `_watchPane`: the picture, then the channel's guide underneath.
+ * The pane's size is taken from the pane, and the picture gives height back to
+ * the details when the pane is short (`maxH = max(120, height - 210)`).
+ */
+function WatchPane({
+  portal,
+  stream,
+  category,
+  expanded,
+  onExpand,
+  onStep,
+  playerSettings,
+  onPlayerSettingsChange,
+}: {
+  portal: VerifiedPortal;
+  stream: IptvStream | null;
+  category: string;
+  expanded: boolean;
+  onExpand: () => void;
+  onStep?: (direction: 1 | -1) => void;
+  playerSettings: PlayerSettings;
+  onPlayerSettingsChange: (patch: Partial<PlayerSettings>) => void;
+}) {
+  if (!stream) {
+    return (
+      <div className={`ltv-watch-pane is-empty${expanded ? ' is-expanded' : ''}`}>
+        <div className="ltv-pane-note">
+          <Tv size={30} />
+          <strong>Pick a channel</strong>
+          <p>It plays here. Double-click the picture for full screen.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const item = liveItemFromStream(portal, stream, 'live');
+  return (
+    <div className={`ltv-watch-pane${expanded ? ' is-expanded' : ''}`}>
+      <div className="ltv-watch-frame">
+        {/* Kept mounted across pane ↔ full screen: `expanded` is a layout
+            switch inside the player, never a remount, so the stream holds. */}
+        <React.Suspense fallback={<div className="ltv-watch-loading">Tuning in…</div>}>
+          <BrowserLivePlayer
+            item={item}
+            expanded={expanded}
+            onExpand={onExpand}
+            onStep={onStep}
+            guide={expanded ? <NowNextStrip portal={portal} stream={stream} /> : undefined}
+            settings={playerSettings}
+            onSettingsChange={onPlayerSettingsChange}
+          />
+        </React.Suspense>
+      </div>
+      {!expanded && (
+        <div className="ltv-watch-details">
+          <ChannelDetails portal={portal} stream={stream} category={category} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * `_ChannelDetails`: the channel's logo, name and place, its star, then what is
+ * on now with its progress, and what follows. Asks for the longer schedule once.
+ */
+function ChannelDetails({
+  portal,
+  stream,
+  category,
+}: {
+  portal: VerifiedPortal;
+  stream: IptvStream;
+  category: string;
+}) {
+  const guide = liveGuide();
+  const [version, setVersion] = useState(0);
+  const [favorite, setFavorite] = useState(() => LiveFavorites.has(portal, stream));
+
+  useEffect(() => {
+    const listener = () => setVersion((value) => value + 1);
+    guide.clockListeners.add(listener);
+    // The loader keeps it to one request per channel every ten minutes.
+    guide.wantSchedule(portal, stream);
+    return () => { guide.clockListeners.delete(listener); };
+  }, [guide, portal, stream]);
+
+  useEffect(() => {
+    setFavorite(LiveFavorites.has(portal, stream));
+    return LiveFavorites.subscribe(() => setFavorite(LiveFavorites.has(portal, stream)));
+  }, [portal, stream]);
+
+  const entries = guide.guideOf(portal, stream);
+  const now = nowNext(entries || []).now;
+  const later = upcomingGuide(entries || []).slice(0, 6);
+  const sub = [category, portal.name].filter(Boolean).join('  ·  ');
+
+  return (
+    <div className="ltv-watch-info" data-version={version}>
+      <div className="ltv-watch-head">
+        <span className="ltv-watch-logo">
+          {stream.icon ? <img src={stream.icon} alt="" loading="lazy" /> : <Tv size={24} />}
+        </span>
+        <div className="ltv-watch-names">
+          <strong>{stream.name}</strong>
+          {sub ? <span>{sub}</span> : null}
+        </div>
+        <button
+          type="button"
+          className={`ltv-watch-star${favorite ? ' on' : ''}`}
+          aria-label={favorite ? 'Remove from favourites' : 'Add to favourites'}
+          onClick={() => LiveFavorites.toggle(portal, stream, IptvClient.streamUrl(portal.portal, stream))}
+        >
+          <Star size={19} />
+        </button>
+      </div>
+
+      {entries === null ? <p className="ltv-watch-quiet">Loading the guide</p>
+        : !now && !later.length ? <p className="ltv-watch-quiet">No guide for this channel</p>
+          : (
+            <>
+              {now ? (
+                <>
+                  <p className="ltv-watch-label">ON NOW</p>
+                  <p className="ltv-watch-title">{now.title || 'Untitled'}</p>
+                  <p className="ltv-watch-time">
+                    {`${guideTime(now.start)} – ${guideTime(now.stop)}  ·  ${leftOf(now.stopMs)}`}
+                  </p>
+                  <Progress value={epgProgress(now)} />
+                  {now.description?.trim() ? (
+                    <p className="ltv-watch-blurb">{now.description.trim()}</p>
+                  ) : null}
+                </>
+              ) : null}
+
+              {later.length ? (
+                <>
+                  <p className="ltv-watch-label">UP NEXT</p>
+                  <ul className="ltv-watch-upnext">
+                    {later.map((entry) => (
+                      <li key={`${entry.startMs}-${entry.title}`}>
+                        <em>{guideTime(entry.startMs)}</em>
+                        <span>{entry.title || 'Untitled'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+            </>
+          )}
+    </div>
+  );
+}
+
+/** VyseTV's `_left`: how long the programme still has to run. */
+function leftOf(stopMs: number): string {
+  const minutes = Math.floor((stopMs - Date.now()) / 60_000);
+  if (minutes < 1) return 'ending now';
+  if (minutes < 60) return `${minutes} min left`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min left`;
+}
+
+/**
+ * `_NowNextStrip`: now / next over the picture in full screen, like the full
+ * player's strip. Watches the guide while it is on screen.
+ */
+function NowNextStrip({ portal, stream }: { portal: VerifiedPortal; stream: IptvStream }) {
+  const guide = liveGuide();
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    guide.addWatcher();
+    const listener = () => {
+      guide.refresh(portal, stream);
+      setVersion((value) => value + 1);
+    };
+    guide.clockListeners.add(listener);
+    guide.want(portal, stream);
+    return () => {
+      guide.clockListeners.delete(listener);
+      guide.unwant(portal, stream);
+      guide.removeWatcher();
+    };
+  }, [guide, portal, stream]);
+
+  const entries = guide.guideOf(portal, stream) || [];
+  const { now, next } = nowNext(entries);
+  if (!now) return null;
+
+  return (
+    <div className="ltv-nownext" data-version={version}>
+      <div className="ltv-nownext-top">
+        <em>NOW</em>
+        <strong>{now.title}</strong>
+        <span>{`${guideTime(now.start)} – ${guideTime(now.stop)}`}</span>
+      </div>
+      <Progress value={epgProgress(now)} />
+      {next ? (
+        <p className="ltv-nownext-next">{`Next  ${guideTime(next.start)}  ${next.title}`}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/** `_Progress`: the thin accent bar under now/next. */
+function Progress({ value }: { value: number }) {
+  return (
+    <div className="ltv-progress" role="presentation">
+      <i style={{ width: `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%` }} />
+    </div>
   );
 }
 
@@ -859,12 +1362,15 @@ function BrowserChannelRow({
   stream,
   alive,
   checked,
+  selected,
   onPlay,
 }: {
   portal: VerifiedPortal;
   stream: IptvStream;
   alive: boolean;
   checked: boolean;
+  /** Playing in the watch pane (`_ChannelRow(selected: embedded && ...)`). */
+  selected?: boolean;
   onPlay: () => void;
 }) {
   const guide = liveGuide();
@@ -887,7 +1393,11 @@ function BrowserChannelRow({
   const favorite = LiveFavorites.has(portal, stream);
 
   return (
-    <div className="ltv-row" data-version={version}>
+    <div
+      className={`ltv-row${selected ? ' is-watching' : ''}`}
+      data-version={version}
+      data-stream-id={stream.streamId}
+    >
       {checked ? <i className={`ltv-alive-dot${alive ? ' on' : ''}`} /> : null}
       <span className="ltv-row-logo">
         {stream.icon ? <img src={stream.icon} alt="" loading="lazy" /> : <Tv size={18} />}

@@ -6,7 +6,8 @@
 // Favorites when something is starred, else on Matches.
 //
 // The public contract is unchanged: default-export a view that reports a
-// playable stream through `onPlayStream`. PRAHA keeps one addition VyseTV's
+// playable channel through `onPlayStream` — now with the list it came from, so
+// the player can zap through it. PRAHA keeps one addition VyseTV's
 // Flutter lists get for free: the playlist channel list is windowed, so a
 // 5,000-channel playlist never mounts more than a few dozen rows.
 
@@ -28,7 +29,6 @@ import {
   Server,
   Sparkles,
 } from 'lucide-react';
-import type { MediaItem, StreamResult } from '../types';
 import { currentNsfwMode, filterChannelsForNsfw } from '../services/nsfwGate';
 import {
   buildGroupTree,
@@ -43,6 +43,8 @@ import {
   IptvStore,
   IptvZapStore,
   LiveFavorites,
+  liveItemFromFavorite,
+  liveItemFromM3u,
   LiveTvPrefs,
   nowNext,
   epgProgress,
@@ -51,8 +53,11 @@ import {
   portalKeyOf,
   portalLabel,
   probeUrl,
+  playbackItemOf,
+  playbackItemsOf,
   type FavoriteChannel,
   type HardcodedChannel,
+  type IptvPlayback,
   type IptvSection,
   type IptvStream,
   type LiveItem,
@@ -78,9 +83,23 @@ import {
 } from './liveTv/widgets';
 import { LiveChannelPage, M3uPlaylistPage, PortalBrowserPage, SeriesPage } from './liveTv/pages';
 import { MatchesView } from './liveTv/matches';
+import type { PlayerSettings } from '../types';
 
 export interface LiveTvViewProps {
-  onPlayStream: (media: MediaItem, stream: StreamResult) => void;
+  /**
+   * A channel was chosen. The whole playback is handed over, not just its
+   * media/stream: VyseTV's `openLivePlayer(items, index)` needs the list the
+   * channel came from, so the player can zap through it and show each
+   * channel's own guide and star.
+   */
+  onPlayStream: (playback: IptvPlayback) => void;
+  /**
+   * Player preferences for the portal browser's watch pane. It plays a channel
+   * in place rather than handing it to `onPlayStream`, so it needs the same
+   * engine/volume/landscape settings the full player gets.
+   */
+  playerSettings: PlayerSettings;
+  onPlayerSettingsChange: (patch: Partial<PlayerSettings>) => void;
 }
 
 type Tab = 'favorites' | 'matches' | 'channels' | 'portals' | 'playlists';
@@ -115,7 +134,7 @@ function fallbackGuide(channel: M3uChannel) {
 type PortalDialog = 'add' | 'import' | { kind: 'rename'; portal: VerifiedPortal } | null;
 type PlaylistDialog = 'url' | 'paste' | null;
 
-export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
+export default function LiveTvView({ onPlayStream, playerSettings, onPlayerSettingsChange }: LiveTvViewProps) {
   const controller = useIptvController();
   const favorites = useLiveFavorites();
   const toast = useToast();
@@ -149,40 +168,40 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
   /* ── playback ─────────────────────────────────────────────────────────── */
 
   const playChannel = useCallback(
-    (channel: M3uChannel) => {
-      IptvZapStore.set(channels, channel.url);
+    (channel: M3uChannel, list: M3uChannel[] = channels) => {
+      IptvZapStore.set(list, channel.url);
       LiveTvPrefs.markPlayed(channel);
-      const { media, stream } = buildIptvPlayback(channel);
-      onPlayStream(media, stream);
+      // VyseTV builds the whole list and passes the index
+      // (`openLivePlayer(context, items, i)`), so the player can zap and every
+      // channel keeps its own favourites key.
+      const items = playbackItemsOf(list.map((entry) => liveItemFromM3u(entry)));
+      const index = Math.max(0, list.findIndex((entry) => entry.url === channel.url));
+      onPlayStream(buildIptvPlayback(
+        playbackItemOf(liveItemFromM3u(channel)),
+        { items, index },
+      ));
     },
     [channels, onPlayStream],
   );
 
   /** Everything the sub-pages hand back is played through the same builder. */
   const playItem = useCallback(
-    (item: LiveItem) => {
+    (item: LiveItem, list: readonly LiveItem[] = [item], index?: number) => {
       IptvZapStore.setCurrent(item.url);
-      const { media, stream } = buildIptvPlayback({
-        name: item.title,
-        url: item.url,
-        group: item.subtitle,
-        logo: item.logo,
-      });
-      onPlayStream(media, stream);
+      const items = playbackItemsOf(list);
+      const at = index ?? Math.max(0, items.findIndex((entry) => entry.url === item.url));
+      onPlayStream(buildIptvPlayback(playbackItemOf(item), { items, index: at }));
     },
     [onPlayStream],
   );
 
   const playFavorite = useCallback(
-    (favorite: FavoriteChannel) => {
+    (favorite: FavoriteChannel, list: readonly FavoriteChannel[] = [favorite]) => {
       IptvZapStore.setCurrent(favorite.url);
-      const { media, stream } = buildIptvPlayback({
-        name: favorite.title,
-        url: favorite.url,
-        group: favorite.from,
-        logo: favorite.logo,
-      });
-      onPlayStream(media, stream);
+      // VyseTV: `final items = [for (final c in list) LiveItem.favorite(c)]`.
+      const items = playbackItemsOf(list.map((entry) => liveItemFromFavorite(entry)));
+      const at = Math.max(0, items.findIndex((entry) => entry.url === favorite.url));
+      onPlayStream(buildIptvPlayback(playbackItemOf(liveItemFromFavorite(favorite)), { items, index: at }));
     },
     [onPlayStream],
   );
@@ -399,6 +418,8 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
             onPlay={playItem}
             onOpenSeries={(series) => setPage({ kind: 'series', portal: page.portal, series })}
             onBack={() => setPage(null)}
+            playerSettings={playerSettings}
+            onPlayerSettingsChange={onPlayerSettingsChange}
           />
         </div>
       );
@@ -469,7 +490,7 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
                     type="button"
                     className="ltv-row-body"
                     style={{ background: 'none', border: 0, padding: 0, textAlign: 'left', cursor: 'pointer' }}
-                    onClick={() => playFavorite(favorite)}
+                    onClick={() => playFavorite(favorite, favorites)}
                   >
                     <span className="ltv-row-title">{favorite.title}</span>
                     {favorite.from ? <span className="ltv-row-sub">{favorite.from}</span> : null}
@@ -488,7 +509,7 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
                     type="button"
                     className="ltv-row-play"
                     aria-label={`Play ${favorite.title}`}
-                    onClick={() => playFavorite(favorite)}
+                    onClick={() => playFavorite(favorite, favorites)}
                   >
                     <CirclePlay size={20} />
                   </button>
@@ -612,7 +633,7 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
                           key={`${channel.url}-${start + index}`}
                           style={{ top: (start + index) * ROW_HEIGHT, height: ROW_HEIGHT }}
                         >
-                          <button className="ltv-card-main" onClick={() => playChannel(channel)}>
+                          <button className="ltv-card-main" onClick={() => playChannel(channel, visibleChannels)}>
                             <span className="ltv-logo">
                               {channel.logo ? (
                                 <img src={channel.logo} alt="" loading="lazy" />
@@ -638,7 +659,7 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
                             </span>
                           ) : null}
                           <div className="ltv-actions">
-                            <button onClick={() => playChannel(channel)} aria-label={`Play ${channel.name}`}>
+                            <button onClick={() => playChannel(channel, visibleChannels)} aria-label={`Play ${channel.name}`}>
                               ▶
                             </button>
                             <button
@@ -866,13 +887,13 @@ export default function LiveTvView({ onPlayStream }: LiveTvViewProps) {
       {sheet ? (
         <div className="ltv-sheet" role="dialog" aria-label="Channel actions">
           <h3>{sheet.channel.name}</h3>
-          <button onClick={() => { playChannel(sheet.channel); setSheet(null); }}>Play now</button>
+          <button onClick={() => { playChannel(sheet.channel, visibleChannels); setSheet(null); }}>Play now</button>
           <button onClick={() => openExternally(sheet.channel)}>Open externally</button>
           <button onClick={() => void copyUrl(sheet.channel)}>Copy URL</button>
           <button onClick={() => nextSource(sheet.channel)}>Next source</button>
           {sheet.mode === 'alternates'
             ? sheet.alternates?.map((alternate) => (
-                <button key={alternate.url} onClick={() => { playChannel(alternate); setSheet(null); }}>
+                <button key={alternate.url} onClick={() => { playChannel(alternate, sheet.alternates ?? [alternate]); setSheet(null); }}>
                   {alternate.name}
                 </button>
               ))

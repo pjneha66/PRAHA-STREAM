@@ -429,15 +429,18 @@ export function SubPage({
   onBack,
   children,
   actions,
+  compact,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   onBack: () => void;
   children: React.ReactNode;
   actions?: React.ReactNode;
+  /** "A phone on its side": the title shrinks (`_topBar(compact: short)`). */
+  compact?: boolean;
 }) {
   return (
-    <div className="ltv-subpage">
+    <div className={`ltv-subpage${compact ? ' is-compact' : ''}`}>
       <div className="ltv-subpage-head">
         <button type="button" className="ltv-back" onClick={onBack}>‹ Back</button>
         <div style={{ flex: '1 1 auto', minWidth: 0 }}>
