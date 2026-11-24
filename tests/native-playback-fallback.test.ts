@@ -29,7 +29,7 @@ const fake = vi.hoisted(() => {
     'initialize', 'destroy', 'attachSurface', 'setSurfaceRect', 'detachSurface',
     'load', 'play', 'pause', 'stop', 'seek', 'setVolume', 'setRate', 'setMute',
     'getTracks', 'selectTrack', 'addSubtitle', 'setSubtitleDelay', 'setAudioDelay',
-    'setProperty', 'getProperty',
+    'setProperty', 'getProperty', 'observe',
   ]) {
     plugin[method] = record(method);
   }
@@ -43,7 +43,7 @@ const fake = vi.hoisted(() => {
 vi.mock('../services/mpvBridge', () => ({
   PrahaMpv: fake.plugin,
   mpvAvailable: () => true,
-  MPV_OBSERVED_PROPERTIES: ['time-pos', 'duration', 'pause'],
+  MPV_OBSERVED_PROPERTIES: { 'time-pos': 'double', duration: 'double', pause: 'flag' },
 }));
 
 vi.mock('../services/media3Bridge', () => ({

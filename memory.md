@@ -2,13 +2,59 @@
 
 _Last updated: 2026-11-24. Everything below is verified against the working tree and build logs._
 
+## 0. The 2.11.24 native-player fixes (most recent work)
+
+Three separate faults all produced the same user-visible symptom — every IPTV
+channel showed "Media3 (ExoPlayer) could not play this stream — switched to Web
+player." with the clock stuck at 0:00:
+
+1. **mpv never received a Surface.** `PrahaMpvPlugin.attachSurface()` created a
+   `SurfaceView` and added it to the hierarchy, but nothing ever called
+   `attachSurfaces()`. mpv had no output target, drew no frames, and
+   `nativePlayback`'s 12 s start guard declared the stream dead.
+2. **No mpv property was ever observed.** `mpvEngine.initialize()` wrote
+   `setProperty("observe-<name>", "yes")` — not an mpv API. libmpv only emits
+   `propertyChange` for `mpv_observe_property` registrations, so `time-pos`
+   never arrived, `sawOutput` stayed false and the guard failed on *every*
+   stream. Fixed with a real `observe` plugin method over
+   `MpvPlayer.observeProperty(name, PropertyFormat)`.
+3. **The WebView painted over the video plane.** Both plugins add their
+   `SurfaceView` at index 0, i.e. *behind* the WebView, but `MainActivity` sets
+   `webView.setBackgroundColor("#090A0C")` — opaque. Correct attach + correct
+   decoder still rendered nothing. Each plugin now sets the WebView background
+   to `Color.TRANSPARENT` on attach and restores `#090A0C` on detach.
+
+Also in this round:
+
+- **VyseTV mpv option port** (`configurePlayer`): `vo=mediacodec,gpu` (HW) /
+  `gpu,gpu-next` (SW), `hwdec=mediacodec,mediacodec-copy`, explicit
+  `hwdec-codecs` including `mpeg2video` for broadcast MPEG-2, `opengl-es=yes`,
+  `vd-lavc-o` decoder options, the decoder queue block, `vd-lavc-film-grain=cpu`,
+  `ao=audiotrack,opensles`, `ytdl=no` and the seven unused builtin scripts off.
+  `attachSurfaces` now passes the renderer explicitly (`mediacodec` / `gpu`)
+  rather than relying on the AAR default, matching VyseTV's call.
+- **Engine init re-entrancy:** `mpvEngine` and `media3Engine` both gained an
+  in-flight `initializing` promise and remove their plugin listeners on
+  `destroy()`. Previously a second `initialize()` registered every listener
+  again, so each progress tick reached the UI twice.
+- **Music bar showed Play over audible audio.** `MusicPlayerProvider`'s
+  `isPlaying` only changed through `play()` promise chains, which go stale when
+  a load is superseded or playback starts via MediaSession. The `<audio>`
+  element now owns the flag via `onPlay`/`onPause`, like `AudiobooksView`
+  already did.
+
+**Verification for this round:** `tsc --noEmit` clean; `vitest run` 54 files /
+471 tests pass; `compileDebugKotlin` and `assembleDebug` both BUILD SUCCESSFUL.
+**Not verified:** actual playback of the IPTV channels on a device — that needs
+a run on hardware.
+
 ## 1. Project overview
 
 - **App:** PRAHA-STREAM — a Capacitor (React + TypeScript + Vite) media streaming app for Android (also a web app).
 - **Package / applicationId:** `com.praha.stream`, label `PRAHA STREAM`.
-- **Version:** 2.11.23, `versionCode 48` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
+- **Version:** 2.11.24, `versionCode 49` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
 - **Key configs:** `capacitor.config.json`, `vite.config.ts`, `android/build.gradle` (AGP `8.13.0`, Gradle 8.13), `android/app/build.gradle`.
-- **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). LibVLC/VLC native libs are bundled in the APK.
+- **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). Playback is **libmpv** (`com.praha.stream.mpv.PrahaMpvPlugin`, from the `edde746:mpv-android` AAR) with Media3/ExoPlayer and a web player as fallbacks. There is no LibVLC in the build any more — the `player-vlc-active` CSS class name is a leftover from that era.
 
 ## 2. What was accomplished in this session
 
@@ -84,6 +130,25 @@ Root cause explicitly noted in the audit: `package.json` omits `@types/react` / 
 
 ## 4. Environment constraints (READ THIS BEFORE REBUILDING)
 
+**There are now two build hosts, and they differ.**
+
+### This machine (macOS, darwin arm64) — current
+- **JDK 21** at `/opt/homebrew/opt/openjdk@21` (Gradle 8.13 needs 21; the Homebrew default JDK 27 is too new).
+- **Android SDK** at `/opt/homebrew/share/android-commandlinetools` (platforms android-35/36/37, build-tools 34/35/37). `android/local.properties` already points there.
+- **Native AAPT2 works** — Google ships an arm64 macOS host build, so none of the phone-host workarounds below are needed.
+- Verified commands:
+  ```bash
+  cd android
+  export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+  export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+  ./gradlew :app:compileDebugKotlin --no-daemon --offline   # Kotlin only, ~10 s
+  ./gradlew :app:assembleDebug --no-daemon --offline        # full APK, ~16 s
+  ```
+  `assembleDebug` is `finalizedBy('copyApkToDist')`, which writes to `<repo>/dist-apk/`.
+  It is **debug-signed** (`CN=Android Debug`). There is no local `release.keystore`,
+  so a release APK must come from CI on a tag push.
+
+### Legacy host (Android phone inside OpenCode Mobile's Ubuntu, aarch64) — kept for reference
 This runs on an **Android phone inside OpenCode Mobile's Ubuntu** (`uname -m` = **aarch64**), with limited CPU/RAM.
 
 - **`node_modules` cannot run native/esbuild binaries from the `/sdcard` mount.** All Node builds MUST run from a copy at `/tmp/opencode/PRAHA-STREAM-build`. Native `.node` / esbuild binaries there were `chmod +x`'d after copying.

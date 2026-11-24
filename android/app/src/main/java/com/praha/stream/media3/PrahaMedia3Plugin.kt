@@ -280,6 +280,10 @@ class PrahaMedia3Plugin : Plugin() {
                 surfaceView?.let { updateSurfaceRect(it, x, y, width, height) }
                 subtitleView?.let { updateSurfaceRect(it, x, y, width, height) }
                 bindSurface()
+                // The surface is added behind the WebView, so an opaque WebView
+                // covers it. MainActivity sets an opaque backdrop; the native
+                // session has to make it transparent or the video never shows.
+                webView.setBackgroundColor(Color.TRANSPARENT)
                 call.resolve(JSObject().put("attached", true))
             } catch (e: Throwable) {
                 call.reject("Could not attach the video surface: ${e.message}")
@@ -314,6 +318,9 @@ class PrahaMedia3Plugin : Plugin() {
             } catch (_: Throwable) {
             }
             removeOverlayViews()
+            // Restore the opaque app backdrop the activity installed, so every
+            // screen after the player looks the same as before.
+            bridge.webView?.setBackgroundColor(OPAQUE_BACKDROP)
             call.resolve()
         }
     }
@@ -742,6 +749,9 @@ class PrahaMedia3Plugin : Plugin() {
     }
 
     private companion object {
+        /** The activity's opaque backdrop; detach restores exactly this. */
+        val OPAQUE_BACKDROP = Color.parseColor("#090A0C")
+
         /** Desktop Chrome UA; some CDNs 403 on a WebView UA. */
         const val DEFAULT_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +

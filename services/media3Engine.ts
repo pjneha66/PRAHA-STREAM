@@ -56,6 +56,9 @@ class Media3Engine {
   private endListeners = new Set<() => void>();
 
   private ready = false;
+  /** In-flight initialisation, shared by concurrent callers. See `initialize`. */
+  private initializing: Promise<boolean> | null = null;
+  private listenerHandles: Array<{ remove: () => Promise<void> | void }> = [];
   private element: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private scrollHandler: (() => void) | null = null;
@@ -69,37 +72,50 @@ class Media3Engine {
   async initialize(): Promise<boolean> {
     if (!this.isAvailable()) return false;
     if (this.ready) return true;
+    // Same guard as the mpv engine: `attachTo()` and `load()` both await this,
+    // and a session stop re-initialises. Two concurrent callers used to
+    // register every listener twice, so each progress tick fired the UI twice.
+    if (!this.initializing) {
+      this.initializing = this.doInitialize().finally(() => {
+        this.initializing = null;
+      });
+    }
+    return this.initializing;
+  }
 
+  private async doInitialize(): Promise<boolean> {
     await PrahaMedia3.initialize();
 
-    await PrahaMedia3.addListener('progress', (event) => {
-      this.patch({
-        positionMs: event.positionMs,
-        durationMs: event.durationMs,
-        bufferedMs: event.bufferedMs,
-      });
-    });
-    await PrahaMedia3.addListener('playbackState', (event) => {
-      this.patch({
-        buffering: event.state === 'buffering',
-        ended: event.state === 'ended',
-      });
-    });
-    await PrahaMedia3.addListener('playing', (event) => this.patch({ playing: event.playing }));
-    await PrahaMedia3.addListener('ended', () => {
-      this.patch({ ended: true, playing: false });
-      this.endListeners.forEach((listener) => listener());
-    });
-    await PrahaMedia3.addListener('error', (event) => {
-      this.errorListeners.forEach((listener) => listener(event.message));
-    });
-    await PrahaMedia3.addListener('tracksChanged', (event) => {
-      this.trackListeners.forEach((listener) => listener(event.tracks || []));
-    });
-    await PrahaMedia3.addListener('cues', (event) => this.patch({ subtitleText: event.text }));
-    await PrahaMedia3.addListener('videoSize', (event) => {
-      this.patch({ width: event.width, height: event.height });
-    });
+    this.listenerHandles = [
+      await PrahaMedia3.addListener('progress', (event) => {
+        this.patch({
+          positionMs: event.positionMs,
+          durationMs: event.durationMs,
+          bufferedMs: event.bufferedMs,
+        });
+      }),
+      await PrahaMedia3.addListener('playbackState', (event) => {
+        this.patch({
+          buffering: event.state === 'buffering',
+          ended: event.state === 'ended',
+        });
+      }),
+      await PrahaMedia3.addListener('playing', (event) => this.patch({ playing: event.playing })),
+      await PrahaMedia3.addListener('ended', () => {
+        this.patch({ ended: true, playing: false });
+        this.endListeners.forEach((listener) => listener());
+      }),
+      await PrahaMedia3.addListener('error', (event) => {
+        this.errorListeners.forEach((listener) => listener(event.message));
+      }),
+      await PrahaMedia3.addListener('tracksChanged', (event) => {
+        this.trackListeners.forEach((listener) => listener(event.tracks || []));
+      }),
+      await PrahaMedia3.addListener('cues', (event) => this.patch({ subtitleText: event.text })),
+      await PrahaMedia3.addListener('videoSize', (event) => {
+        this.patch({ width: event.width, height: event.height });
+      }),
+    ];
 
     this.ready = true;
     return true;
@@ -310,8 +326,19 @@ class Media3Engine {
   }
 
   async destroy(): Promise<void> {
-    if (!this.ready) return;
+    if (!this.ready && !this.initializing) return;
     this.ready = false;
+    // Plugin listeners outlive the native player, so they are removed here;
+    // otherwise the next session receives every event twice.
+    const handles = this.listenerHandles;
+    this.listenerHandles = [];
+    for (const handle of handles) {
+      try {
+        await handle.remove();
+      } catch {
+        // Already gone.
+      }
+    }
     try {
       await PrahaMedia3.destroy();
     } catch {

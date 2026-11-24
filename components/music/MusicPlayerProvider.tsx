@@ -186,11 +186,19 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setStreamLoading(true);
     setStreamError('');
     setIsFullAudio(false);
-    const startAudio = (url: string) => {
+    const startAudio = (url: string, attempt: number) => {
       const audio = audioRef.current;
       if (audio) {
         audio.src = url;
-        audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        // `isPlaying` is driven by the element's own play/pause events (see the
+        // <audio> handlers). A rejected promise here only means this attempt did
+        // not start, so it must not report a decision about the track — and it
+        // must not touch state at all once a newer attempt owns the element,
+        // which is what used to leave the bar showing Play over a song that was
+        // already streaming.
+        audio.play().catch(() => {
+          if (attempt === streamSeqRef.current) setIsPlaying(false);
+        });
       }
     };
     try {
@@ -203,7 +211,7 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setDuration(track.duration || 0);
         // A preview is 30 s regardless of the catalog duration.
         setIsFullAudio(resolved.sourceUrl !== track.previewUrl);
-        startAudio(resolved.url);
+        startAudio(resolved.url, seq);
         if (resolved.sourceUrl === track.previewUrl) {
           setDuration(30);
           setStreamError('Full stream unavailable — playing the 30-second preview.');
@@ -247,7 +255,9 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setStreamError('Stream ended early — playing the 30-second preview.');
         audio.src = track.previewUrl;
         audio.currentTime = 0;
-        audio.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        audio.play().catch(() => {
+          // The element reports the real result through its own events.
+        });
         return;
       }
       setStreamError(`Audio stream unavailable for "${track.title}".`);
@@ -282,7 +292,9 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
           };
           audio.addEventListener('loadedmetadata', resume);
         }
-        audio.play().then(() => { setIsPlaying(true); setStreamError(''); }).catch(() => setIsPlaying(false));
+        audio.play().catch(() => {
+          if (seq === streamSeqRef.current) setIsPlaying(false);
+        });
         return;
       }
       setStreamError(`Audio stream unavailable for "${track.title}".`);
@@ -594,6 +606,14 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
           onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
           onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
           onEnded={() => advance(1)}
+          // The element is the authority on whether it is playing. Without
+          // these two, `isPlaying` only ever changed through the `play()`
+          // promise chains above, so a stream that started on its own — an
+          // autoplay, a MediaSession command, a source swap that resumed — left
+          // the bar showing Play over a song that was already audible, until
+          // some later action re-derived the flag.
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
           onError={() => {
             // The address died mid-play (403, expired signature, edge gone).
             // Re-resolve from the same second before giving up on full audio.

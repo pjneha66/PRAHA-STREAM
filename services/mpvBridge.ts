@@ -41,8 +41,11 @@ export interface MpvPropertyEvent {
   value: string | number | boolean | null;
 }
 
+/** libmpv's `mpv_format`, as the AAR's `PropertyFormat` enum names them. */
+export type MpvPropertyFormat = 'none' | 'string' | 'flag' | 'int64' | 'double';
+
 interface PrahaMpvPlugin {
-  initialize(): Promise<{ initialized: boolean }>;
+  initialize(options?: { hardwareDecoding?: boolean }): Promise<{ initialized: boolean }>;
   destroy(): Promise<void>;
 
   attachSurface(options: MpvRect): Promise<{ attached: boolean }>;
@@ -71,6 +74,12 @@ interface PrahaMpvPlugin {
 
   setProperty(options: { name: string; value: string }): Promise<void>;
   getProperty(options: { name: string }): Promise<{ value: string | null }>;
+
+  /**
+   * Registers a property for change notifications. Without this libmpv sends
+   * no `propertyChange` for it — a write is not an observation.
+   */
+  observe(options: { name: string; format?: MpvPropertyFormat }): Promise<void>;
 
   addListener(
     eventName: 'propertyChange',
@@ -102,26 +111,30 @@ export function mpvAvailable(): boolean {
 /**
  * Properties the player UI polls. mpv pushes changes for observed properties, so
  * the list is what we subscribe to on open rather than what we query every tick.
+ *
+ * The format matters: `mpv_observe_property` needs one, and declaring a flag as
+ * a double (or the reverse) makes libmpv drop the notification. Numbers are
+ * `double` because everything the UI does with them is arithmetic.
  */
-export const MPV_OBSERVED_PROPERTIES = [
-  'time-pos',
-  'duration',
-  'pause',
-  'volume',
-  'mute',
-  'speed',
-  'eof-reached',
-  'core-idle',
-  'paused-for-cache',
-  'cache-buffering-state',
-  'video-format',
-  'video-codec',
-  'audio-codec',
-  'hwdec-current',
-  'estimated-vf-fps',
-  'demuxer-cache-time',
-  'track-list/count',
-  'aid',
-  'sid',
-  'vid',
-] as const;
+export const MPV_OBSERVED_PROPERTIES: Record<string, MpvPropertyFormat> = {
+  'time-pos': 'double',
+  duration: 'double',
+  pause: 'flag',
+  volume: 'double',
+  mute: 'flag',
+  speed: 'double',
+  'eof-reached': 'flag',
+  'core-idle': 'flag',
+  'paused-for-cache': 'flag',
+  'cache-buffering-state': 'double',
+  'video-format': 'string',
+  'video-codec': 'string',
+  'audio-codec': 'string',
+  'hwdec-current': 'string',
+  'estimated-vf-fps': 'double',
+  'demuxer-cache-time': 'double',
+  'track-list/count': 'int64',
+  aid: 'int64',
+  sid: 'int64',
+  vid: 'int64',
+};

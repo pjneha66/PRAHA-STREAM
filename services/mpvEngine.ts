@@ -89,6 +89,17 @@ class MpvEngine {
   private endListeners = new Set<EndListener>();
 
   private ready = false;
+  /**
+   * The in-flight `initialize()` promise.
+   *
+   * `attachTo()` and `load()` both await `initialize()`, and a session stop
+   * destroys the core, so initialisation runs again on the next open. Without
+   * this guard two concurrent callers both saw `ready === false`, both created
+   * the native player, and both registered the same three listeners — every
+   * later property change was then delivered twice.
+   */
+  private initializing: Promise<boolean> | null = null;
+  private listenerHandles: Array<{ remove: () => Promise<void> | void }> = [];
   private surfaceElement: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private scrollHandler: (() => void) | null = null;
@@ -103,33 +114,50 @@ class MpvEngine {
   async initialize(): Promise<boolean> {
     if (!this.isAvailable()) return false;
     if (this.ready) return true;
+    // Coalesce concurrent callers onto one native initialisation.
+    if (!this.initializing) {
+      this.initializing = this.doInitialize().finally(() => {
+        this.initializing = null;
+      });
+    }
+    return this.initializing;
+  }
 
-    await PrahaMpv.initialize();
+  private async doInitialize(): Promise<boolean> {
+    // Hardware decoding is what the native plugin's `vo=mediacodec` path
+    // requires; a plugin built without it starts on the GL chain instead.
+    await PrahaMpv.initialize({ hardwareDecoding: true });
 
-    await PrahaMpv.addListener('propertyChange', (event) => {
-      this.applyProperty(event.name, event.value);
-    });
-    await PrahaMpv.addListener('mpvEvent', (event) => {
-      if (event.event === 'EndFile') {
-        const reason = String(event.reason || '');
-        const error = String(event.error || '');
-        this.state.eofReached = reason === 'Eof';
-        this.emitState();
-        this.endListeners.forEach((listener) => listener(reason, error));
-      }
-      if (event.event === 'FileLoaded') {
-        void this.refreshTracks();
-      }
-    });
-    await PrahaMpv.addListener('mpvError', (event) => {
-      console.warn('[mpv]', event.message);
-    });
+    this.listenerHandles = [
+      await PrahaMpv.addListener('propertyChange', (event) => {
+        this.applyProperty(event.name, event.value);
+      }),
+      await PrahaMpv.addListener('mpvEvent', (event) => {
+        if (event.event === 'EndFile') {
+          const reason = String(event.reason || '');
+          const error = String(event.error || '');
+          this.state.eofReached = reason === 'Eof';
+          this.emitState();
+          this.endListeners.forEach((listener) => listener(reason, error));
+        }
+        if (event.event === 'FileLoaded') {
+          void this.refreshTracks();
+        }
+      }),
+      await PrahaMpv.addListener('mpvError', (event) => {
+        console.warn('[mpv]', event.message);
+      }),
+    ];
 
-    for (const name of MPV_OBSERVED_PROPERTIES) {
+    for (const [name, format] of Object.entries(MPV_OBSERVED_PROPERTIES)) {
       try {
-        await PrahaMpv.setProperty({ name: `observe-${name}`, value: 'yes' });
+        // mpv pushes `propertyChange` only for properties registered with
+        // mpv_observe_property. Writing `observe-<name>` used to stand in for
+        // that and does nothing at all, so the UI never saw time, duration or
+        // pause and the start guard treated every stream as dead.
+        await PrahaMpv.observe({ name, format });
       } catch {
-        // mpv silently ignores unknown properties; a rejection here is not fatal.
+        // A property mpv does not expose is skipped, not fatal.
       }
     }
 
@@ -359,8 +387,20 @@ class MpvEngine {
   }
 
   async destroy(): Promise<void> {
-    if (!this.ready) return;
+    if (!this.ready && !this.initializing) return;
     this.ready = false;
+    // The listener handles belong to the plugin instance, not to the native
+    // player, so they survive `destroy()` on the native side. Removing them
+    // here is what keeps the next session from double-reporting every change.
+    const handles = this.listenerHandles;
+    this.listenerHandles = [];
+    for (const handle of handles) {
+      try {
+        await handle.remove();
+      } catch {
+        // Already gone.
+      }
+    }
     try {
       await PrahaMpv.destroy();
     } catch {
