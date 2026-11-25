@@ -1889,10 +1889,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Persistent SimpMusic-style player: mini bar on every tab (hidden inside
-          the Music tab, which has its own layout, and under the video player),
-          expandable into the full Now Playing sheet. */}
-      <MusicPlayerBar hidden={view === 'music' || Boolean(player)} />
+      <MusicPlayerBar hidden={Boolean(player)} />
       <NowPlayingSheet />
     </MusicPlayerProvider>
   );

@@ -7,6 +7,7 @@ import {
 } from '../services/archiveService';
 import { openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
+import ArchiveBorrowButton from './ArchiveBorrowButton';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { BookracyService } from '../services/bookracyService';
@@ -221,6 +222,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         source: item.source,
         authors: item.authors,
         year: item.year,
+        restricted: item.restricted,
       },
     });
     setContinueEntries(readContinue('book'));
@@ -240,12 +242,13 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
   };
 
   const resumeBook = (entry: ContinueEntry) => {
-    const payload = (entry.payload || {}) as { identifier?: string; openLibraryKey?: string; source?: 'openlibrary' | 'archive'; authors?: string[]; year?: string };
+    const payload = (entry.payload || {}) as { identifier?: string; openLibraryKey?: string; source?: 'openlibrary' | 'archive'; authors?: string[]; year?: string; restricted?: boolean };
     void openItem({
       id: entry.id,
       title: entry.title,
       authors: payload.authors || [],
       year: payload.year,
+      restricted: payload.restricted,
       coverUrl: entry.cover,
       identifier: payload.identifier,
       openLibraryKey: payload.openLibraryKey,
@@ -426,7 +429,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 <h2>{selected.title}</h2>
                 {selected.authors.length > 0 && <p className="books-sheet-authors">{selected.authors.join(', ')}</p>}
                 {selected.year && <span className="books-sheet-year">First published {selected.year}</span>}
-                {selected.restricted && <span className="books-sheet-year">🔒 Lending-locked on archive.org — download the PDF instead of reading online.</span>}
+                {selected.restricted && <span className="books-sheet-year">Free loan when available. Sign in to your Internet Archive account to borrow.</span>}
               </div>
             </div>
 
@@ -440,9 +443,11 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                       <BookOpen size={14} /> Read online
                     </button>
                   )}
-                  <button type="button" className={selected.restricted ? 'button button-primary' : 'button button-secondary'} onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
-                    <ExternalLink size={13} /> {selected.restricted ? 'Borrow on archive.org' : 'archive.org page'}
-                  </button>
+                  {selected.restricted ? <ArchiveBorrowButton key={selected.identifier} identifier={selected.identifier} /> : (
+                    <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
+                      <ExternalLink size={13} /> archive.org page
+                    </button>
+                  )}
                 </>
               )}
               {selected.openLibraryKey && (

@@ -26,7 +26,7 @@ const MusicPlayerBar: React.FC<{ hidden?: boolean }> = ({ hidden }) => {
         </span>
         <span className="music-bar-copy">
           <strong>{currentTrack.title}</strong>
-          <small>{currentTrack.artist}{player.isFullAudio ? '' : ' · preview unavailable'}</small>
+          <small>{currentTrack.artist}</small>
         </span>
         {player.streamLoading && <LoaderCircle size={15} className="spin music-bar-spinner" />}
       </button>

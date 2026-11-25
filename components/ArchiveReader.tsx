@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RotateCcw, X } from 'lucide-react';
 import { openSafeExternalUrl } from '../services/androidBridge';
 import { BooksService } from '../services/archiveService';
+import ArchiveBorrowButton from './ArchiveBorrowButton';
 
 /**
  * In-app "Read online" viewer for archive.org text items. Renders scanned
@@ -268,22 +269,8 @@ const ArchiveReader: React.FC<{
             instead of showing an empty reader. */}
         {!useEmbed && restricted && leafCount !== null && !error && (
           <div className="archive-reader-error">
-            <p>
-              This scan is lending-locked on archive.org — pages only open with a
-              free archive.org loan, which the in-app reader can't use.
-            </p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-              <button type="button" className="button button-primary button-small" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(identifier))}>
-                <ExternalLink size={12} /> Open on archive.org
-              </button>
-              <button
-                type="button"
-                className="button button-secondary button-small"
-                onClick={() => openSafeExternalUrl(`https://archive.org/download/${encodeURIComponent(identifier)}/${encodeURIComponent(identifier)}.pdf`)}
-              >
-                Try the PDF download
-              </button>
-            </div>
+            <p>Sign in to Internet Archive to borrow this title for free when a copy is available.</p>
+            <ArchiveBorrowButton identifier={identifier} />
           </div>
         )}
 

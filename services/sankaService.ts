@@ -1,7 +1,10 @@
+import type { ComicLanguageFilter } from './comicLanguages';
 import { isAndroidApp, nativeFetchText } from './androidBridge';
 import { MangaService } from './mangaService';
 import { evictOldest } from './cacheCaps';
 import { comickChapterImages, comickChapters, searchComick, type ComickSeries } from './comickService';
+import { mangaDexCatalog, mangaDexDetail, mangaDexPages } from './mangaDexService';
+import { pepperCarrotCatalog, pepperCarrotDetail, pepperCarrotPages } from './pepperCarrotService';
 
 const PRIMARY_ORIGIN = 'https://www.sankavollerei.web.id';
 const MIRROR_ORIGIN = 'https://www.sankavollerei.com';
@@ -48,6 +51,8 @@ export interface SankaTitle {
   kind: SankaKind;
   source: string;
   sourceUrl?: string;
+  aliases?: string[];
+  languages?: string[];
 }
 
 export interface SankaTitlesPage {
@@ -62,6 +67,7 @@ export interface SankaChapter {
   chapterPath?: string;
   title: string;
   date?: string;
+  language?: string;
 }
 
 export interface SankaMangaDetail {
@@ -663,6 +669,7 @@ export async function fetchSankaTitlesPage(
     page?: number;
     signal?: AbortSignal;
     bypassCache?: boolean;
+    language?: ComicLanguageFilter;
     /** Comick: restrict the search to one aggregator ('webtoon', etc.). */
     subSource?: string;
     /** Comick: progressive results — called as each aggregator answers. */
@@ -673,6 +680,8 @@ export async function fetchSankaTitlesPage(
   const source = options.source || (kind === 'comic' ? 'bacakomik' : 'otakudesu');
   const feed = options.feed || 'latest';
   const page = Math.max(1, Math.floor(options.page || 1));
+  if (kind === 'comic' && source === 'mangadex') return mangaDexCatalog(normalizedQuery, page, feed, options.signal, options.language);
+  if (kind === 'comic' && source === 'peppercarrot') return pepperCarrotCatalog(normalizedQuery, page, options.language);
 
   // WEBTOON chip: Comick gateway locked to the webtoon aggregator.
   if (source === 'webtoon') {
@@ -963,7 +972,11 @@ export async function fetchSankaMangaDetail(
   slug: string,
   signal?: AbortSignal,
   detailPath?: string,
+  language?: ComicLanguageFilter,
 ): Promise<SankaMangaDetail> {
+  if (source === 'mangadex') return mangaDexDetail(slug, signal, language);
+  if (source === 'peppercarrot') return pepperCarrotDetail(language);
+
   // Comick aggregator: the series URL rides in via detailPath.
   if (source === 'comick') {
     const seriesUrl = detailPath && detailPath.startsWith('http') ? detailPath : slug.startsWith('http') ? slug : '';
@@ -1116,7 +1129,11 @@ export async function fetchSankaChapterImages(
   slug: string,
   signal?: AbortSignal,
   chapterPath?: string,
+  language?: ComicLanguageFilter,
 ): Promise<string[]> {
+  if (source === 'mangadex') return mangaDexPages(slug, signal);
+  if (source === 'peppercarrot') return pepperCarrotPages(slug, language);
+
   // Comick aggregator: scrape the chapter page directly for page images.
   if (source === 'comick') {
     const chapterUrl = chapterPath && chapterPath.startsWith('http') ? chapterPath : slug.startsWith('http') ? slug : '';

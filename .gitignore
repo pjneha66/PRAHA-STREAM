@@ -54,3 +54,6 @@ android/app/release.keystore
 android/upstream/
 android/cloudstream-lib/build/
 
+
+# Standalone Comics relay deployment
+relay/.vercel/

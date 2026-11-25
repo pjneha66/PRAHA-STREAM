@@ -317,11 +317,6 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
         </div>
       )}
 
-      {player.currentTrack && !player.sheetOpen && (
-        <p className="music-now-playing-hint">
-          <ListMusic size={13} /> Playing in background — use the bar below on any tab.
-        </p>
-      )}
     </div>
   );
 };

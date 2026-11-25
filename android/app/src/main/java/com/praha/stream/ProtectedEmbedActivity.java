@@ -23,6 +23,7 @@ import java.util.Locale;
 /** A separate, unprivileged WebView: never attach Capacitor or any JavaScript bridge here. */
 public final class ProtectedEmbedActivity extends Activity {
     public static final String EXTRA_URL = "embed_url";
+    public static final String EXTRA_ARCHIVE_LOAN = "archive_loan";
     private WebView web;
     private FrameLayout content;
     private View fullScreen;
@@ -31,6 +32,7 @@ public final class ProtectedEmbedActivity extends Activity {
     private String initialHost;
     private String initialUrl;
     private boolean destroyed;
+    private boolean archiveLoan;
     /** Shown until the player's first page finishes loading, then removed. */
     private TextView loading;
 
@@ -40,19 +42,25 @@ public final class ProtectedEmbedActivity extends Activity {
         Uri target = initialUrl == null ? null : Uri.parse(initialUrl);
         if (!EmbedBlocklist.isPublicHttps(target) || initialUrl.length() > 4096) { finish(); return; }
         initialHost = target.getHost().toLowerCase(Locale.ROOT);
+        archiveLoan = getIntent().getBooleanExtra(EXTRA_ARCHIVE_LOAN, false);
+        if (archiveLoan && !isArchiveItem(target)) { finish(); return; }
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.BLACK);
         LinearLayout bar = new LinearLayout(this);
         Button close = new Button(this); close.setText("Close"); close.setOnClickListener(v -> finish());
-        Button browser = new Button(this); browser.setText("Browser (unfiltered)");
+        Button browser = new Button(this); browser.setText(archiveLoan ? "Open in browser" : "Browser (unfiltered)");
         browser.setOnClickListener(v -> { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(initialUrl)).addCategory(Intent.CATEGORY_BROWSABLE)); } catch (Exception ignored) { } });
         bar.addView(close); bar.addView(browser);
         layout.addView(bar);
         content = new FrameLayout(this);
         layout.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        loading = new TextView(this); loading.setText("Loading protected player…"); loading.setTextColor(Color.WHITE); content.addView(loading);
+        loading = new TextView(this); loading.setText(archiveLoan ? "Opening Internet Archive…" : "Loading protected player…"); loading.setTextColor(Color.WHITE); content.addView(loading);
         setContentView(layout);
+        if (archiveLoan) {
+            openPlayer();
+            return;
+        }
         // Fail closed if the filter cannot be loaded; never start an unfiltered WebView by accident.
         new Thread(() -> {
             try {
@@ -68,6 +76,12 @@ public final class ProtectedEmbedActivity extends Activity {
                 runOnUiThread(() -> { if (!destroyed) loading.setText("Unable to load the ad block list. Protected player not opened."); });
             }
         }, "embed-blocklist").start();
+    }
+
+    static boolean isArchiveItem(Uri uri) {
+        return uri != null && "https".equals(uri.getScheme()) && "archive.org".equalsIgnoreCase(uri.getHost())
+                && uri.getUserInfo() == null && (uri.getPort() == -1 || uri.getPort() == 443)
+                && uri.getPath() != null && uri.getPath().matches("/details/[A-Za-z0-9._-]+");
     }
 
     private void openPlayer() {
@@ -96,6 +110,12 @@ public final class ProtectedEmbedActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
+                if (archiveLoan) {
+                    if (!EmbedBlocklist.isPublicHttps(uri)) return true;
+                    if (!request.isForMainFrame()) return false;
+                    String host = uri.getHost().toLowerCase(Locale.ROOT);
+                    return !host.equals("archive.org") && !host.endsWith(".archive.org");
+                }
                 if (!EmbedBlocklist.isPublicHttps(uri) || filter.blocks(uri.getHost())) return true;
                 // Prevent same-tab ad redirects from taking over the player, but
                 // let the player itself work. Embed hosts routinely bounce the
@@ -115,7 +135,7 @@ public final class ProtectedEmbedActivity extends Activity {
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (!EmbedBlocklist.isPublicHttps(uri) || filter.blocks(uri.getHost())) {
+                if (!EmbedBlocklist.isPublicHttps(uri) || (!archiveLoan && filter.blocks(uri.getHost()))) {
                     return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
                 }
                 return null;

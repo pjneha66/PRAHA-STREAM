@@ -15,6 +15,7 @@ export interface BookItem {
   id: string;
   title: string;
   authors: string[];
+  languages?: string[];
   year?: string;
   coverUrl?: string;
   /** archive.org item identifier (when source === 'archive'). */
@@ -90,6 +91,7 @@ interface ArchiveDoc {
   creator?: string | string[];
   year?: string | number;
   description?: string | string[];
+  language?: string | string[];
 }
 
 const firstOf = (value: string | string[] | number | undefined): string | undefined => {
@@ -134,6 +136,7 @@ export class BooksService {
         openLibraryKey: String(doc.key || ''),
         source: 'openlibrary' as const,
         note: identifier ? 'Full text on archive.org' : undefined,
+        restricted: doc.ebook_access === 'borrowable' || doc.ebook_access === 'printdisabled',
       };
     });
     // Items that can actually be read on archive.org surface first.
@@ -146,7 +149,7 @@ export class BooksService {
   /** archive.org search, scoped to a folkscanomy (or any) collection query. */
   static async searchArchive(query: string, collection: ArchiveCollection, page = 1, rows = 24): Promise<BookItem[]> {
     const trimmed = query.trim();
-    const cacheKey = `ia:${collection.id}:${trimmed}:${page}`;
+    const cacheKey = `ia:${collection.id}:${collection.query}:${trimmed}:${page}:${rows}`;
     const cached = this.searchCache.get(cacheKey);
     if (cached) return cached;
 
@@ -154,7 +157,7 @@ export class BooksService {
       ? `(${collection.query}) AND mediatype:texts AND title:(${trimmed})`
       : `(${collection.query}) AND mediatype:texts`;
     const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}` +
-      `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&fl%5B%5D=access-restricted-item` +
+      `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&fl%5B%5D=language&fl%5B%5D=access-restricted-item` +
       `&rows=${rows}&page=${page}&output=json`;
     const res = await nativeFetchText(url, { timeoutMs: 15000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('archive.org did not answer.');
@@ -167,6 +170,7 @@ export class BooksService {
         title: firstOf(doc.title) || doc.identifier,
         authors: Array.isArray(doc.creator) ? doc.creator.slice(0, 3) : doc.creator ? [String(doc.creator)] : [],
         year: firstOf(doc.year),
+        languages: Array.isArray(doc.language) ? doc.language : doc.language ? [doc.language] : undefined,
         coverUrl: `https://archive.org/services/img/${doc.identifier}`,
         identifier: doc.identifier,
         source: 'archive' as const,
@@ -213,8 +217,8 @@ export class BooksService {
     const data = JSON.parse(res.data) as { metadata?: Record<string, unknown> };
     const meta = data.metadata || {};
     const leafCount = Number(meta.imagecount) || 0;
-    if (leafCount <= 0) throw new Error('This item has no scanned pages to read.');
     const restricted = meta['access-restricted-item'] === true || meta['access-restricted-item'] === 'true';
+    if (leafCount <= 0 && !restricted) throw new Error('This item has no scanned pages to read.');
     const info = { title: firstOf(meta.title as string | string[] | undefined) || identifier, leafCount, restricted };
     this.leavesCache.set(identifier, info);
     evictOldest(this.leavesCache, 40);

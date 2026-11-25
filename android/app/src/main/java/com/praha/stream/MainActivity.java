@@ -525,6 +525,8 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return rpcBridge.openBrowser(args.optString(0, ""));
             case "openProtectedEmbed":
                 return rpcBridge.openProtectedEmbed(args.optString(0, ""));
+            case "openArchiveLoan":
+                return rpcBridge.openArchiveLoan(args.optString(0, ""));
             case "openPrivateDnsSettings":
                 return rpcBridge.openPrivateDnsSettings();
             case "setVpnEnabled":
@@ -670,6 +672,17 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 Intent intent = new Intent(MainActivity.this, ProtectedEmbedActivity.class);
                 intent.putExtra(ProtectedEmbedActivity.EXTRA_URL, url);
                 startActivity(intent);
+                return true;
+            } catch (Exception ignored) { return false; }
+        }
+
+        @JavascriptInterface
+        public boolean openArchiveLoan(String url) {
+            if (url == null || url.length() > 4096 || !ProtectedEmbedActivity.isArchiveItem(Uri.parse(url))) return false;
+            try {
+                startActivity(new Intent(MainActivity.this, ProtectedEmbedActivity.class)
+                        .putExtra(ProtectedEmbedActivity.EXTRA_URL, url)
+                        .putExtra(ProtectedEmbedActivity.EXTRA_ARCHIVE_LOAN, true));
                 return true;
             } catch (Exception ignored) { return false; }
         }

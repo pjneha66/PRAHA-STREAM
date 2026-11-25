@@ -102,4 +102,81 @@ describe('Sanka comic reader & pagination flow', () => {
     expect(await screen.findByAltText('Page 1')).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
+
+  it('opens MangaDex and Pepper&Carrot from All Sources and lists every chapter page', async () => {
+    const manga = { id: 'manga-id', attributes: { title: { en: 'Test Manga' }, contentRating: 'safe' } };
+    const chapter = { id: 'chapter-id', attributes: { chapter: '1', title: null, pages: 3 } };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.mangadex.org/manga?')) return json({ data: [manga], total: 1 });
+      if (url.includes('/manga/manga-id/feed?')) {
+        return json({
+          data: [
+            { id: 'external-id', attributes: { title: 'External preview', pages: 0, externalUrl: 'https://example.com' } },
+            chapter,
+          ],
+          total: 2,
+        });
+      }
+      if (url.includes('/manga/manga-id?')) return json({ data: manga });
+      if (url.includes('/at-home/server/chapter-id?')) {
+        return json({ baseUrl: 'https://images.example', chapter: { hash: 'hash', data: ['a.png', 'b.png', 'c.png'] } });
+      }
+      if (url.includes('archive.org/advancedsearch.php')) return json({}, 503);
+      return json({ data: [] });
+    }));
+
+    render(<SankaExplorer />);
+    fireEvent.click(screen.getByRole('tab', { name: 'All Sources' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Test Manga chapters' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Chapter 1' }));
+    expect(await screen.findByAltText('Page 1')).toHaveProperty('src', 'https://images.example/data/hash/a.png');
+    expect(screen.getByAltText('Page 3')).toHaveProperty('src', 'https://images.example/data/hash/c.png');
+    expect(screen.queryByText('External preview')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close reader' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Pepper&Carrot chapters' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Episode 1 · Potion of Flight/ }));
+    expect(await screen.findByAltText('Page 1')).toHaveProperty('src', expect.stringMatching(/E01P00\.jpg$/));
+    expect(screen.getByAltText('Page 5')).toHaveProperty('src', expect.stringMatching(/E01P04\.jpg$/));
+  });
+
+  it('groups translated title aliases and lets the reader switch to the other provider', async () => {
+    const manga = {
+      id: 'shared-manga', attributes: { title: { en: 'Shared Title' }, altTitles: [{ id: 'Judul Bersama' }], contentRating: 'safe' },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.mangadex.org/manga?')) return json({ data: [manga], total: 1 });
+      if (url.includes('/manga/shared-manga/feed?')) return json({ data: [], total: 0 });
+      if (url.includes('/manga/shared-manga?')) return json({ data: manga });
+      if (url.endsWith('/comic/bacakomik/latest')) return json({ comics: [{ title: 'Judul Bersama', slug: 'judul-bersama' }] });
+      if (url.endsWith('/comic/bacakomik/detail/judul-bersama')) {
+        return json({ detail: { title: 'Judul Bersama', chapters: [{ title: 'Chapter 1', slug: 'chapter-one' }] } });
+      }
+      return json({ data: [] });
+    }));
+
+    render(<SankaExplorer />);
+    fireEvent.click(screen.getByRole('tab', { name: 'All Sources' }));
+    await screen.findByText(/2 editions/);
+    const cards = screen.getAllByRole('button', { name: /^Open (Shared Title|Judul Bersama) chapters$/ });
+    expect(cards).toHaveLength(1);
+    fireEvent.click(cards[0]);
+    const alternate = await screen.findByRole('button', { name: /^Switch to (BacaKomik|MangaDex)$/ });
+    const switchingToMangaDex = alternate.textContent?.includes('MangaDex');
+    fireEvent.click(alternate);
+    expect(await screen.findByRole('dialog', { name: switchingToMangaDex ? 'Shared Title' : 'Judul Bersama' })).toBeTruthy();
+  });
+
+  it('loads translated comic pages after filtering the catalog by language', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [] })));
+    render(<SankaExplorer />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Pepper&Carrot' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Comic language' }), { target: { value: 'fr' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Pepper&Carrot chapters' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Episode 1 · Potion of Flight' }));
+    expect(await screen.findByAltText('Page 1')).toHaveProperty('src', expect.stringMatching(/\/fr_Pepper.*E01P00\.jpg$/));
+    expect(screen.getByAltText('Page 5')).toHaveProperty('src', expect.stringMatching(/\/fr_Pepper.*E01P04\.jpg$/));
+  });
 });

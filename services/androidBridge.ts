@@ -32,6 +32,7 @@ export interface PrahaNativeInterface {
   isTelevision(): boolean;
   openBrowser?(url: string): boolean;
   openProtectedEmbed?(url: string): boolean;
+  openArchiveLoan?(url: string): boolean;
   openPrivateDnsSettings?(): boolean;
   setVpnEnabled?(enabled: boolean, dnsServer: string): boolean;
   getVpnStatus?(): boolean;
@@ -300,6 +301,14 @@ export async function openProtectedEmbed(url: string): Promise<boolean> {
       return Boolean(await prahaRpc<boolean>('openProtectedEmbed', [target.href], 8000));
     }
     return Boolean(window.PrahaNative?.openProtectedEmbed?.(target.href));
+  } catch { return false; }
+}
+
+export async function openArchiveLoan(url: string): Promise<boolean> {
+  if (!isAndroidApp()) return openSafeExternalUrl(url);
+  try {
+    if (bridgeRpcAvailable()) return Boolean(await prahaRpc<boolean>('openArchiveLoan', [url], 8000));
+    return Boolean(window.PrahaNative?.openArchiveLoan?.(url));
   } catch { return false; }
 }
 

@@ -330,8 +330,9 @@ const SettingsView: React.FC<{
 
   const checkNetworkCondition = async () => {
     setNetworkChecking(true);
+    setNetworkCondition(null);
     try {
-      const condition = await probeNetworkCondition();
+      const condition = await probeNetworkCondition({ fresh: true });
       setNetworkCondition(condition);
     } finally {
       setNetworkChecking(false);

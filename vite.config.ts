@@ -17,6 +17,12 @@ const sankaPrimary = upstream('SANKA_PROXY_TARGET', 'https://www.sankavollerei.w
 const sankaMirror = upstream('SANKA_MIRROR_PROXY_TARGET', 'https://www.sankavollerei.com');
 
 const apiProxy = {
+  '^/mangadex-api/(?=manga(?:/|\\?|$)|at-home/server/)': {
+    target: 'https://api.mangadex.org',
+    changeOrigin: true,
+    headers: { 'User-Agent': 'PRAHA-STREAM', Accept: 'application/json' },
+    rewrite: (requestPath: string) => requestPath.replace(/^\/mangadex-api/, ''),
+  },
   '/espn-scoreboard': {
     target: 'https://site.api.espn.com',
     changeOrigin: true,

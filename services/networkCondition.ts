@@ -6,7 +6,7 @@ import { nativeFetchText } from './androidBridge';
  * unreachable", so empty states can tell the truth instead of a generic error.
  */
 
-export type NetworkCondition = 'online' | 'no-internet' | 'servers-unreachable';
+export type NetworkCondition = 'online' | 'no-internet' | 'servers-unreachable' | 'network-unverified';
 
 const KNOWN_SERVERS = [
   'https://www.gstatic.com/generate_204',
@@ -16,44 +16,52 @@ const KNOWN_SERVERS = [
 let cachedCondition: { condition: NetworkCondition; ts: number } | null = null;
 const CACHE_TTL_MS = 30_000;
 
-export async function probeNetworkCondition(): Promise<NetworkCondition> {
-  if (cachedCondition && Date.now() - cachedCondition.ts < CACHE_TTL_MS) return cachedCondition.condition;
+export async function probeNetworkCondition({ fresh = false } = {}): Promise<NetworkCondition> {
+  if (!fresh && cachedCondition && Date.now() - cachedCondition.ts < CACHE_TTL_MS) return cachedCondition.condition;
   const condition = await probeUncached();
   cachedCondition = { condition, ts: Date.now() };
   return condition;
 }
 
 async function probeUncached(): Promise<NetworkCondition> {
-  // 1. General internet reachability.
-  for (const probeUrl of KNOWN_SERVERS) {
-    try {
-      const response = await nativeFetchText(probeUrl, { method: 'GET', timeoutMs: 4500 });
-      if (response.status > 0) return 'online';
-    } catch {
-      // try next probe host
-    }
-  }
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'no-internet';
 
-  // 2. Internet is up (or unknown) — is it specifically our sources that are down?
-  const targets = ['https://api.tmdb.org', 'https://v3-cinemeta.strem.io/manifest.json'];
-  for (const target of targets) {
+  const catalogChecks = [
+    { url: 'https://v3-cinemeta.strem.io/manifest.json', matches: (body: Record<string, unknown>, status: number) => status === 200 && body.id === 'com.linvo.cinemeta' },
+    // TMDB returns its invalid-key JSON when probed without an API key.
+    { url: 'https://api.tmdb.org/3/configuration', matches: (body: Record<string, unknown>, status: number) => status === 401 && body.status_code === 7 },
+  ];
+  const catalogResults = await Promise.all(catalogChecks.map(async ({ url, matches }) => {
     try {
-      const response = await nativeFetchText(target, { method: 'GET', timeoutMs: 5000 });
-      // A reachable catalog source means the internet and our sources are fine.
-      if (response.status > 0) return 'online';
+      const response = await nativeFetchText(url, { timeoutMs: 4500 });
+      return matches(JSON.parse(response.data), response.status);
     } catch {
-      // keep probing
+      return false;
     }
-  }
-  return navigator.onLine === false ? 'no-internet' : 'servers-unreachable';
+  }));
+  if (catalogResults.some(Boolean)) return 'online';
+
+  const internetResults = await Promise.all(KNOWN_SERVERS.map(async (url) => {
+    try {
+      const response = await nativeFetchText(url, { timeoutMs: 4500 });
+      return url.endsWith('/generate_204') ? response.status === 204 : response.ok && /^fl=/m.test(response.data);
+    } catch {
+      return false;
+    }
+  }));
+  if (internetResults.some(Boolean)) return 'servers-unreachable';
+  return 'network-unverified';
 }
 
 export const NETWORK_CONDITION_COPY: Record<NetworkCondition, { title: string; message: string }> = {
-  online: { title: 'Sources did not answer', message: 'The sources are not responding right now. Retry in a moment.' },
+  online: { title: 'Catalog service reachable', message: 'At least one catalog service responded.' },
   'no-internet': { title: 'You are offline', message: 'The device has no internet connection. Reconnect and try again.' },
   'servers-unreachable': {
     title: 'Cannot reach PRAHA sources',
-    message: 'Internet looks fine, but the catalog sources are unreachable — a network filter or DNS block may be in the way. The AdGuard DNS toggle in Settings can help.',
+    message: 'The internet check passed, but neither catalog service answered as expected.',
+  },
+  'network-unverified': {
+    title: 'Connection could not be verified',
+    message: 'The catalog and internet checks did not pass. Check your connection and try again.',
   },
 };

@@ -4,7 +4,7 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface for Strem
 
 **No media is bundled in this repository.** Every title, poster, trailer, cast list, rating, and backdrop is fetched live from TMDB with your own API key, and every stream comes from the addons/repositories you install.
 
-Current version: **2.11.27** · Latest release: [v2.11.27](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/v2.11.27)
+Current version: **2.11.28** · Latest release: [v2.11.28](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/v2.11.28)
 
 ---
 
@@ -13,7 +13,7 @@ Current version: **2.11.27** · Latest release: [v2.11.27](https://github.com/pj
 - **Home & Discovery** — TMDB-backed rows, search, watchlist, continue watching, and profile support.
 - **Live TV** — curated channels, M3U/M3U8 playlists, Xtream-Codes portals, live sports matches, and a virtualized channel list for large playlists.
 - **Movies & Series** — Stremio addon catalogs/streams, Nuvio scraper repositories, source filtering, and quality/codec ranking.
-- **Anime & Comics** — Sanka/Comick browsing and in-app archive.org readers.
+- **Anime & Comics** — All Sources search across comic catalogs, in-app MangaDex and Pepper&Carrot chapters, and archive.org scans.
 - **Books & Audiobooks** — Open Library, archive.org folkscanomy, and Bookracy downloads with an in-app scan reader.
 - **Music & Flow** — YouTube-backed music and Flow tab.
 - **Player** — HLS/DASH/MPEG-TS/progressive playback with buffering recovery, retries, subtitles, audio track switching, and external player handoff.
@@ -40,6 +40,10 @@ npm run dev
 The Vite dev server listens on `0.0.0.0:3000`.
 
 Live TV fixtures use Vite’s ESPN relay in development. To use the relay with a production build, set `VITE_API_PROXY=1` at build time and route `/espn-scoreboard/*` to `https://site.api.espn.com/apis/site/v2/sports/*`. Vite preview includes this route.
+
+Hosted Comics uses the standalone Vercel relay for MangaDex and supported Comick providers. Android uses its native HTTP bridge. Vite handles MangaDex and Comick locally in development. Set `VITE_COMICS_RELAY_URL` to use another relay deployment, or set `VITE_MANGADEX_RELAY=1` to use a same-origin MangaDex route.
+
+Deploy the relay independently with `vercel deploy --cwd relay --prod`. The relay exposes public catalog and chapter metadata and permits chapter HTML only from supported comic hosts. Archive.org and Sanka already allow cross-origin catalog requests.
 
 Quality checks:
 

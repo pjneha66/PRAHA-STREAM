@@ -1,3 +1,5 @@
+import { comicsRelayUrl, usesHostedComicsRelay } from './comicsRelay';
+import { hostedComicPage } from '../relay/comickSources.mjs';
 import { isAndroidApp, nativeFetchText } from './androidBridge';
 
 /**
@@ -7,8 +9,7 @@ import { isAndroidApp, nativeFetchText } from './androidBridge';
  * NOT page images; chapter pages are scraped directly from the aggregator.
  *
  * The API sends no CORS headers at all, so plain desktop browsers cannot reach
- * it: in a browser the calls relay through the vite dev/preview server
- * (`/comick-api`, `/comick-page` — see comickRelayPlugin in vite.config.ts),
+ * it: browsers use Vite in development and the standalone Comics relay in production,
  * while the Android app talks to it directly over nativeFetchText.
  */
 
@@ -117,7 +118,7 @@ export const COMICK_SOURCE_OPTIONS: Array<{ id: string; name: string }> = [
 /** Raw search against one source id (verbatim — no dash conversion). */
 async function searchComickSourceRaw(query: string, source: string, signal?: AbortSignal): Promise<ComickSeries[]> {
   if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
-  const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_SEARCH : API_SEARCH, {
+  const res = await nativeFetchText(browserNeedsRelay() ? comicsRelayUrl(BROWSER_RELAY_SEARCH) : API_SEARCH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, source }),
@@ -134,7 +135,7 @@ async function searchComickSourceRaw(query: string, source: string, signal?: Abo
       for (const entry of batch.results || []) {
         const url = String(entry.url || '');
         const title = String(entry.title || '').trim();
-        if (!isHttpUrl(url) || !title) continue;
+        if (!isHttpUrl(url) || !title || (usesHostedComicsRelay && browserNeedsRelay() && !hostedComicPage(url))) continue;
         series.push({
           id: `${sourceLabel}|${String(entry.id ?? url)}`,
           sourceLabel,
@@ -196,7 +197,7 @@ export async function searchComick(
         for (const entry of batch.results || []) {
           const url = String(entry.url || '');
           const title = String(entry.title || '').trim();
-          if (!isHttpUrl(url) || !title) continue;
+          if (!isHttpUrl(url) || !title || (usesHostedComicsRelay && browserNeedsRelay() && !hostedComicPage(url))) continue;
           series.push({
             id: `${sourceLabel}|${String(entry.id ?? url)}`,
             sourceLabel,
@@ -217,7 +218,7 @@ export async function searchComick(
   if (browserNeedsRelay()) {
     const series: ComickSeries[] = [];
     try {
-      const response = await fetch('/comick-stream', {
+      const response = await fetch(comicsRelayUrl('/comick-stream'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: trimmed, source: subSource || 'all' }),
@@ -269,7 +270,7 @@ export async function searchComick(
 export async function comickChapters(seriesUrl: string): Promise<ComickChapter[]> {
   if (!isHttpUrl(seriesUrl)) return [];
   try {
-    const res = await nativeFetchText(browserNeedsRelay() ? BROWSER_RELAY_CHAPTERS : API_CHAPTERS, {
+    const res = await nativeFetchText(browserNeedsRelay() ? comicsRelayUrl(BROWSER_RELAY_CHAPTERS) : API_CHAPTERS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: seriesUrl }),
@@ -280,7 +281,7 @@ export async function comickChapters(seriesUrl: string): Promise<ComickChapter[]
     const chapters: ComickChapter[] = [];
     for (const chapter of parsed.chapters || []) {
       const url = String(chapter.url || '');
-      if (!isHttpUrl(url)) continue;
+      if (!isHttpUrl(url) || (usesHostedComicsRelay && browserNeedsRelay() && !hostedComicPage(url))) continue;
       const number = Number(chapter.number);
       const title = String(chapter.title || '').trim() || (Number.isFinite(number) ? `Chapter ${number}` : 'Chapter');
       chapters.push({ url, title });
@@ -302,10 +303,10 @@ export async function comickChapterImages(chapterUrl: string): Promise<string[]>
     // Browser: scrape through the vite relay (aggregators block cross-origin
     // reads); device: fetch the chapter page directly over nativeFetchText.
     const fetchUrl = browserNeedsRelay()
-      ? '/comick-page?url=' + encodeURIComponent(chapterUrl)
+      ? comicsRelayUrl('/comick-page?url=' + encodeURIComponent(chapterUrl))
       : chapterUrl;
     const res = await nativeFetchText(fetchUrl, {
-      headers: { 'User-Agent': SCRAPER_UA, Accept: 'text/html' },
+      headers: browserNeedsRelay() ? { Accept: 'text/html' } : { 'User-Agent': SCRAPER_UA, Accept: 'text/html' },
       timeoutMs: 25000,
     });
     if (!res.ok || !res.data) return [];
