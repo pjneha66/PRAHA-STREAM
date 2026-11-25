@@ -17,6 +17,7 @@ import {
   describeInstalledRepository, installPluginRepository, refreshPluginRepository, setPluginEnabled,
 } from '../services/pluginRepositories';
 import { browsePlugins, setPluginBrowse } from '../services/pluginCatalogs';
+import { sameRepository } from '../services/pluginIndex';
 import PluginBrowser from './PluginBrowser';
 import { allowsAdult } from '../services/nsfwGate';
 import type {
@@ -93,13 +94,15 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
     try {
       if (kind === 'jsplugins') {
         const installed = await installPluginRepository(targetUrl);
-        if (pluginRepositories.some((repo) => repo.url === installed.url)) {
+        const installedKey = sameRepository(installed.url);
+        if (pluginRepositories.some((repo) => sameRepository(repo.url) === installedKey)) {
           throw new Error('That plugin repository is already installed.');
         }
         // A Vega repository's providers are read now, so its lists can be
         // browsed straight away (VyseTV reads them at install too).
         const described = await describeInstalledRepository(installed);
-        setPluginRepositories((current) => [...current, described]);
+        setPluginRepositories((current) => current.some((repo) => sameRepository(repo.url) === installedKey) ? current : [...current, described]);
+        setInstallUrl((current) => current.trim() === targetUrl.trim() ? '' : current);
         notify(`${described.name} installed — ${described.plugins.length} plugin${described.plugins.length === 1 ? '' : 's'}.`, 'success');
         return;
       }

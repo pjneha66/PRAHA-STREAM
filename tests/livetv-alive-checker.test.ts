@@ -64,6 +64,12 @@ describe('Live TV stream health check', () => {
     expect(await run('http://stream.example.com/live/1.ts', await loadChecker())).toBe(true);
   });
 
+  it('accepts a range response with a length for the returned bytes', async () => {
+    state.bytes = mpegTs(40);
+    state.headers = { 'content-type': 'video/mp2t', 'content-length': String(state.bytes.length) };
+    expect(await run('http://stream.example.com/live/1.ts', await loadChecker())).toBe(true);
+  });
+
   it('accepts a Matroska stream from its magic number', async () => {
     const buf = new Uint8Array(32 * 1024);
     buf.set([0x1a, 0x45, 0xdf, 0xa3], 0);

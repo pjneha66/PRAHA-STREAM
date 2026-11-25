@@ -18,22 +18,39 @@ import { act, cleanup, render } from '@testing-library/react';
  * Find sources" panel. These tests pin that behaviour.
  */
 
-// These pull in real browser-only engines; the direct (mp4) path under test
-// never reaches either, but the module graph still imports them.
-vi.mock('p2p-media-loader-hlsjs', () => ({ HlsJsP2PEngine: class {} }));
+const hls = vi.hoisted(() => ({
+  supported: false,
+  android: false,
+  configure: vi.fn(),
+  bindP2p: vi.fn(),
+}));
+
+vi.mock('p2p-media-loader-hlsjs', () => ({
+  HlsJsP2PEngine: class {
+    getConfigForHlsJs() { return { fLoader: class P2pLoader {} }; }
+    bindHls = hls.bindP2p;
+    addEventListener() {}
+    destroy() {}
+  },
+}));
 vi.mock('hls.js', () => ({
-  default: {
-    isSupported: () => false,
-    Events: {
+  default: class {
+    static isSupported = () => hls.supported;
+    static DefaultConfig = { loader: class {} };
+    static Events = {
       MANIFEST_PARSED: 'manifest', LEVEL_SWITCHED: 'lvl', LEVELS_UPDATED: 'lvlup',
       AUDIO_TRACKS_UPDATED: 'aud', AUDIO_TRACK_SWITCHED: 'audsw', ERROR: 'err',
-    },
-    ErrorTypes: { NETWORK_ERROR: 'net', MEDIA_ERROR: 'med' },
+    };
+    constructor(config: unknown) { hls.configure(config); }
+    on() {}
+    loadSource() {}
+    attachMedia() {}
+    destroy() {}
   },
 }));
 
 vi.mock('../services/androidBridge', () => ({
-  isAndroidApp: () => false,
+  isAndroidApp: () => hls.android,
   nativeFetchText: async () => ({ ok: false, status: 0, data: '' }),
   openExternalPlayer: () => undefined,
   resolvePlayableStreamUrl: (stream: { url: string }) => stream.url,
@@ -54,7 +71,11 @@ import { DEFAULT_PLAYER_SETTINGS } from '../data/defaults';
  * The hook attaches to a `<video>` handed to it by ref, so the harness has to
  * render one — an empty component gives it nothing to watch.
  */
-function Harness({ url, onFatalError }: { url: string; onFatalError: (m: string) => void }) {
+function Harness({ url, onFatalError, onEngineFallback }: {
+  url: string;
+  onFatalError: (m: string) => void;
+  onEngineFallback?: (m: string) => void;
+}) {
   const engine = useMpvEngine({
     url,
     subtitles: [],
@@ -64,6 +85,7 @@ function Harness({ url, onFatalError }: { url: string; onFatalError: (m: string)
     // Force the web path: the native engines do not exist in jsdom.
     forceWebEngine: true,
     onFatalError,
+    onEngineFallback,
     onSettingsChange: () => undefined,
     onProgress: () => undefined,
     playerSettings: DEFAULT_PLAYER_SETTINGS,
@@ -72,6 +94,10 @@ function Harness({ url, onFatalError }: { url: string; onFatalError: (m: string)
 }
 
 beforeEach(() => {
+  hls.supported = false;
+  hls.android = false;
+  hls.configure.mockClear();
+  hls.bindP2p.mockClear();
   vi.useFakeTimers();
   // jsdom has no media stack; a rejected play() is the same symptom a dead
   // source produces in a real WebView.
@@ -104,7 +130,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('HLS fragment loading', () => {
+  it('uses the Android-compatible HTTP loader in Android WebView', () => {
+    hls.supported = true;
+    hls.android = true;
+    render(<Harness url="https://example.com/stream.m3u8" onFatalError={vi.fn()} />);
+
+    expect(hls.configure).toHaveBeenCalledWith(expect.objectContaining({
+      loader: expect.any(Function),
+      capLevelOnFPSDrop: true,
+    }));
+    expect(hls.configure.mock.calls[0][0]).not.toHaveProperty('fLoader');
+    expect(hls.bindP2p).not.toHaveBeenCalled();
+  });
+
+  it('keeps the P2P fragment loader in a normal web browser', () => {
+    hls.supported = true;
+    render(<Harness url="https://example.com/stream.m3u8" onFatalError={vi.fn()} />);
+
+    expect(hls.configure).toHaveBeenCalledWith(expect.objectContaining({ fLoader: expect.any(Function) }));
+    expect(hls.bindP2p).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('the web player on a source that never loads', () => {
+  it('keeps playback attached when the fallback notification callback changes', () => {
+    const url = 'https://example.com/stream.mp4';
+    const onFatalError = vi.fn();
+    const { rerender } = render(<Harness url={url} onFatalError={onFatalError} onEngineFallback={vi.fn()} />);
+    const play = vi.mocked(HTMLMediaElement.prototype.play);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    rerender(<Harness url={url} onFatalError={onFatalError} onEngineFallback={vi.fn()} />);
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a fatal error instead of loading forever', () => {
     const onFatalError = vi.fn();
     render(<Harness url="https://example.com/dead.mp4" onFatalError={onFatalError} />);

@@ -217,6 +217,15 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // BridgeActivity creates the bridge during super.onCreate, so add
+        // the bundled plugins to its builder before that call.
+        // On the ARM64 Android emulator, this FFmpeg build can abort while
+        // probing SVE during dlopen. Let Media3 handle playback on that host.
+        if (!("ranchu".equals(Build.HARDWARE) && "arm64-v8a".equals(Build.SUPPORTED_ABIS[0]))) {
+            registerPlugin(PrahaMpvPlugin.class);
+        }
+        registerPlugin(PrahaMedia3Plugin.class);
+        registerPlugin(PrahaTorrServerPlugin.class);
         super.onCreate(savedInstanceState);
         // Extensions get this activity for dialogs and toasts, and PluginManager
         // waits for it before calling a plugin's load(). Set before anything can
@@ -236,12 +245,6 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                     }
                     return kotlin.Unit.INSTANCE;
                 });
-        // The mpv engine is a Capacitor plugin but is not installed by npm, so
-        // Capacitor's automatic scanning never sees it. Registering it here is
-        // what puts `Capacitor.Plugins.PrahaMpv` on the JS side.
-        registerPlugin(PrahaMpvPlugin.class);
-        registerPlugin(PrahaMedia3Plugin.class);
-        registerPlugin(PrahaTorrServerPlugin.class);
         streamProxy.start();
 
         subtitlePickerLauncher = registerForActivityResult(
@@ -356,7 +359,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
             public void handleOnBackPressed() {
                 if (getBridge() != null && getBridge().getWebView() != null) {
                     getBridge().getWebView().evaluateJavascript(
-                            "window.dispatchEvent(new CustomEvent('praha:hardware-back'));",
+                            "document.dispatchEvent(new CustomEvent('praha:hardware-back', { bubbles: true, cancelable: true }));",
                             null
                     );
                 } else {

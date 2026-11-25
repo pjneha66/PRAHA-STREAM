@@ -4,7 +4,7 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface for Strem
 
 **No media is bundled in this repository.** Every title, poster, trailer, cast list, rating, and backdrop is fetched live from TMDB with your own API key, and every stream comes from the addons/repositories you install.
 
-Current version: **2.11.26** · Latest release: [v2.11.26](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/v2.11.26)
+Current version: **2.11.27** · Latest release: [v2.11.27](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/v2.11.27)
 
 ---
 
@@ -38,6 +38,8 @@ npm run dev
 ```
 
 The Vite dev server listens on `0.0.0.0:3000`.
+
+Live TV fixtures use Vite’s ESPN relay in development. To use the relay with a production build, set `VITE_API_PROXY=1` at build time and route `/espn-scoreboard/*` to `https://site.api.espn.com/apis/site/v2/sports/*`. Vite preview includes this route.
 
 Quality checks:
 

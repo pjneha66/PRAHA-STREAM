@@ -100,7 +100,6 @@ export function startNativePlayback(options: NativePlaybackOptions): NativePlayb
   let lastPosition = startSeconds ?? 0;
   let guardAttempt = 0;
   let guardDeadline = Date.now() + START_GUARD_MS;
-  let liveLastPosition = 0;
   let liveStallTicks = 0;
 
   const rearm = () => {
@@ -120,6 +119,9 @@ export function startNativePlayback(options: NativePlaybackOptions): NativePlayb
     unsubscribers = [
       handle.onState((state) => {
         if (stopped) return;
+        // Live HLS positions are relative to a sliding window and can move
+        // backwards when the playlist rolls forward, even while video plays.
+        if (Math.abs(state.currentTime - lastPosition) > 0.05) liveStallTicks = 0;
         if (state.currentTime > lastPosition + 0.05) sawOutput = true;
         if (state.currentTime > 0) lastPosition = state.currentTime;
         handlers.onState(state);
@@ -198,18 +200,13 @@ export function startNativePlayback(options: NativePlaybackOptions): NativePlayb
     }
     // Output has been produced: only live streams get the freeze watchdog.
     if (!isLive) return;
-    if (lastPosition > liveLastPosition + 0.5) {
-      liveLastPosition = lastPosition;
-      liveStallTicks = 0;
-      return;
-    }
     liveStallTicks += 1;
     if (liveStallTicks < LIVE_STALL_TICKS) return;
     liveStallTicks = 0;
-    // One silent reconnect at the same position, then hand off to the next engine.
+    // Reconnect at the current live edge before handing off to the next engine.
     if (guardAttempt === 0) {
       rearm();
-      void handle.load(targetUrl, { headers, startSeconds: lastPosition, autoplay, isLive }).catch(() => {
+      void handle.load(targetUrl, { headers, autoplay, isLive }).catch(() => {
         fail('This live stream froze.');
       });
       return;

@@ -2,6 +2,8 @@ package com.praha.stream.media3
 
 import android.content.Context
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.ViewGroup
@@ -25,6 +27,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.SubtitleView
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -60,6 +63,8 @@ import java.util.concurrent.Executors
 class PrahaMedia3Plugin : Plugin() {
 
     private var player: ExoPlayer? = null
+    private var videoContainer: FrameLayout? = null
+    private var videoFrame: AspectRatioFrameLayout? = null
     private var surfaceView: SurfaceView? = null
     private var subtitleView: SubtitleView? = null
     private var cronetEngine: CronetEngine? = null
@@ -72,6 +77,14 @@ class PrahaMedia3Plugin : Plugin() {
     private var pendingSeekMs: Long? = null
     private var pendingPlayWhenReady = true
     private var lastCues: CueGroup? = null
+    private val progressHandler = Handler(Looper.getMainLooper())
+    private val progressUpdate = object : Runnable {
+        override fun run() {
+            if (player?.isPlaying != true) return
+            emitProgress()
+            progressHandler.postDelayed(this, 500L)
+        }
+    }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -177,6 +190,9 @@ class PrahaMedia3Plugin : Plugin() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 notifyListeners("playing", JSObject().put("playing", isPlaying))
+                progressHandler.removeCallbacks(progressUpdate)
+                if (isPlaying) progressHandler.post(progressUpdate)
+                else emitProgress()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -193,6 +209,7 @@ class PrahaMedia3Plugin : Plugin() {
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
+                updateVideoAspect(videoSize)
                 notifyListeners(
                     "videoSize",
                     JSObject()
@@ -216,6 +233,7 @@ class PrahaMedia3Plugin : Plugin() {
     }
 
     private fun releasePlayer() {
+        progressHandler.removeCallbacks(progressUpdate)
         try {
             player?.release()
         } catch (_: Throwable) {
@@ -248,9 +266,13 @@ class PrahaMedia3Plugin : Plugin() {
                         return@runOnUiThread
                     }
 
-                if (surfaceView == null) {
+                if (videoContainer == null) {
+                    val container = FrameLayout(context).apply { setBackgroundColor(Color.BLACK) }
+                    val frame = AspectRatioFrameLayout(context)
+                    val match = ViewGroup.LayoutParams.MATCH_PARENT
+                    container.addView(frame, FrameLayout.LayoutParams(match, match, Gravity.CENTER))
                     val surface = SurfaceView(context)
-                    parent.addView(surface, 0, FrameLayout.LayoutParams(width, height))
+                    frame.addView(surface, FrameLayout.LayoutParams(match, match))
                     surfaceView = surface
 
                     // Subtitles are a sibling above the surface but below the
@@ -268,17 +290,15 @@ class PrahaMedia3Plugin : Plugin() {
                     )
                     subs.setFractionalTextSize(1f)
                     subs.setBottomPaddingFraction(0.08f)
-                    val subParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                    subParams.gravity = Gravity.CENTER
-                    parent.addView(subs, 1, subParams)
+                    frame.addView(subs, FrameLayout.LayoutParams(match, match))
                     subtitleView = subs
+                    videoFrame = frame
+                    videoContainer = container
+                    parent.addView(container, 0)
+                    player?.videoSize?.let(::updateVideoAspect)
                 }
 
-                surfaceView?.let { updateSurfaceRect(it, x, y, width, height) }
-                subtitleView?.let { updateSurfaceRect(it, x, y, width, height) }
+                videoContainer?.let { updateSurfaceRect(it, x, y, width, height) }
                 bindSurface()
                 // The surface is added behind the WebView, so an opaque WebView
                 // covers it. MainActivity sets an opaque backdrop; the native
@@ -299,13 +319,12 @@ class PrahaMedia3Plugin : Plugin() {
         val height = call.getInt("height") ?: 0
 
         activity.runOnUiThread {
-            val surface = surfaceView
-            if (surface == null) {
+            val container = videoContainer
+            if (container == null) {
                 call.reject("No surface attached.")
                 return@runOnUiThread
             }
-            updateSurfaceRect(surface, x, y, width, height)
-            subtitleView?.let { updateSurfaceRect(it, x, y, width, height) }
+            updateSurfaceRect(container, x, y, width, height)
             call.resolve()
         }
     }
@@ -326,8 +345,7 @@ class PrahaMedia3Plugin : Plugin() {
     }
 
     private fun updateSurfaceRect(view: android.view.View, x: Int, y: Int, width: Int, height: Int) {
-        val params = view.layoutParams as? FrameLayout.LayoutParams
-            ?: FrameLayout.LayoutParams(width, height)
+        val params = view.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         params.width = width
         params.height = height
         params.leftMargin = x
@@ -342,9 +360,15 @@ class PrahaMedia3Plugin : Plugin() {
         exo.setVideoSurfaceView(surface)
     }
 
+    private fun updateVideoAspect(size: VideoSize) {
+        val ratio = if (size.height > 0) size.width * size.pixelWidthHeightRatio / size.height else 0f
+        videoFrame?.setAspectRatio(ratio)
+    }
+
     private fun removeOverlayViews() {
-        surfaceView?.let { view -> (view.parent as? ViewGroup)?.removeView(view) }
-        subtitleView?.let { view -> (view.parent as? ViewGroup)?.removeView(view) }
+        videoContainer?.let { view -> (view.parent as? ViewGroup)?.removeView(view) }
+        videoContainer = null
+        videoFrame = null
         surfaceView = null
         subtitleView = null
     }

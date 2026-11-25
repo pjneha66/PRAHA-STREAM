@@ -34,7 +34,7 @@
 //     way. `_stopped` survives only for the sharing handoff, which is not
 //     ported, so the player has no stopped state to re-enter.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, Maximize, Minimize, Pause, Play, SkipBack, SkipForward,
   SignalZero, VolumeX, Volume2,
@@ -205,6 +205,17 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
     onExpand();
   }, [chrome, clearHide, expanded, onExpand]);
 
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    const onHardwareBack = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      backKey();
+    };
+    window.addEventListener('praha:hardware-back', onHardwareBack, true);
+    return () => window.removeEventListener('praha:hardware-back', onHardwareBack, true);
+  }, [backKey, expanded]);
+
   // ── expand / step ──────────────────────────────────────────────────────
   /** VyseTV's `_step`: hand the direction to the page, then restart the timer. */
   const step = useCallback((direction: 1 | -1) => {
@@ -258,6 +269,8 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
           event.preventDefault();
           return;
         case ' ':
+          if (target instanceof HTMLElement && target.closest('button, a[href], [role="button"]')) return;
+          // Fall through for the picture and other playback shortcuts.
         case 'k':
         case 'K':
           toggle();
@@ -286,10 +299,10 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
         case 'ArrowUp':
           // On the picture ↑ steps back a channel; on the controls it belongs
           // to the browser's own focus movement.
-          if (!chrome && onStep) { step(-1); event.preventDefault(); }
+          if (expanded && !chrome && onStep) { step(-1); event.preventDefault(); }
           return;
         case 'ArrowDown':
-          if (!chrome && onStep) { step(1); event.preventDefault(); }
+          if (expanded && !chrome && onStep) { step(1); event.preventDefault(); }
           return;
         case 'ArrowLeft':
         case 'ArrowRight':
@@ -302,8 +315,8 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
         default:
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [backKey, chrome, expanded, onExpand, onStep, poke, step, toggle, toggleMute]);
 
   // A controller never produces a `keydown` in a browser. VyseTV binds a pad's
@@ -386,6 +399,9 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
     <div
       ref={attachWidth}
       className={`blp-root ${full ? 'is-full' : 'is-pane'} ${chrome ? 'chrome-on' : 'chrome-off'} ${nativeActive ? 'is-native' : ''}`}
+      role={full ? 'dialog' : undefined}
+      aria-modal={full || undefined}
+      aria-label={full ? item.title : undefined}
       onMouseMove={poke}
       onTouchStart={poke}
       onClick={onPictureTap}
@@ -427,7 +443,7 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
         </div>
       )}
 
-      <div className="blp-chrome" onClick={(event) => event.stopPropagation()}>
+      <div className="blp-chrome" inert={!chrome} onClick={(event) => event.stopPropagation()}>
         {full && (
           <div className="blp-top">
             <button type="button" className="blp-glass" onClick={onExpand} aria-label="Back to the list (Esc)">

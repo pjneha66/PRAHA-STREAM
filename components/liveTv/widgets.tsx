@@ -72,12 +72,14 @@ export function FilterChipPill({
   icon: Icon,
   title,
   onClick,
+  disabled,
 }: {
   label: React.ReactNode;
   selected?: boolean;
   icon?: IconType;
   title?: string;
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -86,6 +88,7 @@ export function FilterChipPill({
       aria-pressed={selected || undefined}
       title={title}
       onClick={onClick}
+      disabled={disabled}
     >
       {Icon ? <Icon size={14} /> : null}
       {label}
@@ -219,6 +222,7 @@ export function InfoTile({
 }) {
   const activate = useCallback(
     (event: React.KeyboardEvent) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       onClick?.();

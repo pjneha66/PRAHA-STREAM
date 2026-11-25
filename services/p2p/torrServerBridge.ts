@@ -1,4 +1,4 @@
-import { registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
 /**
  * Native lifecycle bridge for the TorrServer executable bundled in jniLibs.
@@ -36,8 +36,5 @@ export const PrahaTorrServer = registerPlugin<PrahaTorrServerPlugin>('PrahaTorrS
 
 /** True only in an APK that registered PrahaTorrServerPlugin in MainActivity. */
 export function torrServerNativeAvailable(): boolean {
-  if (typeof window === 'undefined') return false;
-  const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, unknown> } })
-    .Capacitor?.Plugins;
-  return Boolean(plugins?.PrahaTorrServer);
+  return Capacitor.isPluginAvailable('PrahaTorrServer');
 }

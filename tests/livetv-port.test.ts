@@ -204,7 +204,7 @@ describe('match finder', () => {
   it('resolves ESPN aliases and falls back to the league rights holders', () => {
     const match = parseEspnScoreboard(scoreboard, league)[0];
     const channels = channelsForMatch(match, [{ id: 'nbc_sports', name: 'NBC Sports' }, { id: 'sky_sports', name: 'Sky Sports' }]);
-    expect(channels.map((channel) => channel.id)).toContain('nbc_sports');
+    expect(channels.filter((channel) => channel.id === 'nbc_sports')).toHaveLength(1);
     expect(channels.map((channel) => channel.id)).toContain('sky_sports');
     expect(resolveBroadcast('Some Random TV').id).toBe('bc_some random tv');
   });

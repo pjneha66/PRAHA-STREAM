@@ -10,6 +10,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(',');
 
 function isVisible(el: HTMLElement): boolean {
+  if (el.closest('[inert]')) return false;
   if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false;
   const rect = el.getBoundingClientRect();
   return rect.width > 4 && rect.height > 4;
@@ -27,6 +28,7 @@ export function useSpatialNavigation(enabled: boolean, paused = false) {
     if (!active || paused) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const dirMap: Record<string, { dx: number; dy: number }> = {
         ArrowUp: { dx: 0, dy: -1 },
         ArrowDown: { dx: 0, dy: 1 },

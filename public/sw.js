@@ -43,7 +43,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== self.location.origin) return;
-  if (/^\/(sanka|sanka-mirror|sanka-img|anicore|anikura|imdx)(\/|$)/.test(url.pathname)) return;
+  if (/^\/(sanka|sanka-mirror|sanka-img|anicore|anikura|imdx|espn-scoreboard)(\/|$)/.test(url.pathname)) return;
 
   event.respondWith(
     fetch(request)

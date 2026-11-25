@@ -126,14 +126,13 @@ export class IptvClient {
     }
   }
 
-  static async streams(portal: IptvPortal, kind: IptvSection, categoryId = ''): Promise<IptvStream[]> {
+  static async streams(portal: IptvPortal, kind: IptvSection, categoryId = '', { strict = false } = {}): Promise<IptvStream[]> {
     const base = `${portal.url}/player_api.php?username=${enc(portal.username)}&password=${enc(portal.password)}&action=${IptvClient.action(kind, 'streams')}`;
     const url = categoryId ? `${base}&category_id=${enc(categoryId)}` : base;
     const text = await IptvClient.httpGet(url, 15000);
-    if (!text) return [];
     try {
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) return [];
+      const parsed = text ? JSON.parse(text) : null;
+      if (!Array.isArray(parsed)) throw new Error('Invalid channel list');
       return parsed.map((row): IptvStream => {
         const item = record(row) || {};
         const ext = kind === 'live' ? 'ts' : kind === 'vod' ? String(item.container_extension ?? 'mp4') || 'mp4' : '';
@@ -151,6 +150,7 @@ export class IptvClient {
         };
       });
     } catch {
+      if (strict) throw new Error('The portal did not return a valid list.');
       return [];
     }
   }
@@ -360,9 +360,8 @@ export class IptvAliveChecker {
       // a short reply is normal and not evidence of a stub.
       const ended = status !== 206 && buf.length < IptvAliveChecker.MAX_BYTES;
       if (ended && buf.length < IptvAliveChecker.MIN_BYTES) return false;
-      // Dart rejects a small declared length outright: live TS is chunked and
-      // reports no content-length, so a bounded one is a stub page.
-      if (Number.isFinite(contentLength) && contentLength >= 1 && contentLength <= 5_000_000) return false;
+      // On 206, Content-Length describes only the range we requested.
+      if (status !== 206 && Number.isFinite(contentLength) && contentLength >= 1 && contentLength <= 5_000_000) return false;
 
       // MPEG-TS: sync byte 0x47 every 188 bytes.
       if (buf[0] === 0x47) {

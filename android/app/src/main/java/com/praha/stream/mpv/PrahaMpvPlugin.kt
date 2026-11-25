@@ -8,7 +8,6 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import com.edde746.mpv.MpvEvent
 import com.edde746.mpv.MpvPlayer
 import com.edde746.mpv.MpvPlayerConfig
@@ -310,7 +309,7 @@ class PrahaMpvPlugin : Plugin() {
                     created.holder.setFixedSize(width.coerceAtLeast(1), height.coerceAtLeast(1))
                     // Behind the WebView, in the same slot the page leaves
                     // transparent.
-                    parent.addView(created, 0, FrameLayout.LayoutParams(width, height))
+                    parent.addView(created, 0)
                     surfaceView = created
                 }
 
@@ -326,7 +325,7 @@ class PrahaMpvPlugin : Plugin() {
                     osd.holder.setFormat(PixelFormat.TRANSLUCENT)
                     osd.setZOrderOnTop(false)
                     osd.setZOrderMediaOverlay(true)
-                    parent.addView(osd, 1, FrameLayout.LayoutParams(width, height))
+                    parent.addView(osd, 1)
                     osdSurfaceView = osd
                 }
 
@@ -532,8 +531,7 @@ class PrahaMpvPlugin : Plugin() {
     }
 
     private fun updateSurfaceRect(view: SurfaceView, x: Int, y: Int, width: Int, height: Int) {
-        val params = view.layoutParams as? FrameLayout.LayoutParams
-            ?: FrameLayout.LayoutParams(width, height)
+        val params = view.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         params.width = width
         params.height = height
         params.leftMargin = x

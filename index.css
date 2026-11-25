@@ -3574,11 +3574,12 @@ html.player-vlc-active .app-shell,
 .plugin-card-action { display: inline-flex; flex: none; align-items: center; gap: 4px; min-height: 30px; padding: 0 11px; border: 0; border-radius: 999px; font-size: 10px; font-weight: 750; }
 .plugin-card-action.install { background: var(--accent); color: #0b0d10; cursor: pointer; }
 .plugin-card-action.install:hover { filter: brightness(1.06); }
+.plugin-card-action.install:disabled { opacity: .5; cursor: default; }
 .plugin-card-action.done { background: rgba(61, 220, 151, .12); color: #3ddc97; }
 .plugin-card-action.busy { justify-content: center; width: 62px; color: var(--muted); }
 .plugin-card-body { display: -webkit-box; overflow: hidden; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .plugin-card-body.error { color: #ff6b6b; }
-.plugin-card-tags { display: flex; align-items: center; gap: 6px; margin-top: auto; color: var(--muted-2); font-size: 9.5px; }
+.plugin-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; color: var(--muted-2); font-size: 9.5px; }
 .plugin-card-tags > span { padding: 3px 7px; border-radius: 7px; background: rgba(255, 255, 255, .05); white-space: nowrap; }
 .plugin-card-tags > span.strong { background: rgba(var(--accent-rgb), .13); color: var(--accent); font-weight: 700; }
 .plugin-card-tags > span.spacer { flex: 1; padding: 0; background: none; }

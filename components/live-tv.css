@@ -1211,10 +1211,7 @@
   align-items: start;
 }
 
-/* VyseTV's `_panes`: with room for the picture, the browser is categories ·
-   list · watch pane, 14 px apart, the list clamped the way Dart clamps it. */
 .ltv-browser-panes.has-watch {
-  grid-template-columns: minmax(190px, min(300px, 24%)) minmax(340px, min(440px, 30%)) minmax(340px, 1fr);
   align-items: stretch;
 }
 
@@ -1338,8 +1335,7 @@
 }
 
 @media (max-width: 719px) {
-  .ltv-browser-panes,
-  .ltv-browser-panes.has-watch { grid-template-columns: minmax(0, 1fr); }
+  .ltv-browser-panes { grid-template-columns: minmax(0, 1fr); }
   .ltv-cat-list { max-height: 260px; }
   .ltv-match-shelf { grid-auto-columns: minmax(240px, 260px); }
 }

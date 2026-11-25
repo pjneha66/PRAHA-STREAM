@@ -8,6 +8,7 @@
 import type { LiveMatchEvent } from './models';
 import { toEpochMs, type EpgProgram } from './guide';
 import { getJson } from './http';
+import { isAndroidApp } from '../androidBridge';
 
 export type SportKind = 'football' | 'basketball' | 'americanFootball' | 'hockey' | 'mma' | 'motorsport';
 
@@ -108,11 +109,15 @@ export function channelsForMatch(match: ScheduleMatch, catalog: readonly Channel
   const out: ChannelLike[] = [];
   for (const broadcast of match.broadcasts) {
     const channel = resolveBroadcast(broadcast, catalog);
-    if (channel.id && seen.add(channel.id)) out.push(channel);
+    if (!channel.id || seen.has(channel.id)) continue;
+    seen.add(channel.id);
+    out.push(channel);
   }
   const league = ESPN_LEAGUES.find((item) => item.path === match.leaguePath);
   for (const id of league?.channels || []) {
-    if (seen.add(id)) out.push(catalog.find((channel) => channel.id === id) || { id, name: id.replace(/_/g, ' '), keywords: [id] });
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(catalog.find((channel) => channel.id === id) || { id, name: id.replace(/_/g, ' '), keywords: [id] });
   }
   return out;
 }
@@ -308,26 +313,24 @@ export function groupHits<T>(hits: readonly T[], nameOf: (hit: T) => string): Ma
 }
 
 const ESPN_ORIGIN = 'https://site.api.espn.com/apis/site/v2/sports';
+const USE_ESPN_PROXY = import.meta.env.DEV || import.meta.env.VITE_API_PROXY === '1';
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const scheduleCache = new Map<string, { at: number; matches: ScheduleMatch[] }>();
+const schedulePending = new Map<string, Promise<ScheduleMatch[]>>();
 
 function ymd(day: Date): string {
   return `${day.getFullYear()}${String(day.getMonth() + 1).padStart(2, '0')}${String(day.getDate()).padStart(2, '0')}`;
 }
 
-async function fetchLeague(league: ScheduleLeague, dates: string, timeoutMs: number): Promise<ScheduleMatch[]> {
-  try {
-    const url = `${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${dates}`;
-    let bodies = [await getJson(url, timeoutMs)];
-    if (!bodies[0]) {
-      const [from, to] = dates.split('-');
-      const middle = ymd(new Date(Number(from.slice(0, 4)), Number(from.slice(4, 6)) - 1, Number(from.slice(6, 8)) + 1));
-      bodies = await Promise.all([from, middle, to].map((day) => getJson(`${ESPN_ORIGIN}/${league.path}/scoreboard?dates=${day}`, timeoutMs)));
-    }
-    return bodies.flatMap((body) => (body ? parseEspnScoreboard(body, league) : []));
-  } catch {
-    return [];
+async function fetchLeague(league: ScheduleLeague, dates: readonly [string, string, string], timeoutMs: number): Promise<ScheduleMatch[] | null> {
+  const base = USE_ESPN_PROXY && !isAndroidApp() ? '/espn-scoreboard' : ESPN_ORIGIN;
+  const fetchDay = (day: string) => getJson<{ events?: unknown[] }>(`${base}/${league.path}/scoreboard?dates=${day}`, timeoutMs);
+  let bodies = [await fetchDay(`${dates[0]}-${dates[2]}`)];
+  if (!Array.isArray(bodies[0]?.events)) {
+    bodies = await Promise.all(dates.map(fetchDay));
   }
+  const scoreboards = bodies.filter((body) => Array.isArray(body?.events));
+  return scoreboards.length ? scoreboards.flatMap((body) => parseEspnScoreboard(body, league)) : null;
 }
 
 /** All leagues' fixtures on `day` (local), soonest first. Cached for two minutes. */
@@ -335,21 +338,36 @@ export async function fetchEspnSchedule(day: Date = new Date(), options: { refre
   const key = ymd(day);
   const hit = scheduleCache.get(key);
   if (!options.refresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.matches;
-  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
-  const end = start + 24 * 60 * 60 * 1000;
-  const from = ymd(new Date(start - 24 * 60 * 60 * 1000));
-  const to = ymd(new Date(end + 24 * 60 * 60 * 1000));
+  const pending = schedulePending.get(key);
+  if (pending) return pending;
+
+  const year = day.getFullYear();
+  const month = day.getMonth();
+  const date = day.getDate();
+  const start = new Date(year, month, date).getTime();
+  const nextDay = new Date(year, month, date + 1);
+  const end = nextDay.getTime();
+  const dates = [ymd(new Date(year, month, date - 1)), key, ymd(nextDay)] as const;
   const timeoutMs = options.timeoutMs || 15000;
-  const results = await Promise.all(ESPN_LEAGUES.map((league) => fetchLeague(league, `${from}-${to}`, timeoutMs)));
-  const seen = new Set<string>();
-  const matches = results.flat().filter((match) => {
-    if (seen.has(match.id)) return false;
-    seen.add(match.id);
-    if (match.eventMode) return match.start < end && match.start + 3 * 24 * 60 * 60 * 1000 > start;
-    return match.start >= start && match.start < end;
-  }).sort((a, b) => a.start - b.start);
-  if (matches.length || hit) scheduleCache.set(key, { at: Date.now(), matches });
-  return matches.length ? matches : hit?.matches || [];
+  const request = Promise.all(ESPN_LEAGUES.map((league) => fetchLeague(league, dates, timeoutMs)))
+    .then((results) => {
+      if (results.every((result) => result === null)) {
+        if (hit) return hit.matches;
+        throw new Error("Couldn't load fixtures.");
+      }
+      const seen = new Set<string>();
+      const matches = results.flatMap((result) => result ?? []).filter((match) => {
+        if (seen.has(match.id)) return false;
+        seen.add(match.id);
+        if (match.eventMode) return match.start < end && match.start + 3 * 24 * 60 * 60 * 1000 > start;
+        return match.start >= start && match.start < end;
+      }).sort((a, b) => a.start - b.start);
+      scheduleCache.set(key, { at: Date.now(), matches });
+      return matches;
+    })
+    .finally(() => schedulePending.delete(key));
+  schedulePending.set(key, request);
+  return request;
 }
 
 export function clearEspnScheduleCache(): void {

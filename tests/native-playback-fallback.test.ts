@@ -96,6 +96,28 @@ beforeEach(async () => {
 });
 
 describe('startNativePlayback fallback', () => {
+  it('keeps playing when the live playlist rolls the position backwards', async () => {
+    vi.useFakeTimers();
+    const h = handlers();
+    const session = startNativePlayback({
+      engine: 'mpv', chain, surface: document.createElement('video'),
+      url: 'https://example.com/live.m3u8',
+      autoplay: true, isLive: true, volume: 100, rate: 1, handlers: h,
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 15; i++) {
+        emitted('propertyChange', { name: 'time-pos', value: 1780 + (i % 3) * 2 });
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+      expect(fake.calls.filter((call) => call.method === 'load')).toHaveLength(1);
+      expect(h.onFallback).not.toHaveBeenCalled();
+    } finally {
+      session.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('starts on mpv when it is first in the chain', async () => {
     const surface = document.createElement('video');
     const h = handlers();

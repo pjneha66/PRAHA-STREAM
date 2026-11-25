@@ -1,22 +1,21 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest';
+import { Capacitor } from '@capacitor/core';
 import { media3Available, PrahaMedia3 } from '../services/media3Bridge';
 
 /** The bridge must degrade gracefully in the browser/PWA where no native plugin exists. */
 describe('media3Bridge availability', () => {
   afterEach(() => {
-    delete (window as any).Capacitor;
+    Object.assign(Capacitor, { PluginHeaders: undefined });
   });
 
   it('is false when the Capacitor native plugin is absent', () => {
-    (window as any).Capacitor = undefined;
     expect(media3Available()).toBe(false);
   });
 
   it('is true only when PrahaMedia3 is registered', () => {
-    (window as any).Capacitor = { Plugins: {} };
     expect(media3Available()).toBe(false);
-    (window as any).Capacitor = { Plugins: { PrahaMedia3: {} } };
+    Object.assign(Capacitor, { PluginHeaders: [{ name: 'PrahaMedia3' }] });
     expect(media3Available()).toBe(true);
   });
 

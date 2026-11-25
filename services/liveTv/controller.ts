@@ -176,7 +176,8 @@ export class IptvController {
   private channelCatalogAfter = new Map<string, string | null>();
   private channelPool = new Map<string, IptvPortal[]>();
   private channelPending = new Map<string, IptvPortal[]>();
-  private aliveCancel = false;
+  private sectionRequest = 0;
+  private aliveCheck = 0;
   private xtremeGroupsCache: PortalChannelGroup[] | null = null;
   private m3uGroupsCache: M3uChannelGroup[] | null = null;
   private xtremeFuture: Promise<PortalChannelGroup[]> | null = null;
@@ -727,6 +728,8 @@ export class IptvController {
   }
 
   async openSection(portal: VerifiedPortal, section: IptvSection): Promise<void> {
+    const request = ++this.sectionRequest;
+    ++this.aliveCheck;
     this.activePortal = portal;
     this.activeSection = section;
     this.view = 'browser';
@@ -738,11 +741,15 @@ export class IptvController {
     this.browserSearch = '';
     this.aliveStreamIds = new Set();
     this.aliveCheckedAt = null;
+    this.isVerifyingAlive = false;
+    this.aliveChecked = this.aliveTotal = this.aliveCount = 0;
     this.epgCache.clear();
     this.notify();
     try {
       const categories = await IptvClient.categories(portal.portal, section);
-      const streams = await IptvClient.streams(portal.portal, section, '');
+      if (request !== this.sectionRequest) return;
+      const streams = await IptvClient.streams(portal.portal, section, '', { strict: true });
+      if (request !== this.sectionRequest) return;
       this.categories = [{ id: '', name: 'All' }, ...categories];
       this.browserAllStreams = streams;
       this.browserSelectedCategoryId = categories[0]?.id ?? '';
@@ -758,10 +765,13 @@ export class IptvController {
         this.liveOnly = false;
       }
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (request === this.sectionRequest) this.error = error instanceof Error ? error.message : String(error);
     } finally {
-      this.isLoading = false;
-      this.notify();
+      if (request === this.sectionRequest) {
+        this.isLoading = false;
+        this.notify();
+        if (section === 'live' && !this.error && this.liveOnly) void this.startAliveCheck();
+      }
     }
   }
 
@@ -786,12 +796,13 @@ export class IptvController {
     this.aliveTotal = entries.length;
     this.aliveCount = 0;
     const aliveIds = new Set<string>();
-    this.aliveCancel = false;
+    const check = ++this.aliveCheck;
     this.notify();
     await IptvAliveChecker.launchCheck({
       streams: entries,
       onResult: (id, alive) => { if (alive) aliveIds.add(id); },
       onProgress: (progress) => {
+        if (check !== this.aliveCheck) return;
         this.aliveChecked = progress.checked;
         this.aliveTotal = progress.total;
         this.aliveCount = progress.alive;
@@ -804,12 +815,12 @@ export class IptvController {
         this.isVerifyingAlive = false;
         this.notify();
       },
-      isCancelled: () => this.aliveCancel,
+      isCancelled: () => check !== this.aliveCheck,
     });
   }
 
   stopAliveCheck(): void {
-    this.aliveCancel = true;
+    ++this.aliveCheck;
     this.isVerifyingAlive = false;
     this.notify();
   }
@@ -834,6 +845,8 @@ export class IptvController {
         this.activePortal = null;
         break;
       case 'browser':
+        ++this.sectionRequest;
+        this.isLoading = false;
         this.view = 'sectionPick';
         this.activeSection = null;
         this.stopAliveCheck();

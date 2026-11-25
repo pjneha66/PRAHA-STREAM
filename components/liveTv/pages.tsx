@@ -60,6 +60,7 @@ import {
   TagFilterRow,
   ToolButton,
   useIptvController,
+  useLiveFavorites,
   type IconType,
 } from './widgets';
 
@@ -633,6 +634,7 @@ export function PortalBrowserPage({
   onPlayerSettingsChange,
 }: PortalBrowserPageProps) {
   const controller = useIptvController();
+  const favorites = useLiveFavorites();
   const key = portalKey(portal.portal);
   const [sort, setSort] = useState<SortMode>('portal');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -694,6 +696,7 @@ export function PortalBrowserPage({
   const search = controller.browserSearch;
   const query = search.trim().toLowerCase();
   const categoryId = controller.browserSelectedCategoryId;
+  const workingChecked = controller.aliveCheckedAt !== null;
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -724,20 +727,27 @@ export function PortalBrowserPage({
     return !needle || name.toLowerCase().includes(needle);
   };
 
+  const favoriteKeys = useMemo(() => new Set(favorites.map((favorite) => favorite.key)), [favorites]);
   const favoriteCount = useMemo(
-    () => controller.browserAllStreams.filter((stream) => LiveFavorites.has(portal, stream)).length,
-    [controller.browserAllStreams, portal],
+    () => controller.browserAllStreams.filter((stream) => favoriteKeys.has(LiveFavorites.keyOf(portal, stream))).length,
+    [controller.browserAllStreams, favoriteKeys, portal],
   );
+
+  useEffect(() => {
+    if (section === 'live') {
+      LiveFavorites.adopt(portal, controller.browserAllStreams, (stream) => IptvClient.streamUrl(portal.portal, stream));
+    }
+  }, [controller.browserAllStreams, portal, section]);
 
   const visible = useMemo(() => {
     let list = controller.browserAllStreams.filter((stream) => {
       if (favoritesOnly) {
-        if (!LiveFavorites.has(portal, stream)) return false;
+        if (!favoriteKeys.has(LiveFavorites.keyOf(portal, stream))) return false;
       } else if (categoryId && stream.categoryId !== categoryId) {
         return false;
       }
       if (query && !stream.name.toLowerCase().includes(query)) return false;
-      if (liveOnly && section === 'live' && controller.aliveStreamIds.size && !controller.aliveStreamIds.has(stream.streamId)) {
+      if (liveOnly && section === 'live' && workingChecked && !controller.aliveStreamIds.has(stream.streamId)) {
         return false;
       }
       return true;
@@ -745,19 +755,18 @@ export function PortalBrowserPage({
     if (sort === 'az') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
     if (sort === 'za') list = [...list].sort((a, b) => b.name.localeCompare(a.name));
     return list;
-  }, [controller.browserAllStreams, controller.aliveStreamIds, portal, favoritesOnly, categoryId, query, liveOnly, section, sort]);
+  }, [controller.browserAllStreams, controller.aliveStreamIds, portal, favoriteKeys, favoritesOnly, categoryId, query, liveOnly, workingChecked, section, sort]);
 
   const currentTitle = favoritesOnly
     ? 'Favorites'
     : categories.find((category) => category.id === categoryId)?.name ?? `All ${nouns}`;
 
   const toggleLiveOnly = useCallback(() => {
-    setLiveOnly((value) => {
-      const next = !value;
-      IptvAliveStore.saveLiveOnly(key, next);
-      return next;
-    });
-  }, [key]);
+    const next = !liveOnly;
+    setLiveOnly(next);
+    IptvAliveStore.saveLiveOnly(key, next);
+    if (next) void controller.startAliveCheck();
+  }, [controller, key, liveOnly]);
 
   /** `_resetList`: picking a category starts the list over, with no search. */
   const resetList = useCallback(() => {
@@ -778,12 +787,15 @@ export function PortalBrowserPage({
   const narrow = size !== null && size.width < STEPPED_MAX_WIDTH;
   /** "A phone on its side": the bar loses its subtitle and both searches fold into icons. */
   const short = size !== null && size.height < SHORT_HEIGHT;
+  const paneWidth = size?.width ?? 0;
+  const categoryWidth = Math.max(210, Math.min(paneWidth > 1900 ? 340 : 300, paneWidth * 0.24));
+  const listWidth = Math.max(340, Math.min(paneWidth > 1900 ? 520 : 440, paneWidth * 0.3));
   const three = Boolean(
     size
     && section === 'live'
     && !narrow
     && size.height >= MIN_THREE_PANE_HEIGHT
-    && size.width - Math.min(300, size.width * 0.24) - Math.min(440, size.width * 0.3) - PANE_GAP * 2 >= MIN_VIDEO_PANE,
+    && paneWidth - categoryWidth - listWidth - PANE_GAP * 2 >= MIN_VIDEO_PANE,
   );
 
   // No pane to play in: forget the channel, exactly as VyseTV does when its
@@ -798,8 +810,6 @@ export function PortalBrowserPage({
 
   const playStream = useCallback(
     (stream: IptvStream, list: readonly IptvStream[], index: number) => {
-      const url = IptvClient.streamUrl(portal.portal, stream);
-      const items = list.map((entry) => liveItemFromStream(portal, entry, section));
       // VyseTV's `_tapStream(list, i, embedded: three)`: in the three-pane
       // browser a live channel plays *here*; a film still hands over to the
       // film player (`openIptvVideo`). With no pane to play in — a phone, a
@@ -808,12 +818,13 @@ export function PortalBrowserPage({
         setWatching(stream);
         return;
       }
+      const items = list.map((entry) => liveItemFromStream(portal, entry, section));
       onPlay(
         items[index] ?? {
           title: stream.name,
           subtitle: portalLabel(portal),
           logo: stream.icon || undefined,
-          url,
+          url: IptvClient.streamUrl(portal.portal, stream),
           live: section === 'live',
         },
         items,
@@ -831,7 +842,8 @@ export function PortalBrowserPage({
       const at = list.findIndex((entry) => entry.streamId === watching?.streamId);
       const next = at < 0 ? 0 : (at + direction + list.length) % list.length;
       setWatching(list[next]);
-      const row = panesRef.current?.querySelector<HTMLElement>(`[data-stream-id="${list[next].streamId}"]`);
+      const rows: NodeListOf<HTMLElement> | undefined = panesRef.current?.querySelectorAll('[data-stream-id]');
+      const row = Array.from(rows ?? []).find((entry) => entry.dataset.streamId === list[next].streamId);
       row?.scrollIntoView?.({ block: 'nearest' });
     },
     [visible, watching],
@@ -840,10 +852,13 @@ export function PortalBrowserPage({
   const emptyNote = (() => {
     if (controller.isLoading) return null;
     if (controller.error) {
-      return { icon: Info, title: 'Nothing in this section', body: `This portal has no ${nouns}, or it did not answer.` };
+      return { icon: Info, title: `Couldn't load ${nouns}`, body: controller.error };
     }
     if (favoritesOnly && !favoriteCount) {
       return { icon: Star, title: 'No favorites yet', body: `Star a ${noun} to keep it here.` };
+    }
+    if (liveOnly && workingChecked && !controller.aliveStreamIds.size && section === 'live') {
+      return { icon: Tv, title: 'No working channels found', body: 'Check again or turn off Working only to see all channels.' };
     }
     if (!visible.length) {
       return { icon: Search, title: 'Nothing matches', body: 'Try another category, or clear the search.' };
@@ -892,8 +907,9 @@ export function PortalBrowserPage({
       <div
         ref={panesRef}
         className={`ltv-browser-panes${three ? ' has-watch' : ''}`}
+        style={three ? { gridTemplateColumns: `${categoryWidth}px ${listWidth}px minmax(0, 1fr)` } : undefined}
       >
-        <div className="ltv-pane">
+        <div className="ltv-pane" inert={expanded}>
           {/* `_catHeader`: compact and searching, the bar *is* the field; otherwise
               the heading with its two icons, and the field sits under it. */}
           {short && (catSearchOpen || catSearch.trim()) ? (
@@ -986,13 +1002,13 @@ export function PortalBrowserPage({
                 <em>{counts.get(category.id) || 0}</em>
               </button>
             ))}
-            {!shownCategories.length && !catHit('Favorites') && !catHit(`All ${nouns}`) ? (
+            {!shownCategories.length && !(section === 'live' && catHit('Favorites')) && !catHit(`All ${nouns}`) ? (
               <p className="ltv-pane-quiet">No category matches</p>
             ) : null}
           </div>
         </div>
 
-        <div className="ltv-pane">
+        <div className="ltv-pane" inert={expanded}>
           {/* `_listHeader`: same shape as the categories header — compact folds
               the search into an icon, roomy draws it under the heading. */}
           {short && (listSearchOpen || search) ? (
@@ -1044,9 +1060,10 @@ export function PortalBrowserPage({
             {section === 'live' ? (
               <>
                 <FilterChipPill
-                  label={controller.isVerifyingAlive ? 'Checking…' : liveOnly ? 'Working only' : 'Working only'}
+                  label="Working only"
                   selected={liveOnly}
                   onClick={toggleLiveOnly}
+                  disabled={controller.isLoading}
                 />
                 {controller.aliveChecked > 0 ? (
                   <span className="ltv-status" style={{ margin: 0 }}>

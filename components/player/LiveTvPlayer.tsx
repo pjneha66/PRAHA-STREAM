@@ -32,7 +32,7 @@
 //   · `AudioFocus.claim` — Android's audio focus is claimed by the native
 //     session inside `startNativePlayback`; there is no bridge to call here.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, ListVideo, Maximize, Minimize, Pause, Play, RotateCcw,
   SignalZero, Star, Volume1, Volume2, VolumeX, X,
@@ -300,6 +300,16 @@ const LiveTvPlayer: React.FC<LiveTvPlayerProps> = ({
     if (chrome) { setChrome(false); return; }
     close();
   }, [chrome, close, panel, poke]);
+
+  useLayoutEffect(() => {
+    const onHardwareBack = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      backKey();
+    };
+    window.addEventListener('praha:hardware-back', onHardwareBack, true);
+    return () => window.removeEventListener('praha:hardware-back', onHardwareBack, true);
+  }, [backKey]);
 
   // ── keyboard ───────────────────────────────────────────────────────────
   useEffect(() => {

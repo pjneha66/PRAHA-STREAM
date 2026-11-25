@@ -1,4 +1,4 @@
-import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 /**
  * libmpv bridge.
@@ -97,15 +97,9 @@ interface PrahaMpvPlugin {
 
 export const PrahaMpv = registerPlugin<PrahaMpvPlugin>('PrahaMpv');
 
-/**
- * True when the native plugin is present. Mirrors the check used for the rest of
- * the bridge: the web build has no `Capacitor.Plugins` entry for it.
- */
+/** True when Capacitor has a native implementation for the plugin. */
 export function mpvAvailable(): boolean {
-  if (typeof window === 'undefined') return false;
-  const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, unknown> } })
-    .Capacitor?.Plugins;
-  return Boolean(plugins?.PrahaMpv);
+  return Capacitor.isPluginAvailable('PrahaMpv');
 }
 
 /**

@@ -17,6 +17,11 @@ const sankaPrimary = upstream('SANKA_PROXY_TARGET', 'https://www.sankavollerei.w
 const sankaMirror = upstream('SANKA_MIRROR_PROXY_TARGET', 'https://www.sankavollerei.com');
 
 const apiProxy = {
+  '/espn-scoreboard': {
+    target: 'https://site.api.espn.com',
+    changeOrigin: true,
+    rewrite: (requestPath: string) => requestPath.replace(/^\/espn-scoreboard/, '/apis/site/v2/sports'),
+  },
   '/anicore': {
     target: upstream('ANICORE_PROXY_TARGET', 'https://anicore.dpdns.org'),
     changeOrigin: true,

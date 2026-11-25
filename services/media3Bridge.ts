@@ -1,4 +1,4 @@
-import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 /**
  * Media3 / ExoPlayer bridge — the second native playback engine.
@@ -95,8 +95,5 @@ export const PrahaMedia3 = registerPlugin<PrahaMedia3Plugin>('PrahaMedia3');
 
 /** True when the native Media3 plugin is present in this build. */
 export function media3Available(): boolean {
-  if (typeof window === 'undefined') return false;
-  const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, unknown> } })
-    .Capacitor?.Plugins;
-  return Boolean(plugins?.PrahaMedia3);
+  return Capacitor.isPluginAvailable('PrahaMedia3');
 }

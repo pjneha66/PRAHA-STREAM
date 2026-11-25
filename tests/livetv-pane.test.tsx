@@ -9,7 +9,7 @@
 // suite `tests/livetv-player.test.tsx` covers the standalone player.
 
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /* ── the engine, faked ──────────────────────────────────────────────────── */
@@ -132,14 +132,15 @@ vi.mock('../services/liveTv/http', async (importOriginal) => {
 
 import { PortalBrowserPage } from '../components/liveTv/pages';
 import { DEFAULT_PLAYER_SETTINGS } from '../data/defaults';
+import { IptvAliveStore, IptvClient, IptvController, LiveFavorites, portalKey, type VerifiedPortal } from '../services/iptvService';
 
-const portal = {
+const portal: VerifiedPortal = {
   portal: { url: 'http://iptv.example:8080', username: 'user', password: 'pass' },
   name: 'Test Portal',
   expiry: '2027-01-01',
   maxConnections: '2',
   activeConnections: '0',
-} as never;
+};
 
 /** jsdom has no layout: give the pane row (and the player in it) a real box.
  *  `top` is where the row sits, so the pane height is `height - top` — the same
@@ -188,6 +189,7 @@ function renderPage(overrides: Partial<React.ComponentProps<typeof PortalBrowser
 
 beforeEach(() => {
   localStorage.clear();
+  LiveFavorites.debugReset();
   mounts.length = 0;
   fatal.report = null;
   platform.androidApp = false;
@@ -202,6 +204,85 @@ afterEach(() => {
 });
 
 describe('portal browser watch pane', () => {
+  it('updates the star, count and favorites list together', async () => {
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Play Sky Sports F1' });
+    const categories = within(container.querySelector('.ltv-pane') as HTMLElement);
+    const favoriteRow = () => categories.getByRole('button', { name: /^Favorites/ });
+    expect(favoriteRow().textContent).toBe('Favorites0');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add to favourites' })[0]);
+    expect(favoriteRow().textContent).toBe('Favorites1');
+    fireEvent.click(favoriteRow());
+    expect(screen.getAllByRole('button', { name: /^Play / })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from favourites' }));
+    expect(favoriteRow().textContent).toBe('Favorites0');
+    expect(screen.getByText('No favorites yet')).toBeTruthy();
+  });
+
+  it('shows zero channels when a completed check found zero working streams', async () => {
+    const key = portalKey(portal.portal);
+    IptvAliveStore.saveLiveOnly(key, true);
+    IptvAliveStore.save(key, { checkedAt: Date.now(), aliveIds: new Set() });
+    renderPage();
+
+    expect(await screen.findByText('No working channels found')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Play Sky Sports F1' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Working only' }));
+    expect(screen.getByRole('button', { name: 'Play Sky Sports F1' })).toBeTruthy();
+  });
+
+  it('keeps the latest section when an older request completes later', async () => {
+    const controller = new IptvController();
+    let failLive: (error: Error) => void;
+    const liveStreams = new Promise<Awaited<ReturnType<typeof IptvClient.streams>>>((_, reject) => { failLive = reject; });
+    const streams = vi.spyOn(IptvClient, 'streams').mockReturnValueOnce(liveStreams).mockResolvedValueOnce([]);
+    const live = controller.openSection(portal, 'live');
+    await waitFor(() => expect(streams).toHaveBeenCalledTimes(1));
+    await controller.openSection(portal, 'vod');
+    failLive(new Error('The old section timed out'));
+    await live;
+
+    expect(controller.activeSection).toBe('vod');
+    expect(controller.error).toBeNull();
+    expect(controller.isLoading).toBe(false);
+  });
+
+  it('offers Retry when the portal fails to return a channel list', async () => {
+    const { getText } = await import('../services/liveTv/http');
+    vi.mocked(getText).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    renderPage();
+    expect(await screen.findByText("Couldn't load channels")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Play Sky Sports F1' })).toBeTruthy();
+  });
+
+  it('waits for the minimum width of all three panes', async () => {
+    sizePanes(850, 900);
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Play Sky Sports F1' });
+    expect(container.querySelector('.ltv-watch-pane')).toBeNull();
+  });
+
+  it('handles Android Back inside the expanded pane without leaving Live TV', async () => {
+    const appBack = vi.fn();
+    window.addEventListener('praha:hardware-back', appBack);
+    try {
+      const { container } = renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Play Sky Sports F1' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Full screen (F)' }));
+      fireEvent(document, new Event('praha:hardware-back', { bubbles: true, cancelable: true }));
+      expect(container.querySelector('.blp-root.is-full.chrome-off')).toBeTruthy();
+      fireEvent(document, new Event('praha:hardware-back', { bubbles: true, cancelable: true }));
+      expect(container.querySelector('.blp-root.is-pane')).toBeTruthy();
+      expect(appBack).not.toHaveBeenCalled();
+      expect(mounts).toHaveLength(1);
+    } finally {
+      window.removeEventListener('praha:hardware-back', appBack);
+    }
+  });
+
   it('shows the pane only when the rule says there is room, and asks for a channel', async () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain('Sky Sports F1'));

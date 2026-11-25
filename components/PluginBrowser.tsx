@@ -92,7 +92,7 @@ const PluginBrowser: React.FC<PluginBrowserProps> = ({ installed, onInstall, bus
     ));
     const byPlugins = (a: PluginListing, b: PluginListing) => b.plugins - a.plugins;
     if (sort === 'updated') {
-      list.sort((a, b) => Date.parse(b.updated ?? '') - Date.parse(a.updated ?? '') || byPlugins(a, b));
+      list.sort((a, b) => (Date.parse(b.updated ?? '') || 0) - (Date.parse(a.updated ?? '') || 0) || byPlugins(a, b));
     } else if (sort === 'stars') {
       list.sort((a, b) => b.stars - a.stars || byPlugins(a, b));
     } else {
@@ -136,21 +136,22 @@ const PluginBrowser: React.FC<PluginBrowserProps> = ({ installed, onInstall, bus
 
       <div className="plugin-browser-filters">
         {KINDS.map((entry) => (
-          <button key={entry.id} className={kind === entry.id ? 'active' : ''} onClick={() => setKind(entry.id)}>{entry.label}</button>
+          <button key={entry.id} className={kind === entry.id ? 'active' : ''} aria-pressed={kind === entry.id} onClick={() => setKind(entry.id)}>{entry.label}</button>
         ))}
         <span className="plugin-browser-sep" />
         {SORTS.map((entry) => (
-          <button key={entry.id} className={sort === entry.id ? 'active' : ''} onClick={() => setSort(entry.id)}>{entry.label}</button>
+          <button key={entry.id} className={sort === entry.id ? 'active' : ''} aria-pressed={sort === entry.id} onClick={() => setSort(entry.id)}>{entry.label}</button>
         ))}
       </div>
 
       {languages.length > 0 && (
         <div className="plugin-browser-filters languages">
-          <button className={language === null ? 'active' : ''} onClick={() => setLanguage(null)}>Every language</button>
+          <button className={language === null ? 'active' : ''} aria-pressed={language === null} onClick={() => setLanguage(null)}>Every language</button>
           {languages.map((entry) => (
             <button
               key={entry.code}
               className={language === entry.code ? 'active' : ''}
+              aria-pressed={language === entry.code}
               onClick={() => setLanguage(language === entry.code ? null : entry.code)}
             >
               {languageName(entry.code)}<small>{entry.count}</small>
@@ -212,7 +213,7 @@ const PluginBrowser: React.FC<PluginBrowserProps> = ({ installed, onInstall, bus
                 ) : installedAlready ? (
                   <span className="plugin-card-action done"><Check size={14} /> Installed</span>
                 ) : (
-                  <button className="plugin-card-action install" onClick={() => void onInstall(listing.url)}>
+                  <button className="plugin-card-action install" disabled={Boolean(busyUrl)} onClick={() => void onInstall(listing.url)}>
                     <Package size={14} /> Install
                   </button>
                 )}

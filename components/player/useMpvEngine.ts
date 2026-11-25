@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Hls from 'hls.js';
+import Hls, { type LoaderCallbacks, type LoaderConfiguration, type LoaderContext } from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import type { MediaInfo } from 'dashjs';
 import type { MediaItem, PlayerEngineId, PlayerSettings, StreamSubtitle } from '../../types';
@@ -172,6 +172,8 @@ export function useMpvEngine({
   onProgressRef.current = onProgress;
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  const onEngineFallbackRef = useRef(onEngineFallback);
+  onEngineFallbackRef.current = onEngineFallback;
   // Subtitle tracks appear a moment after mount. Reading the count through a
   // ref keeps the attach effect from re-running (and restarting the stream)
   // every time the track list fills in — which is exactly what happened on
@@ -348,12 +350,12 @@ export function useMpvEngine({
             // Advance the chain and reload the effect onto the next engine. The
             // chain always ends at `web`, so this never loops.
             nativeChainRef.current = { url, index: chain.indexOf(nextId) };
-            resumeRef.current = lastNativeTimeRef.current || null;
+            resumeRef.current = isLive ? null : lastNativeTimeRef.current || null;
             setWaiting(false);
             setRecoveryStatus(message);
             // A toast, not just an inline status: the user did not ask for this
             // swap and needs to know why the picture changed.
-            onEngineFallback?.(message);
+            onEngineFallbackRef.current?.(message);
             setReloadKey((key) => key + 1);
           },
         },
@@ -372,7 +374,7 @@ export function useMpvEngine({
     }
 
     setNativeActive(false);
-    // Everything below is the unchanged web path.
+    // Web playback also handles streams handed off by the native engines.
     {
       const fmt = (streamFormat || '').toLowerCase();
       const formatHint = formatSupportHint(url, streamFormat);
@@ -402,18 +404,48 @@ export function useMpvEngine({
       if (preferHls && Hls.isSupported()) {
         engineNameRef.current = 'hls.js';
         setEngineLabel('hls.js');
+        const android = isAndroidApp();
         let p2pLoaders: Record<string, unknown> = {};
         let p2pEngine: HlsJsP2PEngine | null = null;
-        try {
-          p2pEngine = new HlsJsP2PEngine();
-          hlsP2pRef.current = p2pEngine;
-          p2pLoaders = p2pEngine.getConfigForHlsJs() as Record<string, unknown>;
-        } catch {
-          hlsP2pRef.current = null;
-          p2pEngine = null;
+        // The P2P fragment loader uses fetch through Capacitor's HTTP
+        // interceptor, which can return 200 without delivering usable
+        // fragments to hls.js. Use its XHR loader in the Android WebView.
+        if (!android) {
+          try {
+            p2pEngine = new HlsJsP2PEngine();
+            hlsP2pRef.current = p2pEngine;
+            p2pLoaders = p2pEngine.getConfigForHlsJs() as Record<string, unknown>;
+          } catch {
+            hlsP2pRef.current = null;
+            p2pEngine = null;
+          }
         }
+        const DefaultLoader = Hls.DefaultConfig.loader;
+        // Capacitor rewrites XHR GETs to its own origin. Restore the upstream
+        // URL so hls.js resolves relative playlists and segments against it.
+        const AndroidLoader = class extends DefaultLoader {
+          load(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>) {
+            super.load(context, config, {
+              ...callbacks,
+              onSuccess(response, stats, request, details) {
+                if (response.url.startsWith(`${window.location.origin}/_capacitor_http_interceptor_?`)) {
+                  const upstream = new URL(response.url).searchParams.get('u');
+                  response = { ...response, url: upstream || request.url };
+                }
+                callbacks.onSuccess(response, stats, request, details);
+              },
+            });
+          }
+        };
         const hls = new Hls({
           enableWorker: true,
+          ...(android ? { loader: AndroidLoader } : {}),
+          // Fast downloads can still overwhelm the WebView decoder. Let HLS
+          // step down when decoded frames are being dropped.
+          ...(android && !isLive ? {
+            capLevelOnFPSDrop: true,
+            fpsDroppedMonitoringPeriod: 2000,
+          } : {}),
           lowLatencyMode: Boolean(isLive),
           backBufferLength: isLive ? 30 : 90,
           liveSyncDurationCount: 3,
@@ -602,7 +634,7 @@ export function useMpvEngine({
       video.removeAttribute('src');
       video.load();
     };
-  }, [url, forceWebEngine, playerEngine, autoplay, onFatalError, onEngineFallback, reloadKey, streamFormat, isLive, fallbackUrl, streamHeaders, initialTime]);
+  }, [url, forceWebEngine, playerEngine, autoplay, onFatalError, reloadKey, streamFormat, isLive, fallbackUrl, streamHeaders, initialTime]);
 
   /** Keep volume and speed in sync with saved settings. */
   useEffect(() => {

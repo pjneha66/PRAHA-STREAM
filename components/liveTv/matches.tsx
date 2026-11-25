@@ -91,7 +91,7 @@ export function MatchesView({ onOpenChannel }: MatchesViewProps) {
     let active = true;
     setLoading(true);
     setFailed(false);
-    void fetchEspnSchedule(day)
+    void fetchEspnSchedule(day, { refresh: attempt > 0 })
       .then((list) => {
         if (!active) return;
         setMatches(list);
