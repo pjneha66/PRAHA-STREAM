@@ -4,6 +4,7 @@ import type {
 } from '../types';
 import { nativeFetchText } from './androidBridge';
 import { sortByRelevance } from './searchRelevance';
+import * as pluginCatalogs from './pluginCatalogs';
 
 // Response TTL cache (port of Nuvio's addon HTTP disk cache, memory tier):
 // catalogs and metadata change slowly; repeat navigations answer instantly.
@@ -120,6 +121,9 @@ export function mapStremioMeta(meta: Record<string, any>, addon: InstalledAddon,
     id: String(meta.id || meta.imdb_id),
     imdbId: meta.imdb_id || (String(meta.id).startsWith('tt') ? String(meta.id) : undefined),
     type: type === 'series' ? 'series' : 'movie',
+    // The addon's own word, which is what it is asked by: a plugin's catalog
+    // entry says `movie` / `series`, and an anime addon says `anime`.
+    addonType: meta.type || fallbackType || 'movie',
     title: meta.name || 'Untitled',
     overview: meta.description || '',
     poster: imageUrl(meta.poster),
@@ -158,6 +162,12 @@ async function doFetchStremioCatalog(
   catalog: StremioCatalog,
   options: { search?: string; genre?: string; skip?: number } = {},
 ): Promise<MediaItem[]> {
+  // A plugin repository answers its catalogs itself: its plugin is asked, and
+  // answers the same `{metas}` shape (VyseTV's `PluginCatalogs.page`).
+  if (addon.plugins) {
+    const answer = await pluginCatalogs.page(addon, catalog, options);
+    return answer.metas.map((meta) => mapStremioMeta(meta, addon, catalog.type));
+  }
   const base = transportBase(addon.manifestUrl);
   const extras: string[] = [];
   if (options.search) extras.push(`search=${encodeURIComponent(options.search)}`);
@@ -171,6 +181,12 @@ async function doFetchStremioCatalog(
 
 export async function fetchStremioMeta(addon: InstalledAddon, media: MediaItem): Promise<MediaItem> {
   if (!supportsResource(addon, 'meta', media.type, media.id)) return media;
+  if (addon.plugins) {
+    const answer = await pluginCatalogs.meta(addon, media.type, media.id);
+    if (!answer.meta) return media;
+    const detailed = mapStremioMeta(answer.meta, addon, media.type);
+    return { ...media, ...detailed, tmdbId: media.tmdbId, imdbId: detailed.imdbId || media.imdbId };
+  }
   const base = transportBase(addon.manifestUrl);
   base.pathname = `${base.pathname.replace(/\/$/, '')}/meta/${media.type}/${encodeURIComponent(media.id)}.json`;
   const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl));
@@ -193,9 +209,9 @@ export async function searchStremioAddons(addons: InstalledAddon[], query: strin
   return sortByRelevance(query, flat);
 }
 
-async function fetchAddonStreams(addon: InstalledAddon, media: MediaItem, resourceId: string): Promise<StreamResult[]> {
+async function fetchAddonStreams(addon: InstalledAddon, type: string, resourceId: string): Promise<StreamResult[]> {
   const base = transportBase(addon.manifestUrl);
-  base.pathname = `${base.pathname.replace(/\/$/, '')}/stream/${media.type}/${encodeURIComponent(resourceId)}.json`;
+  base.pathname = `${base.pathname.replace(/\/$/, '')}/stream/${encodeURIComponent(type)}/${encodeURIComponent(resourceId)}.json`;
   const data = await fetchJson<Record<string, any>>(withManifestQuery(base, addon.manifestUrl), 12000);
   return (data.streams || []).map((stream: Record<string, any>, index: number) => {
     const url = typeof stream.url === 'string'
@@ -220,21 +236,50 @@ async function fetchAddonStreams(addon: InstalledAddon, media: MediaItem, resour
   }).filter((stream: StreamResult) => stream.url || stream.ytId || stream.infoHash);
 }
 
+/** What one addon should be asked for: the resource id, and its own type word. */
+export interface AddonStreamAsk {
+  id: string;
+  /** The addon's type word, when it is not PRAHA's `movie` / `series`. */
+  type?: string;
+}
+
 export async function findStremioStreams(
   addons: InstalledAddon[],
   media: MediaItem,
   season?: number,
   episode?: number,
+  /**
+   * The id each addon should be asked by, when the title came from a metadata
+   * addon. A Kitsu-sourced episode is `kitsu:7442:1`, not `tt…:1:1`, and an
+   * addon that names `idPrefixes` may only accept one of the two. When given,
+   * this decides both the resource path and whether the addon can be asked at
+   * all; without it the `imdbId:season:episode` rule applies.
+   */
+  pick?: (addon: InstalledAddon) => AddonStreamAsk | null,
 ): Promise<{ streams: StreamResult[]; errors: SourceError[] }> {
   const baseId = media.imdbId || media.id;
-  const resourceId = media.type === 'series' && season != null && episode != null ? `${baseId}:${season}:${episode}` : baseId;
-  const eligible = addons.filter((addon) => addon.enabled && addon.features?.streams !== false && supportsResource(addon, 'stream', media.type, baseId));
-  const results = await Promise.allSettled(eligible.map((addon) => fetchAddonStreams(addon, media, resourceId)));
+  const fallbackId = media.type === 'series' && season != null && episode != null
+    ? `${baseId}:${season}:${episode}`
+    : baseId;
+  const asked = addons
+    .filter((addon) => {
+      if (!addon.enabled || addon.features?.streams === false) return false;
+      if (!addon.manifest.resources.some((resource) => resource.name === 'stream')) return false;
+      // With `pick` the caller has already decided the prefix and type: it knows
+      // the title's addon ids, which `supportsResource` cannot see.
+      if (pick) return true;
+      return supportsResource(addon, 'stream', media.type, baseId);
+    })
+    .map((addon) => ({ addon, ask: pick ? pick(addon) : { id: fallbackId } }))
+    .filter((entry): entry is { addon: InstalledAddon; ask: AddonStreamAsk } => Boolean(entry.ask?.id));
+  const results = await Promise.allSettled(
+    asked.map((entry) => fetchAddonStreams(entry.addon, entry.ask.type || media.type, entry.ask.id)),
+  );
   const streams: StreamResult[] = [];
   const errors: SourceError[] = [];
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') streams.push(...result.value);
-    else errors.push({ sourceName: eligible[index].manifest.name, message: result.reason?.message || 'Unable to load streams.' });
+    else errors.push({ sourceName: asked[index].addon.manifest.name, message: result.reason?.message || 'Unable to load streams.' });
   });
   return { streams, errors };
 }

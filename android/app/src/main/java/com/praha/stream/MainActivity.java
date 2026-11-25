@@ -49,6 +49,7 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -131,6 +132,69 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Stricter sibling of {@link #isAllowedRemoteUrl} for third-party plugin code.
+     *
+     * The playback gate above must keep letting LAN addresses through: IPTV portals
+     * and CDNs live on them. A plugin has no such need — it is JavaScript from a
+     * repository the user pasted, and its only job is to read public web pages. So
+     * here the host must also not *resolve* to this device, the LAN, or a reserved
+     * range. VyseTV does the same lookup (`InternetAddress.lookup`) before every hop.
+     *
+     * WebView can only hand us a hostname, so the check is done twice: on the name
+     * here, and on every resolved address below. A public name that points at
+     * 127.0.0.1 is refused by the second half.
+     */
+    private boolean isPublicPluginUrl(String raw) {
+        if (!isAllowedRemoteUrl(raw, true)) return false;
+        String host;
+        try {
+            host = new URI(raw.trim()).getHost();
+        } catch (Exception e) {
+            return false;
+        }
+        if (host == null || host.isEmpty()) return false;
+        String lower = host.toLowerCase();
+        if (lower.equals("localhost") || lower.endsWith(".localhost")
+                || lower.endsWith(".local") || lower.endsWith(".internal")
+                || lower.endsWith(".home.arpa")) {
+            return false;
+        }
+        try {
+            InetAddress[] addresses = InetAddress.getAllByName(host);
+            if (addresses == null || addresses.length == 0) return false;
+            for (InetAddress address : addresses) {
+                if (isPrivateAddress(address)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            // A name that will not resolve cannot be fetched anyway.
+            return false;
+        }
+    }
+
+    /** This device, its network, and the addresses that only exist inside one. */
+    private static boolean isPrivateAddress(InetAddress address) {
+        if (address == null) return true;
+        if (address.isAnyLocalAddress() || address.isLoopbackAddress()
+                || address.isLinkLocalAddress() || address.isSiteLocalAddress()
+                || address.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes != null && bytes.length == 4) {
+            int a = bytes[0] & 0xff;
+            int b = bytes[1] & 0xff;
+            // 0/8, 172.16/12, and 100.64/10 (carrier NAT) which Java never calls site-local.
+            if (a == 0) return true;
+            if (a == 172 && b >= 16 && b <= 31) return true;
+            if (a == 100 && b >= 64 && b <= 127) return true;
+            // 240/4 reserved, including broadcast.
+            if (a >= 224) return true;
+        }
+        return false;
     }
 
     private static String hostOf(String raw) {
@@ -363,7 +427,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         };
 
         // Network-bound calls must not occupy the WebView bridge thread.
-        if ("httpRequest".equals(fMethod) || fMethod.startsWith("cs")) {
+        if ("httpRequest".equals(fMethod) || "pluginHttp".equals(fMethod) || fMethod.startsWith("cs")) {
             ExecutorService pool = fMethod.startsWith("cs") ? csExecutor : httpExecutor;
             try {
                 pool.execute(invoke);
@@ -469,6 +533,11 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                         args.optString(0, ""), args.optString(1, "GET"),
                         args.optString(2, ""), args.optString(3, ""),
                         (int) args.optLong(4, 18000)).toString();
+            case "pluginHttp":
+                return rpcBridge.executePluginHttpRequest(
+                        args.optString(0, ""), args.optString(1, "GET"),
+                        args.optString(2, ""), args.optString(3, ""),
+                        (int) args.optLong(4, 12000)).toString();
             case "setImmersiveMode":
                 rpcBridge.setImmersiveMode(args.optBoolean(0, false), args.optBoolean(1, true));
                 return null;
@@ -823,6 +892,122 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 result.put("error", "Too many redirects");
             } catch (Exception ignored) {}
             return result;
+        }
+
+        /**
+         * One hop of a plugin's `http()`, with redirects left to the caller.
+         *
+         * Publishing the redirect itself (`status` + `location`) instead of
+         * following it is the whole point: the plugin host re-runs the host check
+         * on the next door before opening it, so a public URL that 302s to
+         * `http://192.168.1.1/` is refused at the second hop rather than being
+         * waved through by this side. That is VyseTV's `followRedirects = false`.
+         */
+        JSONObject executePluginHttpRequest(String urlString, String method, String headersJson, String body, int timeoutMs) {
+            HttpURLConnection conn = null;
+            JSONObject result = new JSONObject();
+            int timeout = (timeoutMs > 0) ? Math.min(timeoutMs, 20000) : 12000;
+            if (!isPublicPluginUrl(urlString)) {
+                try {
+                    result.put("ok", false);
+                    result.put("status", 0);
+                    result.put("error", "Blocked: plugins may only reach public http(s) addresses.");
+                } catch (Exception ignored) {}
+                return result;
+            }
+            try {
+                URL url = new URL(urlString);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setInstanceFollowRedirects(false);
+                conn.setConnectTimeout(timeout);
+                conn.setReadTimeout(timeout);
+                String verb = (method == null || method.isEmpty()) ? "GET" : method.toUpperCase();
+                conn.setRequestMethod(verb);
+
+                boolean hasUa = false;
+                boolean hasAcceptEncoding = false;
+                if (headersJson != null && !headersJson.isEmpty()) {
+                    JSONObject headers = new JSONObject(headersJson);
+                    Iterator<String> keys = headers.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        String value = headers.optString(key, "");
+                        if (!value.isEmpty()) {
+                            conn.setRequestProperty(key, value);
+                            if ("user-agent".equalsIgnoreCase(key)) hasUa = true;
+                            if ("accept-encoding".equalsIgnoreCase(key)) hasAcceptEncoding = true;
+                        }
+                    }
+                }
+                if (!hasUa) {
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
+                }
+                if (!hasAcceptEncoding) {
+                    conn.setRequestProperty("Accept-Encoding", "gzip, deflate");
+                }
+
+                if (body != null && !body.isEmpty()
+                        && ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))) {
+                    conn.setDoOutput(true);
+                    byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+                    try (OutputStream os = conn.getOutputStream()) {
+                        os.write(payload);
+                    }
+                }
+
+                int status = conn.getResponseCode();
+                result.put("status", status);
+                String location = conn.getHeaderField("Location");
+                if (location != null && !location.isEmpty()) result.put("location", location);
+                String contentType = conn.getHeaderField("Content-Type");
+                if (contentType != null) result.put("contentType", contentType);
+
+                // A redirect is the answer here; its body is not worth reading.
+                boolean redirect = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+                if (redirect) {
+                    result.put("ok", false);
+                    return result;
+                }
+
+                InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                String text = "";
+                if (in != null) {
+                    String encoding = conn.getContentEncoding();
+                    if ("gzip".equalsIgnoreCase(encoding)) {
+                        in = new java.util.zip.GZIPInputStream(in);
+                    } else if ("deflate".equalsIgnoreCase(encoding)) {
+                        in = new java.util.zip.InflaterInputStream(in);
+                    }
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    long total = 0;
+                    final long MAX_BODY_BYTES = 8L * 1024 * 1024;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        if (total > MAX_BODY_BYTES) {
+                            result.put("ok", false);
+                            result.put("status", 0);
+                            result.put("error", "Response exceeded 8 MB and was truncated.");
+                            return result;
+                        }
+                        bos.write(buf, 0, n);
+                    }
+                    text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                }
+                result.put("ok", status >= 200 && status < 300);
+                result.put("body", text);
+                return result;
+            } catch (Exception e) {
+                try {
+                    result.put("ok", false);
+                    result.put("status", 0);
+                    result.put("error", e.getMessage() != null ? e.getMessage() : "Plugin HTTP error");
+                } catch (Exception ignored) {}
+                return result;
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
         }
 
         private void deliverHttpCallback(final String requestId, final JSONObject result) {

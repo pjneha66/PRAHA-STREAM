@@ -140,6 +140,27 @@ const DetailsModal: React.FC<{
   }, [animeSlug, item.id, item.type]);
 
   useEffect(() => {
+    // A metadata addon's own episode list wins over TMDB's: the ids it carries
+    // are what the stream addons are asked by, and an addon that counts
+    // episodes its own way (Kitsu) would be asked for the wrong one.
+    const addonVideos = baseItem.addonVideos;
+    if (addonVideos?.length) {
+      const list = addonVideos
+        .filter((video) => video.season === selectedSeason)
+        .map((video): TmdbEpisodeInfo => ({
+          id: video.tmdbId ?? video.season * 10000 + video.episode,
+          season: video.season,
+          episode: video.episode,
+          title: video.name,
+          overview: video.overview,
+          still: video.thumbnail,
+          airDate: video.released,
+          runtime: video.runtime,
+        }));
+      setEpisodes(list);
+      setEpisodesLoading(false);
+      return;
+    }
     if (!tmdbEpisodesEnabled || item.type !== 'series' || !baseItem.tmdbId || animeSlug) {
       setEpisodes([]);
       return;
@@ -151,7 +172,7 @@ const DetailsModal: React.FC<{
       .catch(() => { if (active) setEpisodes([]); })
       .finally(() => { if (active) setEpisodesLoading(false); });
     return () => { active = false; };
-  }, [item.id, item.type, baseItem.tmdbId, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
+  }, [item.id, item.type, baseItem.tmdbId, baseItem.addonVideos, selectedSeason, animeSlug, tmdbEpisodesEnabled]);
 
   // Cinemeta carries per-episode IMDb ratings — merge any TMDB missed.
   useEffect(() => {

@@ -2,6 +2,22 @@
 
 import * as cheerio from 'cheerio';
 import CryptoJS from 'crypto-js';
+import axios from 'axios';
+import {
+  parseHtml,
+  parseTitle,
+  titleList,
+  titleScore,
+  rankMatches,
+  bestMatch,
+  searchQueries,
+  searchBest,
+  searchByImdb,
+  imdbMatches,
+  unescapeHtml,
+} from './pluginHelpers';
+import { createScraperAdapter } from './scraperAdapter';
+import { createVegaRuntime } from './vegaRuntime';
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 const originalFetch = worker.fetch.bind(worker);
@@ -24,6 +40,36 @@ interface PendingProxyRequest {
 }
 
 const pendingProxy = new Map<string, PendingProxyRequest>();
+
+/**
+ * The sandbox's one evaluator.
+ *
+ * Every kind of third-party script this app runs — a Nuvio scraper, a plugin
+ * from a repository, a scraper-list entry, a Vega provider — goes through this
+ * single `new Function`. There is deliberately no second copy: one call site is
+ * one place to review, and it is the only dynamic compilation in the codebase.
+ *
+ * The script's own `module`/`exports`/`require` are its arguments, so nothing it
+ * declares leaks into this scope, and the returned handle reads back the entry
+ * points the contracts name (`getStreams`, `onSettings`) whether the script
+ * exported them or left them as function declarations.
+ */
+function runScript(
+  code: string,
+  module: { exports: Record<string, unknown> },
+  requireFn: (name: string) => unknown,
+) {
+  const evaluate = new Function(
+    'module', 'exports', 'require',
+    `${code}\n;return { exported: module.exports, localGetStreams: typeof getStreams === 'function' ? getStreams : undefined, localOnSettings: typeof onSettings === 'function' ? onSettings : undefined, local: function (name) { var fn = globalThis[name]; return typeof fn === 'function' ? fn : undefined; } };`,
+  ) as (module: unknown, exports: unknown, require: unknown) => {
+    exported: Record<string, unknown>;
+    localGetStreams?: (...args: unknown[]) => unknown;
+    localOnSettings?: (...args: unknown[]) => unknown;
+    local: (name: string) => ((...args: unknown[]) => unknown) | undefined;
+  };
+  return evaluate(module, module.exports, requireFn);
+}
 
 async function proxyFetchViaMainThread(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -114,6 +160,74 @@ const smartFetch: typeof fetch = async (input, init) => {
 
 Object.defineProperty(worker, 'fetch', { value: smartFetch, writable: true, configurable: true });
 
+// ───────────────────────── the plugin bridge ─────────────────────────
+//
+// A plugin's whole outside world is `http(url, opts)`. It is answered by the main
+// thread, which owns the per-hop host check (`pluginNetwork.ts`) and the native
+// transport; the worker only relays. The reply shape is the one VyseTV documents
+// — `{status, url, headers, text}`, header names lower-case, `status: 0` with an
+// `error` when the request failed — so a plugin written for upstream reads it the
+// same way here.
+//
+// `fetch` and `XMLHttpRequest` are removed from the plugin's reach rather than
+// merely unused: a plugin that reached the network directly would skip the host
+// check entirely, which is the one guarantee this whole layer exists to give.
+
+interface PendingHttpRequest {
+  resolve: (response: Record<string, unknown>) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingHttp = new Map<string, PendingHttpRequest>();
+
+let httpCounter = 0;
+
+/** What a plugin may call. Never throws: a failure is `status: 0` plus a reason. */
+function pluginHttp(url: unknown, options: Record<string, any> = {}): Promise<Record<string, unknown>> {
+  const target = String(url == null ? '' : url);
+  const reqId = `http-${++httpCounter}-${Math.random().toString(36).slice(2)}`;
+  const timeout = Math.min(Math.max(Number(options.timeout) || 12000, 1000), 20000);
+  const payload = {
+    url: target,
+    method: String(options.method || 'GET').toUpperCase(),
+    headers: options.headers && typeof options.headers === 'object' ? options.headers : {},
+    // `body` may be an object; the contract says it is then sent as JSON.
+    body:
+      options.body == null
+        ? undefined
+        : typeof options.body === 'string'
+          ? options.body
+          : JSON.stringify(options.body),
+    timeout,
+  };
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingHttp.delete(reqId)) resolve({ status: 0, url: target, headers: {}, text: '', error: 'timed out' });
+    }, timeout + 1500);
+    pendingHttp.set(reqId, { resolve, timer });
+    worker.postMessage({ type: 'plugin-http', reqId, ...payload });
+  });
+}
+
+/** The globals a plugin script is written against. */
+const PLUGIN_GLOBALS: Record<string, unknown> = {
+  searchQueries,
+  titleList,
+  parseTitle,
+  titleScore,
+  rankMatches,
+  bestMatch,
+  searchBest,
+  searchByImdb,
+  imdbMatches,
+  parseHtml,
+  unescapeHtml,
+};
+
+/** Line lengths are capped so one huge log line cannot bloat the reply. */
+const LOG_MAX = 300;
+
 worker.onmessage = async (event) => {
   const payload = event.data;
   if (payload?.type === 'fetch-proxy-response') {
@@ -128,6 +242,28 @@ worker.onmessage = async (event) => {
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
       }));
     }
+    return;
+  }
+
+  if (payload?.type === 'plugin-http-response') {
+    const pending = pendingHttp.get(payload.reqId);
+    if (!pending) return;
+    pendingHttp.delete(payload.reqId);
+    clearTimeout(pending.timer);
+    pending.resolve({
+      status: Number(payload.status) || 0,
+      url: payload.url,
+      headers: payload.headers && typeof payload.headers === 'object' ? payload.headers : {},
+      text: typeof payload.text === 'string' ? payload.text : '',
+      error: payload.error || undefined,
+    });
+    return;
+  }
+
+  // A plugin from a repository (a hand-written one, a scraper-list entry, or a
+  // Vega provider). Its script arrives already composed by the main thread.
+  if (payload?.type === 'plugin-run') {
+    await runPluginJob(payload);
     return;
   }
 
@@ -149,11 +285,7 @@ worker.onmessage = async (event) => {
       if (name === 'crypto-js') return CryptoJS;
       throw new Error(`Module '${name}' is not available in the PRAHA web runtime.`);
     };
-    const evaluate = new Function(
-      'module', 'exports', 'require',
-      `${code}\n;return { exported: module.exports, localGetStreams: typeof getStreams === 'function' ? getStreams : undefined, localOnSettings: typeof onSettings === 'function' ? onSettings : undefined };`,
-    );
-    const context = evaluate(module, module.exports, require);
+    const context = runScript(code, module, require);
     const exported = context.exported as Record<string, unknown>;
 
     if (mode === 'settings') {
@@ -171,5 +303,127 @@ worker.onmessage = async (event) => {
     worker.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
 };
+
+/**
+ * Runs one plugin script and answers with its streams.
+ *
+ * The plugin's world is built here, not left to chance:
+ *
+ *   * `http()` is the only way out, and it goes through the main thread's guard.
+ *   * `fetch`, `XMLHttpRequest` and `WebSocket` are undefined, so there is no
+ *     second way out that would skip that guard.
+ *   * `console.*` is captured instead of printed: a TV's log is unreadable, and
+ *     VyseTV shows these lines in Settings for the same reason.
+ *   * the title/HTML helpers are copied onto the global, which is how a plugin
+ *     written for VyseTV finds them (`Object.assign`, not evaluation).
+ *
+ * A scraper-list script is wrapped by `composeScraperScript`, so its `getStreams`
+ * comes from the adapter rather than from its own exports; a Vega provider's
+ * script registers its modules on `__vega` and defines `getStreams` itself.
+ */
+async function runPluginJob(payload: {
+  code: string;
+  query: Record<string, unknown>;
+  kind: 'plugin' | 'scraper' | 'vega';
+  name?: string;
+  /** Ask this global instead of `getStreams` (a catalog page, a title's details). */
+  entry?: string;
+}): Promise<void> {
+  const log: string[] = [];
+  const capture = (...parts: unknown[]) => {
+    const line = parts.map((p) => (typeof p === 'string' ? p : safeString(p))).join(' ');
+    if (log.length < LOG_MAX) log.push(line.slice(0, 2000));
+  };
+
+  const scope = worker as unknown as Record<string, any>;
+  const define = (name: string, value: unknown) => {
+    Object.defineProperty(worker, name, { value, writable: true, configurable: true });
+  };
+
+  try {
+    define('window', worker);
+    define('global', worker);
+    define('self', worker);
+    // The plugin contract: one door out, and no other.
+    define('http', pluginHttp);
+    define('fetch', undefined);
+    define('XMLHttpRequest', undefined);
+    define('WebSocket', undefined);
+    define('console', { log: capture, info: capture, warn: capture, error: capture, debug: capture });
+    define('cheerio', cheerio);
+    define('CryptoJS', CryptoJS);
+    define('__axiosLib', axios);
+    define('__cheerioLib', cheerio);
+    for (const [name, value] of Object.entries(PLUGIN_GLOBALS)) define(name, value);
+
+    const module = { exports: {} as Record<string, unknown> };
+    const require = (name: string) => {
+      if (['cheerio', 'cheerio-without-node-native', 'react-native-cheerio'].includes(name)) return cheerio;
+      if (name === 'crypto-js') return CryptoJS;
+      if (name === 'axios') return axios;
+      throw new Error(`Cannot find module '${name}'`);
+    };
+
+    // A scraper list's script calls `__scrapers.load(...)` and then exposes the
+    // adapter's own getStreams; the adapter is the sandbox's, not the scraper's.
+    if (payload.kind === 'scraper') {
+      define('__scrapers', createScraperAdapter(scope));
+    }
+    // A Vega provider's script calls `__vega.source(...)` and `__vega.module(...)`
+    // before defining its own getStreams. The runtime is built here so its axios
+    // and fetch both ride `http()`.
+    if (payload.kind === 'vega') {
+      const runtime = createVegaRuntime(pluginHttp as any, axios as any, cheerio);
+      define('__vega', {
+        source: runtime.source,
+        module: runtime.module,
+        // Browsing and details: the provider's `posts` and `meta` modules, read
+        // through the same runtime so their presence on the site is discovered
+        // the same way a stream is.
+        catalog: runtime.catalog,
+        meta: runtime.meta,
+        describe: runtime.describe,
+      });
+    }
+
+    const context = runScript(payload.code, module, require);
+    const exported = context.exported as Record<string, unknown>;
+    if (payload.entry) {
+      // Another of the plugin's functions: a catalog page, a title's details.
+      // It is reached by its global name, which is how a plugin declares them
+      // (`__scraperCatalog` on the adapter, `__vegaCatalog` on the runtime).
+      const fn = (typeof exported[payload.entry] === 'function' ? exported[payload.entry] : undefined)
+        || context.local(payload.entry);
+      if (typeof fn !== 'function') throw new Error(`This plugin has no ${payload.entry}().`);
+      const value = await (fn as (args: unknown) => unknown)(payload.query);
+      worker.postMessage({ type: 'plugin-done', ok: true, value: value ?? null, log });
+      return;
+    }
+    const getStreams = exported.getStreams || context.localGetStreams || scope.getStreams;
+    if (typeof getStreams !== 'function') {
+      throw new Error('This plugin does not define getStreams().');
+    }
+    const streams = await getStreams(payload.query);
+    worker.postMessage({ type: 'plugin-done', ok: true, streams: streams || [], log });
+  } catch (error) {
+    worker.postMessage({
+      type: 'plugin-done',
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      streams: [],
+      log,
+    });
+  }
+}
+
+/** A log argument as text, without letting a circular object throw. */
+function safeString(value: unknown): string {
+  try {
+    if (value instanceof Error) return value.message;
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  } catch {
+    return '[unprintable]';
+  }
+}
 
 export {};

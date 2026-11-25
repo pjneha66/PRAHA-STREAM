@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-25. Everything below is verified against the working tree and build logs._
 
-## 0. The 2.11.25 VyseTV live-TV player port (most recent work)
+## 0. The 2.11.25 VyseTV live-TV player port
 
 Both of VyseTV's live players are now ported, plus the pane the second one lives in.
 
@@ -90,11 +90,47 @@ Also in this round:
 **Not verified:** actual playback of the IPTV channels on a device — that needs
 a run on hardware.
 
+## 0b. The 2.11.26 metadata-addon + JS plugin engine release (most recent work)
+
+Three features from VyseTV landed together, with the tests that hold them:
+
+1. **Full metadata addon support** (`services/metaAddons.ts`) — any Nuvio,
+   Stremio or Vega metadata addon, including **collection addons**. A title
+   keeps the id its own addon gave it (`kitsu:7442`, `pl:…`) and is only asked
+   by an id the addon declared it takes (`idFor`); a collection's films are
+   titles of their own (`parts`), not episodes; an episode is never asked under
+   IMDb numbering it does not have.
+2. **JS scraper plugin engine** — `pluginNetwork.ts` / `pluginTransport.ts`
+   (the guarded fetch: public http(s) only, re-checked on every redirect hop),
+   `scraperAdapter.ts` (scraper lists → the plugin contract), `jsPlugins.ts`
+   (the three repository shapes), `pluginRuntime.ts`, `pluginScripts.ts`,
+   `pluginFinder.ts` (cache window, failure demotion, waves), `pluginCatalogs.ts`
+   (a repository answers as an addon), `vegaRuntime.ts`.
+3. **Plugin index** — `pluginIndex.ts` (parse/merge/keep, `<6h` freshness),
+   `pluginDiscovery.ts` (public GitHub + GitLab search, bounded and parallel),
+   `PluginBrowser.tsx` (install from the list, or add a repository by URL).
+4. **Language/content picker** — `DISCOVER_LANGUAGES` in `tmdbService.ts`, all
+   fifteen of upstream's (`Any language` … `Danish`), and `mapTmdbItem` now
+   carries `originalLanguage` so filtering a search result works at all.
+
+Two seams were fixed while porting:
+- `pluginDiscovery` says `repo`, `pluginIndex`/`PluginBrowser` say `plugins` —
+  normalised in `parseListing` and `fromDiscovered`, so a discovered `repo.json`
+  matches the browser's "Plugin repos" chip.
+- `DiscoverView` filtered search results on a field `mapTmdbItem` never set; any
+  language choice emptied every search. Fixed in both places.
+
+`assets/plugins/helpers.js` was deleted: `services/pluginHelpers.ts` is its typed
+port and nothing loaded the script.
+
+**Verification for this round:** `tsc --noEmit` clean; `vitest run` 64 files /
+702 tests pass.
+
 ## 1. Project overview
 
 - **App:** PRAHA-STREAM — a Capacitor (React + TypeScript + Vite) media streaming app for Android (also a web app).
 - **Package / applicationId:** `com.praha.stream`, label `PRAHA STREAM`.
-- **Version:** 2.11.25, `versionCode 50` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
+- **Version:** 2.11.26, `versionCode 51` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
 - **Key configs:** `capacitor.config.json`, `vite.config.ts`, `android/build.gradle` (AGP `8.13.0`, Gradle 8.13), `android/app/build.gradle`.
 - **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). Playback is **libmpv** (`com.praha.stream.mpv.PrahaMpvPlugin`, from the `edde746:mpv-android` AAR) with Media3/ExoPlayer and a web player as fallbacks. There is no LibVLC in the build any more — the `player-vlc-active` CSS class name is a leftover from that era.
 

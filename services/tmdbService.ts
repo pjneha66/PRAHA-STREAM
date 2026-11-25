@@ -33,6 +33,31 @@ export const DISCOVER_GENRE_OPTIONS: Array<{ id: string; label: string; movieGen
   { id: 'thriller', label: 'Thriller', movieGenreId: 53 },
 ];
 
+/**
+ * The original languages Discover can filter by — VyseTV's `discoverLanguages`
+ * (`lib/data/catalog/discover.dart`), in its order.
+ *
+ * Every code is a TMDB `with_original_language` value, which is what the filter
+ * sends. `all` is PRAHA's "no filter" (upstream uses a null there).
+ */
+export const DISCOVER_LANGUAGES: Array<{ code: string; label: string }> = [
+    { code: 'all', label: 'Any language' },
+  { code: 'en', label: 'English' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'zh', label: 'Chinese' },
+  { code: 'it', label: 'Italian' },
+  { code: 'de', label: 'German' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'tr', label: 'Turkish' },
+  { code: 'th', label: 'Thai' },
+  { code: 'sv', label: 'Swedish' },
+  { code: 'da', label: 'Danish' },
+];
+
 export class TmdbKeyError extends Error {
   constructor() {
     super('Add your personal TMDB API key in Settings → TMDB API.');
@@ -89,6 +114,11 @@ export function mapTmdbItem(item: Record<string, any>, forcedType?: 'movie' | 't
     year: String(item.release_date || item.first_air_date || '').slice(0, 4),
     rating: Number(item.vote_average) ? Number(Number(item.vote_average).toFixed(1)) : undefined,
     genres: genreIds.map((id) => GENRES[id]).filter((name): name is string => Boolean(name)),
+    // Search results are filtered by language on the device (see `DiscoverView`), so
+    // every result has to carry its language — `enrich` is not called for a list.
+    originalLanguage: typeof item.original_language === 'string' && item.original_language
+      ? item.original_language.toUpperCase()
+      : undefined,
     source: 'tmdb',
   };
 }
@@ -144,6 +174,45 @@ export const tmdbService = {
       `${endpoint}?query=${encodeURIComponent(query)}&include_adult=${currentAllowsAdult()}&page=${page}`,
     );
     return listOf(data, endpoint);
+  },
+
+  /**
+   * TMDB's `/find` for an IMDb id, split into the film and the show it belongs
+   * to. An addon title is matched to TMDB by this before its name is tried
+   * (`services/metaAddons.ts`), and the split is what decides which of the two
+   * results a series should get.
+   */
+  async findByImdb(imdbId: string): Promise<{ movieId?: number; tvId?: number }> {
+    const data = await request<{ movie_results?: unknown; tv_results?: unknown }>(
+      `/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`,
+    );
+    const firstId = (list: unknown) => (Array.isArray(list) ? list : [])
+      .map((entry) => Number((entry as { id?: unknown })?.id))
+      .find((id) => Number.isFinite(id) && id > 0);
+    return { movieId: firstId(data.movie_results), tvId: firstId(data.tv_results) };
+  },
+
+  /**
+   * TMDB's `/search/{movie,tv}` with every name a result is known by. The name
+   * match that decides whether an addon title really is a TMDB title has to see
+   * the original title too — a search for a film by its original name must not
+   * miss it because TMDB lists it under an English one.
+   */
+  async searchTitles(query: string, kind: 'movie' | 'tv'): Promise<Array<{ id: number; names: string[]; year?: number }>> {
+    const data = await request<{ results?: unknown }>(
+      `/search/${kind}?query=${encodeURIComponent(query)}&include_adult=${currentAllowsAdult()}`,
+    );
+    const results = Array.isArray(data.results) ? (data.results as Array<Record<string, any>>) : [];
+    const found: Array<{ id: number; names: string[]; year?: number }> = [];
+    for (const entry of results) {
+      const id = Number(entry.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const names = [entry.title, entry.name, entry.original_title, entry.original_name]
+        .filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+      const date = String(entry.release_date || entry.first_air_date || '');
+      found.push({ id, names, year: date.length >= 4 ? Number(date.slice(0, 4)) || undefined : undefined });
+    }
+    return found;
   },
 
   /**

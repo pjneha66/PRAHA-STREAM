@@ -3,7 +3,7 @@ import {
   ChevronDown, CircleAlert, Compass, Library, LoaderCircle, Music2, RotateCcw, SearchX, SlidersHorizontal,
 } from 'lucide-react';
 import { DEFAULT_DISCOVER_FILTERS } from '../data/defaults';
-import { DISCOVER_GENRE_OPTIONS } from '../services/tmdbService';
+import { DISCOVER_GENRE_OPTIONS, DISCOVER_LANGUAGES } from '../services/tmdbService';
 import type { MusicTrack } from '../services/musicService';
 import type { DiscoverFilters, MediaItem } from '../types';
 import type { BookItem } from '../services/archiveService';
@@ -150,7 +150,7 @@ const DiscoverView: React.FC<{
       // Search results are not server-filtered by these controls, so apply
       // them locally (browse results already come pre-filtered from the service).
       if (query && genreKeys && !item.genres?.some((name) => genreKeys.some((key) => name.toLowerCase().includes(key)))) return false;
-      if (query && filters.language !== 'all' && item.originalLanguage !== filters.language) return false;
+      if (query && filters.language !== 'all' && (item.originalLanguage || '').toLowerCase() !== filters.language) return false;
       return true;
     });
     if (!query || filters.sortBy === 'popularity.desc' || filters.sortBy === 'revenue.desc') return result;
@@ -209,13 +209,9 @@ const DiscoverView: React.FC<{
 
           <label className="source-select">
             <select aria-label="Original language" value={filters.language} onChange={(e) => update('language', e.target.value)}>
-              <option value="all">All languages</option>
-              <option value="en">English</option>
-              <option value="hi">Hindi</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
+              {DISCOVER_LANGUAGES.map((language) => (
+                <option key={language.code} value={language.code}>{language.label}</option>
+              ))}
             </select>
           </label>
 

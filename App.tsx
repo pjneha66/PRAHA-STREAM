@@ -31,7 +31,9 @@ import {
   CINEMETA_ADDON, DEFAULT_DISCOVER_FILTERS, DEFAULT_PROFILE, DEFAULT_SETTINGS,
   EMPTY_HOME_CATALOG, normalizeSettings,
 } from './data/defaults';
-import { fetchStremioCatalog, fetchStremioManifest, fetchStremioMeta, findStremioStreams, searchStremioAddons } from './services/stremioService';
+import { fetchStremioCatalog, fetchStremioManifest, findStremioStreams, searchStremioAddons } from './services/stremioService';
+import * as metaAddons from './services/metaAddons';
+import * as pluginCatalogs from './services/pluginCatalogs';
 import { findNuvioStreams } from './services/nuvioService';
 import { setNsfwContext } from './services/nsfwGate';
 import { tmdbService } from './services/tmdbService';
@@ -52,7 +54,7 @@ import { loadTitle } from './services/cloudstreamService';
 import {
   APP_VERSION,
   AppSettings, AppView, CloudStreamSearchItem, DiscoverFilters, HomeCatalog, InstalledAddon,
-  LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, ProfileAvatarIcon, StreamResult, ToastMessage,
+  LibraryStatus, MediaItem, NuvioRepository, PlayerSettings, PluginRepository, ProfileAvatarIcon, StreamResult, ToastMessage,
   UserProfile, WatchProgress, PrahaBackupBundle,
 } from './types';
 
@@ -249,6 +251,31 @@ const App: React.FC = () => {
 
   const [addons, setAddons] = usePersistentState<InstalledAddon[]>('praha.v2.addons', [CINEMETA_ADDON]);
   const [repositories, setRepositories] = usePersistentState<NuvioRepository[]>('praha.v2.nuvio-repositories', []);
+  // VyseTV's JavaScript plugin repositories: unlike a Nuvio repository, whose
+  // scrapers ship inline, these carry a URL to a script that is fetched and run
+  // on demand. Persisted the same way, and keyed separately so the two shelves
+  // cannot overwrite each other.
+  const [pluginRepositories, setPluginRepositories] = usePersistentState<PluginRepository[]>('praha.v2.plugin-repositories', []);
+
+  // A plugin repository is also an addon: its plugins' catalogs are rows on Home
+  // and results in Discover, and its titles' details are asked of the plugin that
+  // listed them (VyseTV's `Addon.ofPlugins`). Handing the list to the bridge is
+  // what lets a `pl:`-prefixed id be resolved back to its repository.
+  useEffect(() => {
+    pluginCatalogs.setInstalledPluginRepositories(pluginRepositories);
+  }, [pluginRepositories]);
+
+  const pluginAddons = useMemo(() => pluginCatalogs.pluginAddons(pluginRepositories), [pluginRepositories]);
+
+  /**
+   * Every addon the browsing and details pages use: the installed ones, then the
+   * plugin repositories'. A real addon with the same URL wins — it is the same
+   * repository read as an addon, and installing it twice would list its rows twice.
+   */
+  const allAddons = useMemo(() => {
+    const installedUrls = new Set(addons.map((addon) => addon.manifestUrl));
+    return [...addons, ...pluginAddons.filter((addon) => !installedUrls.has(addon.manifestUrl))];
+  }, [addons, pluginAddons]);
 
   // Pre-installed addons: added once on startup if missing (existing installs
   // get them too). NoTorrent ships big series/movie catalogs out of the box.
@@ -709,7 +736,7 @@ const App: React.FC = () => {
           const folkComics = ARCHIVE_COLLECTIONS.find((c) => c.id === 'folk-comics') || ARCHIVE_COLLECTIONS[0];
           const [tmdb, stremio, anime, imdx, musicTracks, bookHits] = await Promise.all([
             tmdbReady ? tmdbService.search(term, 1).catch(() => []) : Promise.resolve([]),
-            searchStremioAddons(addons, term).catch(() => []),
+            searchStremioAddons(allAddons, term).catch(() => []),
             animeService.search(term, 1, 20).then((result) => result.items).catch(() => []),
             imdxOn ? imdxService.search(term, settings.imdx).catch(() => []) : Promise.resolve([]),
             // Universal search: also sweep the non-video tabs so one query
@@ -737,10 +764,17 @@ const App: React.FC = () => {
         } else {
           const addonGenre = discoverFilters.genre !== 'all' ? discoverFilters.genre : undefined;
           const catalogJobs = discoverFilters.source !== 'tmdb'
-            ? addons.filter((addon) => addon.enabled).flatMap((addon) =>
-                addon.manifest.catalogs.filter((cat) => cat.id === 'top').slice(0, 2)
-                  .map((cat) => fetchStremioCatalog(addon, cat, { genre: addonGenre }).catch(() => [])),
-              )
+            ? allAddons.filter((addon) => addon.enabled).flatMap((addon) => {
+                // A plugin repository numbers its catalogs `<plugin>/<catalog>`,
+                // so it has no `top` to pick: its own first lists are browsed
+                // instead (VyseTV shows them all; two keeps Discover readable).
+                const catalogs = addon.plugins
+                  ? addon.manifest.catalogs
+                      .filter((cat) => ['movie', 'series'].includes(cat.type) && !cat.extra?.some((extra) => extra.isRequired))
+                      .slice(0, 2)
+                  : addon.manifest.catalogs.filter((cat) => cat.id === 'top').slice(0, 2);
+                return catalogs.map((cat) => fetchStremioCatalog(addon, cat, { genre: addonGenre }).catch(() => []));
+              })
             : [];
           const [addonItems, tmdbDiscovered] = await Promise.all([
             Promise.all(catalogJobs),
@@ -761,7 +795,7 @@ const App: React.FC = () => {
       }
     }, query ? 380 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [profilePickerCompleted, view, query, discoverFilters, addons, tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
+  }, [profilePickerCompleted, view, query, discoverFilters, allAddons, tmdbReady, imdxEnabled, imdxBaseUrl, imdxApiKey]);
 
   const loadMoreDiscover = useCallback(async () => {
     if (discoverLoadingMore || !discoverHasMore) return;
@@ -795,9 +829,9 @@ const App: React.FC = () => {
   }, [tmdbReady, discoverLoadingMore, discoverHasMore, discoverPage, query, discoverFilters]);
 
   const activeSourceCount = useMemo(() =>
-    addons.filter((addon) => addon.enabled).length +
+    allAddons.filter((addon) => addon.enabled).length +
     repositories.filter((repo) => repo.enabled).length,
-  [addons, repositories]);
+  [allAddons, repositories]);
 
   const navigate = (next: AppView) => {
     // The source list now stays mounted underneath the player (so closing the
@@ -852,15 +886,31 @@ const App: React.FC = () => {
       enrichWithImdx();
       return;
     }
-    if (item.source === 'stremio' && item.addonUrl) {
-      const addon = addons.find((entry) => entry.manifestUrl === item.addonUrl);
-      if (addon) {
-        fetchStremioMeta(addon, item)
-          .then((metaItem) => (tmdbReady ? tmdbService.enrich(metaItem, settings.tmdbEnrichment).catch(() => metaItem) : metaItem))
-          .then((enriched) => setSelected((current) => (current?.id === item.id ? enriched : current)))
-          .catch(() => undefined);
-        return;
-      }
+    if (item.source === 'stremio') {
+      // A metadata addon's own details come first (the one that listed the
+      // title, then any other installed one); TMDB is the fallback inside
+      // `meta()`, and the catalog's stub is the floor, so the page always
+      // opens. The addon's episode list travels with the item because its ids
+      // are what the stream addons must be asked by.
+      metaAddons.meta(item, allAddons)
+        .then((details) => {
+          const enriched: MediaItem = {
+            ...details.media,
+            addonVideos: details.videos.length ? details.videos : undefined,
+            // A collection's films are shown on its page and played on their own,
+            // so the item keeps them by their own name rather than folding them
+            // into `recommendations` — the source list has to know it is a
+            // collection and which film to start with.
+            addonParts: details.parts.length ? details.parts : undefined,
+            recommendations: details.parts.length ? details.parts : details.media.recommendations,
+          };
+          applyEnrichment(enriched);
+          if (tmdbReady && !enriched.cast?.length && (enriched.tmdbId || enriched.imdbId)) {
+            tmdbService.enrich(enriched, settings.tmdbEnrichment).then(applyEnrichment).catch(() => undefined);
+          }
+        })
+        .catch(() => undefined);
+      return;
     }
     if (tmdbReady && (item.tmdbId || item.imdbId || item.id.startsWith('tt'))) {
       tmdbService.enrich(item, settings.tmdbEnrichment)
@@ -920,6 +970,17 @@ const App: React.FC = () => {
   };
 
   const openSources = (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => {
+    // A collection from a metadata addon (TMDB Collections and the like) has no
+    // films of its own to play: its first film not watched to the end plays, as
+    // the film it is. Same rule as VyseTV's player page.
+    if (item.addonParts?.length && episode == null) {
+      const part = item.addonParts.find((film) => {
+        const seen = history.find((entry) => entry.media.id === film.id);
+        return !seen || seen.progress < 85;
+      }) ?? item.addonParts[0];
+      openSources(part, undefined, undefined, part.title);
+      return;
+    }
     const existing = history.find((h) => h.media.id === item.id);
     setSelected(null);
     setSourceState({
@@ -1432,7 +1493,7 @@ const App: React.FC = () => {
         tmdbReady={tmdbReady}
         history={history}
         watchlist={watchlist}
-        addons={addons}
+        addons={allAddons}
         repositories={repositories}
         onSelect={openDetails}
         onPlay={(item) => openSources(item)}
@@ -1576,7 +1637,7 @@ const App: React.FC = () => {
   } else if (view === 'explore') {
     page = (
       <ExploreView
-        addons={addons}
+        addons={allAddons}
         repositories={repositories}
         watchlist={watchlist}
         compact={settings.compactCards}
@@ -1598,9 +1659,13 @@ const App: React.FC = () => {
       <ExtensionsView
         addons={addons}
         repositories={repositories}
+        pluginRepositories={pluginRepositories}
         nuvioSettings={nuvioSettings}
+        settings={settings}
+        profile={activeProfile}
         setAddons={setAddons}
         setRepositories={setRepositories}
+        setPluginRepositories={setPluginRepositories}
         setNuvioSettings={setNuvioSettings}
         notify={notify}
         onOpenCloudStream={() => navigate('cloudstream')}
@@ -1699,8 +1764,9 @@ const App: React.FC = () => {
           media={sourceState.media}
           initialSeason={sourceState.season}
           initialEpisode={sourceState.episode}
-          addons={addons}
+          addons={allAddons}
           repositories={repositories}
+          pluginRepositories={pluginRepositories}
           nuvioSettings={nuvioSettings}
           tmdbApiKey={settings.tmdbApiKey}
           preferredLanguage={settings.preferredLanguage}

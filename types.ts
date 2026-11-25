@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.25';
+export const APP_VERSION = '2.11.26';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'discover' | 'flow' | 'library' | 'explore' | 'cloudstream' | 'extensions' | 'settings';
@@ -33,13 +33,38 @@ export interface TmdbSeasonSummary {
 export interface TmdbEpisodeInfo {
   id: number;
   season: number;
-  episode: number;
   title: string;
+  episode: number;
   overview: string;
   still?: string;
   airDate?: string;
   runtime?: number;
   rating?: number;
+}
+
+/**
+ * One video of an addon title: an episode, or — in a collection — one of its
+ * films. A port of VyseTV's `AddonVideo` (`lib/data/catalog/meta_addons.dart`,
+ * GPL-3.0-or-later). `id` is the id the stream addons are asked by
+ * (`tt0944947:1:1`, `kitsu:7442:1`), so it travels with the title.
+ */
+export interface AddonVideo {
+  id: string;
+  /** 0 for a run with no seasons, numbered straight through. */
+  season: number;
+  episode: number;
+  name: string;
+  overview: string;
+  thumbnail?: string;
+  poster?: string;
+  released?: string;
+  runtime?: number;
+  /** Where IMDb counts it, when the addon says so (Kitsu does). */
+  imdbSeason?: number;
+  imdbEpisode?: number;
+  tmdbId?: number;
+  /** Streams the addon put inside the video itself (Stremio's `streams`). */
+  inline: Array<Record<string, unknown>>;
 }
 
 /** Home screen rows. Every entry is loaded from TMDB at runtime — nothing is bundled. */
@@ -91,6 +116,13 @@ export interface MediaItem {
   /** Present when the title was resolved through AniCore / Anikura. */
   anime?: AnimeReference;
   addonUrl?: string;
+  /**
+   * The addon's own word for this title's kind (`movie`, `series`, `anime`,
+   * `channel`, `tv`, `other`). PRAHA's `type` is only movie/series, but addons
+   * are asked and matched by their own word — a Kitsu title is `anime`, and an
+   * addon declaring `types: ['anime']` cannot be asked for a "series".
+   */
+  addonType?: string;
   providerId?: string;
   providerMediaId?: string;
   /**
@@ -114,6 +146,20 @@ export interface MediaItem {
   status?: string;
   originCountry?: string;
   originalLanguage?: string;
+  /**
+   * The episodes a metadata addon gave for this title, when it did. Present
+   * means the addon's own list is the truth for this title — its ids are what
+   * the stream addons are asked by, and an addon that counts episodes its own
+   * way (Kitsu) would be asked for the wrong one if TMDB's numbering were used.
+   */
+  addonVideos?: AddonVideo[];
+  /**
+   * A collection's films (TMDB Collections, and any addon that lists a set of
+   * films as one entry), each a title of its own. A non-empty list means this
+   * item is a collection: it has no streams of its own, and playing it plays
+   * its first unwatched film (VyseTV's `partToPlay`).
+   */
+  addonParts?: MediaItem[];
 }
 
 export interface WatchProgress {
@@ -188,6 +234,12 @@ export interface InstalledAddon {
   renamedTitle?: string;
   /** Per-feature switches (port of PlayTorrio's per-addon checkboxes). */
   features?: { catalog?: boolean; search?: boolean; streams?: boolean };
+  /**
+   * This entry is not an addon but a plugin repository answering as one
+   * (VyseTV's `Addon.plugins`): its titles are `pl:`-prefixed ids its plugins
+   * find, and its catalogs are pages asked of those plugins rather than URLs.
+   */
+  plugins?: boolean;
 }
 
 export interface NuvioSettingField {
@@ -200,6 +252,70 @@ export interface NuvioSettingField {
   placeholder?: string;
   description?: string;
   options?: Array<{ label: string; value: string } | string>;
+}
+
+/**
+ * A JavaScript plugin repository (VyseTV's `repo.json`, scraper list, or Vega
+ * manifest). Unlike a Nuvio repository, whose scrapers ship with their code
+ * inline, a plugin's script is fetched at run time — so a change to `version` is
+ * what makes the app download it again.
+ */
+export interface PluginRepository {
+  /** The link the user pasted, normalised. */
+  url: string;
+  name: string;
+  /** Which of the three shapes it was. */
+  kind: 'repo' | 'scrapers' | 'vega';
+  enabled: boolean;
+  plugins: PluginRepositoryEntry[];
+  installedAt: number;
+  updatedAt: number;
+  /**
+   * Which plugins' catalogs are rows on Home and results in Discover, by plugin
+   * id — VyseTV's `Addon.browse`. Absent means "not picked yet": a scraper
+   * list's that list titles, none of a Vega provider's (a repository of them can
+   * list hundreds). Its titles' details stay on a plugin switched off here.
+   */
+  browse?: string[];
+}
+
+export interface PluginRepositoryEntry {
+  id: string;
+  name: string;
+  /** The script URL, or for a Vega provider the `dist/<value>` folder. */
+  url: string;
+  version: string;
+  note: string;
+  types: string[];
+  scraper: boolean;
+  vega: boolean;
+  /** Off keeps the plugin listed but never asked. */
+  enabled: boolean;
+  /** The lists of titles it offers to browse; a Vega provider's are read at install. */
+  catalogs?: PluginCatalog[];
+  /** It gives a title's own details (else they come from TMDB, or the catalog's copy). */
+  details?: boolean;
+  /**
+   * It lists comics, not films and shows: its catalogs belong to the manga
+   * section, and it is never asked for a video's streams (VyseTV's `comic`).
+   */
+  comic?: boolean;
+}
+
+/**
+ * One list of titles a plugin offers (VyseTV's `PluginCatalog`): its type in the
+ * plugin's own word ("tv" is a show), what a Vega provider's posts are asked for,
+ * and whether it takes a search or a genre.
+ */
+export interface PluginCatalog {
+  id: string;
+  name: string;
+  type: string;
+  filter?: string;
+  genres?: string[];
+  search?: boolean;
+  searchOnly?: boolean;
+  genreRequired?: boolean;
 }
 
 export interface NuvioManifestScraper {

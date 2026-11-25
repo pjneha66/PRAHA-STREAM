@@ -13,17 +13,28 @@ import {
   fetchNuvioRepository, getNuvioScraperSettingsSchema, testNuvioScraper,
 } from '../services/nuvioService';
 import { cloudStreamAvailable } from '../services/cloudstreamService';
+import {
+  describeInstalledRepository, installPluginRepository, refreshPluginRepository, setPluginEnabled,
+} from '../services/pluginRepositories';
+import { browsePlugins, setPluginBrowse } from '../services/pluginCatalogs';
+import PluginBrowser from './PluginBrowser';
+import { allowsAdult } from '../services/nsfwGate';
 import type {
-  InstalledAddon, NuvioRepository, NuvioScraper, NuvioSettingField,
+  AppSettings, InstalledAddon, NuvioRepository, NuvioScraper, NuvioSettingField, PluginRepository, UserProfile,
 } from '../types';
 import { Toggle } from './SettingsView';
 
 interface ExtensionsProps {
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
+  pluginRepositories: PluginRepository[];
   nuvioSettings: Record<string, Record<string, unknown>>;
+  /** The saved settings and active profile, for the adult-content gate. */
+  settings: AppSettings;
+  profile?: UserProfile | null;
   setAddons: (updater: InstalledAddon[] | ((current: InstalledAddon[]) => InstalledAddon[])) => void;
   setRepositories: (updater: NuvioRepository[] | ((current: NuvioRepository[]) => NuvioRepository[])) => void;
+  setPluginRepositories: (updater: PluginRepository[] | ((current: PluginRepository[]) => PluginRepository[])) => void;
   setNuvioSettings: (updater: Record<string, Record<string, unknown>> | ((current: Record<string, Record<string, unknown>>) => Record<string, Record<string, unknown>>)) => void;
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
   /** CloudStream extensions are managed natively; this opens that screen. */
@@ -43,10 +54,10 @@ function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
 }
 
 const ExtensionsView: React.FC<ExtensionsProps> = ({
-  addons, repositories, nuvioSettings,
-  setAddons, setRepositories, setNuvioSettings, notify, onOpenCloudStream,
+  addons, repositories, pluginRepositories, nuvioSettings, settings, profile,
+  setAddons, setRepositories, setPluginRepositories, setNuvioSettings, notify, onOpenCloudStream,
 }) => {
-  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'cloudstream' | 'directory'>('stremio');
+  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'jsplugins' | 'cloudstream' | 'directory'>('stremio');
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState('');
@@ -57,11 +68,15 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
   const [scraperSchema, setScraperSchema] = useState<NuvioSettingField[]>([]);
   const [scraperDraft, setScraperDraft] = useState<Record<string, unknown>>({});
   const [schemaLoading, setSchemaLoading] = useState(false);
+  /** A "Find plugins" card whose install failed, so its own card can say why. */
+  const [browserFailure, setBrowserFailure] = useState<{ url: string; message: string } | null>(null);
 
   const activeAddons = addons.filter((addon) => addon.enabled).length;
   const activeRepos = repositories.filter((repo) => repo.enabled).length;
   const catalogs = addons.filter((addon) => addon.enabled).reduce((sum, addon) => sum + addon.manifest.catalogs.length, 0);
   const providers = repositories.reduce((sum, repo) => sum + repo.scrapers.length, 0);
+  const activePlugins = pluginRepositories.filter((repo) => repo.enabled)
+    .reduce((sum, repo) => sum + repo.plugins.filter((plugin) => plugin.enabled).length, 0);
 
   useEffect(() => {
     if (tab !== 'directory') return;
@@ -72,9 +87,22 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
     return () => { active = false; };
   }, [tab, addons]);
 
-  const installFromUrl = async (targetUrl: string, kind: 'stremio' | 'nuvio') => {
+  const installFromUrl = async (targetUrl: string, kind: 'stremio' | 'nuvio' | 'jsplugins') => {
     setInstalling(true); setInstallError(''); setBusy(targetUrl);
+    if (kind === 'jsplugins') setBrowserFailure(null);
     try {
+      if (kind === 'jsplugins') {
+        const installed = await installPluginRepository(targetUrl);
+        if (pluginRepositories.some((repo) => repo.url === installed.url)) {
+          throw new Error('That plugin repository is already installed.');
+        }
+        // A Vega repository's providers are read now, so its lists can be
+        // browsed straight away (VyseTV reads them at install too).
+        const described = await describeInstalledRepository(installed);
+        setPluginRepositories((current) => [...current, described]);
+        notify(`${described.name} installed — ${described.plugins.length} plugin${described.plugins.length === 1 ? '' : 's'}.`, 'success');
+        return;
+      }
       if (kind === 'stremio') {
         const installed = await fetchStremioManifest(targetUrl);
         if (addons.some((addon) => addon.manifestUrl === installed.manifestUrl || addon.manifest.id === installed.manifest.id)) {
@@ -96,6 +124,9 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         ? 'The source could not be reached. Check the URL and network connection.'
         : error instanceof Error ? error.message : 'Installation failed.';
       setInstallError(message);
+      // The browser's cards have no URL field above them, so a failure there is
+      // reported on the card itself (as upstream's `_failed` does).
+      if (kind === 'jsplugins') setBrowserFailure({ url: targetUrl, message });
       notify(message, 'error');
     } finally {
       setInstalling(false);
@@ -108,6 +139,21 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
     if (!installUrl.trim()) { setInstallError('Enter a repository or manifest URL.'); return; }
     const targetKind = tab === 'directory' ? 'stremio' : tab;
     await installFromUrl(installUrl, targetKind);
+  };
+
+  const refreshPluginRepo = async (repo: PluginRepository) => {
+    setBusy(repo.url);
+    try {
+      const refreshed = await refreshPluginRepository(repo);
+      setPluginRepositories((current) => current.map((entry) => entry.url === repo.url ? refreshed : entry));
+      notify(`${refreshed.name} is up to date — ${refreshed.plugins.length} plugin${refreshed.plugins.length === 1 ? '' : 's'}.`, 'success');
+      // Read the new providers' lists in the background: the repository is
+      // usable now either way, and a large one would keep the user waiting.
+      void describeInstalledRepository(refreshed)
+        .then((described) => setPluginRepositories((current) => current.map((entry) => entry.url === repo.url ? described : entry)))
+        .catch(() => undefined);
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not refresh plugin repository.', 'error'); }
+    finally { setBusy(''); }
   };
 
   const refreshAddon = async (addon: InstalledAddon) => {
@@ -189,17 +235,20 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
       <div className="extension-tabs">
         <button className={tab === 'stremio' ? 'active' : ''} onClick={() => { setTab('stremio'); setInstallError(''); }}><Blocks size={18} /><span>Stremio addons<small>Catalogs, subtitles & streams</small></span><b>{addons.length}</b></button>
         <button className={tab === 'nuvio' ? 'active' : ''} onClick={() => { setTab('nuvio'); setInstallError(''); }}><Zap size={18} /><span>Nuvio plugins<small>Repositories & scrapers</small></span><b>{repositories.length}</b></button>
+        <button className={tab === 'jsplugins' ? 'active' : ''} onClick={() => { setTab('jsplugins'); setInstallError(''); }}><Package size={18} /><span>JS plugins<small>Scraper & Vega repos</small></span><b>{activePlugins}</b></button>
         <button className={tab === 'cloudstream' ? 'active' : ''} onClick={() => { setTab('cloudstream'); setInstallError(''); }}><Boxes size={18} /><span>CloudStream<small>Native .cs3 extensions</small></span><b>→</b></button>
         <button className={tab === 'directory' ? 'active' : ''} onClick={() => { setTab('directory'); setInstallError(''); }}><Compass size={18} /><span>1-Click Directory<small>Subtitles, anime & catalogs</small></span><b>{CURATED_EXTENSIONS.length}</b></button>
       </div>
 
       {tab !== 'directory' && tab !== 'cloudstream' && (
         <section className="install-panel">
-          <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : <Zap size={20} />}</span><div><h2>Add {tab === 'stremio' ? 'a Stremio addon' : 'a Nuvio repository'}</h2><p>{tab === 'stremio'
+          <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : tab === 'jsplugins' ? <Package size={20} /> : <Zap size={20} />}</span><div><h2>{tab === 'stremio' ? 'Add a Stremio addon' : tab === 'jsplugins' ? 'Add a JS plugin repository' : 'Add a Nuvio repository'}</h2><p>{tab === 'stremio'
             ? 'Paste a manifest URL or stremio:// link. Subtitle addons like OpenSubtitles work automatically.'
-            : 'Paste the repository URL. PRAHA fetches its manifest and runs scrapers with Android native HTTP.'}</p></div></div>
+            : tab === 'jsplugins'
+              ? 'Paste a repo.json, a scraper list, or a Vega manifest. Its scripts run in the sandbox, and can only reach public addresses.'
+              : 'Paste the repository URL. PRAHA fetches its manifest and runs scrapers with Android native HTTP.'}</p></div></div>
           <form onSubmit={install} className="install-form">
-            <div><Search size={17} /><input value={installUrl} onChange={(event) => { setInstallUrl(event.target.value); setInstallError(''); }} placeholder={tab === 'stremio' ? 'https://addon.example/manifest.json' : 'https://github.com/user/nuvio-repository'} aria-label="Extension URL" /></div>
+            <div><Search size={17} /><input value={installUrl} onChange={(event) => { setInstallUrl(event.target.value); setInstallError(''); }} placeholder={tab === 'stremio' ? 'https://addon.example/manifest.json' : tab === 'jsplugins' ? 'https://github.com/user/plugins/repo.json' : 'https://github.com/user/nuvio-repository'} aria-label="Extension URL" /></div>
             <button className="button button-primary" disabled={installing}>{installing ? <RefreshCw size={17} className="spin" /> : <Plug size={17} />}{installing ? 'Installing…' : 'Install'}</button>
           </form>
           {installError && <p className="install-error"><CircleAlert size={15} />{installError}</p>}
@@ -408,6 +457,91 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
             );
           })}
           {!repositories.length && <div className="empty-state extension-empty nuvio-empty"><span><PackageOpen size={27} /></span><h2>Your plugin shelf is empty</h2><p>Add a Nuvio repository above. Its providers appear here with individual controls, scraper settings, and stream testing.</p><div className="empty-features"><span><Check size={14} /> Android CORS bypass</span><span><Check size={14} /> Scraper settings</span><span><Check size={14} /> Stream testing</span></div></div>}
+        </div>
+      )}
+
+      {tab === 'jsplugins' && (
+        <PluginBrowser
+          installed={pluginRepositories}
+          onInstall={(url) => installFromUrl(url, 'jsplugins')}
+          busyUrl={busy}
+          failure={browserFailure}
+          allowAdult={allowsAdult(settings, profile)}
+        />
+      )}
+
+      {tab === 'jsplugins' && (
+        <div className="extension-list">
+          {pluginRepositories.map((repo) => {
+            const isOpen = expanded === repo.url;
+            return (
+              <article className={`extension-card repository-card ${!repo.enabled ? 'disabled' : ''}`} key={repo.url}>
+                <div className="extension-card-main">
+                  <div className="extension-logo nuvio"><Package size={24} /></div>
+                  <div className="extension-info">
+                    <div className="extension-title">
+                      <h3>{repo.name}</h3>
+                      <span>{repo.kind === 'vega' ? 'Vega manifest' : repo.kind === 'scrapers' ? 'Scraper list' : 'Repo file'}</span>
+                      {repo.enabled && <span className="active-badge"><i />ACTIVE</span>}
+                    </div>
+                    <p>{repo.plugins.filter((plugin) => plugin.enabled).length} of {repo.plugins.length} plugins enabled</p>
+                    <div className="resource-badges"><span>{shortUrl(repo.url)}</span></div>
+                  </div>
+                  <div className="extension-actions">
+                    <Toggle checked={repo.enabled} onChange={(enabled) => setPluginRepositories((current) => current.map((entry) => entry.url === repo.url ? { ...entry, enabled } : entry))} label={`Toggle ${repo.name}`} />
+                    <button className="icon-button" onClick={() => setExpanded(isOpen ? null : repo.url)} aria-label={`Show plugins of ${repo.name}`}>{isOpen ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</button>
+                    <button className="icon-button" onClick={() => refreshPluginRepo(repo)} disabled={busy === repo.url} aria-label={`Refresh ${repo.name}`}><RefreshCw size={17} className={busy === repo.url ? 'spin' : ''} /></button>
+                    <button className="icon-button danger" onClick={() => { setPluginRepositories((current) => current.filter((entry) => entry.url !== repo.url)); notify(`${repo.name} removed.`); }} aria-label={`Remove ${repo.name}`}><Trash2 size={17} /></button>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="scraper-list">
+                    {repo.plugins.some((plugin) => (plugin.catalogs?.length ?? 0) > 0) && (
+                      <p className="scraper-hint">
+                        The switch on the right of a plugin with lists turns its catalogs on in Home, Discover and
+                        search; its titles then open on their own pages. Off still finds sources for what you play.
+                      </p>
+                    )}
+                    {repo.plugins.map((plugin) => {
+                      const browsed = browsePlugins(repo).includes(plugin.id);
+                      const listsSomething = (plugin.catalogs?.length ?? 0) > 0;
+                      return (
+                        <div className="scraper-row" key={plugin.id}>
+                          <span className="scraper-icon"><Package size={16} /></span>
+                          <div>
+                            <strong>{plugin.name}<small>{plugin.version ? `v${plugin.version}` : plugin.vega ? 'vega' : 'js'}</small></strong>
+                            <p>
+                              {plugin.types.join(' · ')}{plugin.note ? ` · ${plugin.note}` : ''}
+                              {listsSomething ? ` · ${plugin.catalogs!.length} list${plugin.catalogs!.length === 1 ? '' : 's'}` : ''}
+                            </p>
+                          </div>
+                          <span className={`scraper-status ${plugin.enabled ? '' : 'paused'}`}>{plugin.enabled ? 'Ready' : 'Paused'}</span>
+                          {/* Two switches, as upstream: one runs the plugin, the other puts
+                              its catalogs on the browsing pages. A plugin that lists
+                              nothing has only the first. */}
+                          {listsSomething ? (
+                            <Toggle
+                              checked={plugin.enabled && browsed}
+                              onChange={(on) => setPluginRepositories((current) => current.map((entry) => (
+                                entry.url === repo.url ? setPluginBrowse(entry, plugin.id, on) : entry
+                              )))}
+                              label={`Show ${plugin.name}'s catalogs`}
+                            />
+                          ) : null}
+                          <Toggle
+                            checked={plugin.enabled}
+                            onChange={(enabled) => setPluginRepositories((current) => current.map((entry) => entry.url === repo.url ? setPluginEnabled(entry, plugin.id, enabled) : entry))}
+                            label={`Toggle ${plugin.name}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+          {!pluginRepositories.length && <div className="empty-state extension-empty nuvio-empty"><span><PackageOpen size={27} /></span><h2>No JS plugin repositories</h2><p>Add a repository above. PRAHA runs its scripts in a sandbox — no page access, and outbound requests are limited to public addresses.</p><div className="empty-features"><span><Check size={14} /> Sandboxed scripts</span><span><Check size={14} /> Scraper lists & Vega</span><span><Check size={14} /> Per-plugin control</span></div></div>}
         </div>
       )}
 

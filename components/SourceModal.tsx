@@ -1,20 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { MonitorPlay } from 'lucide-react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
+import { addonTarget, streamIdFor } from '../services/metaAddons';
 import { findNuvioStreams } from '../services/nuvioService';
 import { findPlayTorrioStreams } from '../services/playtorrioScrapers';
 import {
   cloudStreamAvailable, getLinks, prefetch, toStreamResults,
 } from '../services/cloudstreamService';
 import { filmQueryFromMedia, rankStreams, scrapeFilmSources } from '../services/sourceOrchestrator';
+import { findPluginStreamsEverywhere } from '../services/pluginFinder';
+import { buildPluginQuery } from '../services/pluginRuntime';
+import { activeRepos } from '../services/pluginRepositories';
+import * as pluginCatalogs from '../services/pluginCatalogs';
 import { FILM_SOURCES } from '../services/filmSources';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
 import type {
-  InstalledAddon, MediaItem, NuvioRepository,
+  InstalledAddon, MediaItem, NuvioRepository, PluginRepository,
   SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth,
 } from '../types';
 import SourcePanel from './SourcePanel';
+
+/**
+ * The empty plugin list. It must be one shared array: a `= []` default in the
+ * destructuring below would build a fresh array on every render, the load
+ * effect depends on `pluginRepositories`, and a new identity each pass would
+ * restart the whole source search forever.
+ */
+const NO_PLUGIN_REPOSITORIES: PluginRepository[] = [];
 
 const SourceModal: React.FC<{
   media: MediaItem;
@@ -22,6 +35,8 @@ const SourceModal: React.FC<{
   initialEpisode?: number;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
+  /** Installed JavaScript plugin repositories (VyseTV's plugin engine). */
+  pluginRepositories?: PluginRepository[];
   nuvioSettings: Record<string, Record<string, unknown>>;
   tmdbApiKey?: string;
   preferredLanguage: string;
@@ -44,6 +59,7 @@ const SourceModal: React.FC<{
   initialEpisode = 1,
   addons,
   repositories,
+  pluginRepositories = NO_PLUGIN_REPOSITORIES,
   nuvioSettings,
   tmdbApiKey,
   preferredLanguage,
@@ -189,6 +205,11 @@ const SourceModal: React.FC<{
       ? []
       : repositories.filter((repo) => repo.enabled).flatMap((repo) =>
           repo.scrapers.filter((scraper) => scraper.enabled).map((scraper) => ({ repo, scraper })));
+    // The JavaScript plugins, one health row per plugin so a dead one is visible
+    // rather than folded into a single "plugins" line.
+    const pluginRepos = extensionOnly ? [] : activeRepos(pluginRepositories);
+    const pluginJobs = pluginRepos.flatMap((repo) =>
+      repo.plugins.map((plugin) => ({ repo, plugin })));
     setHealth(extensionOnly
       ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
       : [
@@ -198,6 +219,7 @@ const SourceModal: React.FC<{
           { id: 'playtorrio:vod', name: 'PlayTorrio VOD (up to 4K UHD)', status: 'searching' as const },
           ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
           ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
+          ...pluginJobs.map(({ repo, plugin }) => ({ id: `plugin:${repo.url}:${plugin.id}`, name: `${repo.name} · ${plugin.name}`, status: 'searching' as const })),
         ]);
     const updateHealth = (id: string, patch: Partial<ProviderHealth>) => {
       if (!cancelled) setHealth((current) => current.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
@@ -274,16 +296,37 @@ const SourceModal: React.FC<{
           };
         }, publish);
 
+        // A title that came from a metadata addon is asked for streams by the
+        // ids its addon gave it (`kitsu:7442:1`, `tt0944947:1:1`), not by
+        // whatever prefix a stream addon happens to accept. `addonTarget`
+        // resolves the episode's own video id, and `streamAskFor` picks, per
+        // addon, the first id that addon declared it understands.
+        const metaTarget = media.source === 'stremio' && media.addonUrl
+          ? await addonTarget(media, addons, media.type === 'series' ? { season: s, episode: ep } : undefined)
+            .catch(() => null)
+          : null;
+        const streamAsk = metaTarget
+          ? (addon: InstalledAddon) => {
+            const id = streamIdFor(addon, metaTarget);
+            return id ? { id, type: metaTarget.type } : null;
+          }
+          : undefined;
+
         const stremioJob = extensionOnly ? Promise.resolve() : (async () => {
-          const imdbId = knownImdb || (await idJob).imdbId;
-          const resolved = { ...media, imdbId: imdbId || media.imdbId };
+          const imdbId = streamAsk ? undefined : knownImdb || (await idJob).imdbId;
+          const resolved = streamAsk ? media : { ...media, imdbId: imdbId || media.imdbId };
           await Promise.all(enabledAddons.map((addon) => {
             const id = `stremio:${addon.manifestUrl}`;
-            if (!supportsResource(addon, 'stream', media.type, resolved.imdbId || media.id)) {
+            if (streamAsk) {
+              if (!streamAsk(addon)) {
+                updateHealth(id, { status: 'unsupported', message: 'This provider has no id for this title.' });
+                return Promise.resolve();
+              }
+            } else if (!supportsResource(addon, 'stream', media.type, resolved.imdbId || media.id)) {
               updateHealth(id, { status: 'unsupported', message: 'This provider does not support this title type or ID.' });
               return Promise.resolve();
             }
-            return runProvider(id, () => findStremioStreams([addon], resolved, s, ep), publish);
+            return runProvider(id, () => findStremioStreams([addon], resolved, s, ep, streamAsk), publish);
           }));
         })();
         const nuvioJob = extensionOnly ? Promise.resolve() : (async () => {
@@ -348,7 +391,61 @@ const SourceModal: React.FC<{
             return { streams, errors: [] };
           }, publish);
         })();
-        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, cloudstreamJob];
+        // Stage 2 — the JavaScript plugins of every installed repository. They
+        // report the same way VyseTV's do: each one publishes the moment it
+        // lands, so a slow plugin (they run 3–8 at a time) holds nothing up.
+        // A plugin that finds no link is not an error; only one that could not
+        // run at all turns its row red.
+        const pluginJob = extensionOnly ? Promise.resolve() : (async () => {
+          if (!pluginRepos.length) return;
+          // One of a plugin's own titles (from its catalog): that plugin alone,
+          // asked by the id it gave it — the site's own link, not a name search.
+          const own = pluginCatalogs.pluginOwnOf(media, metaTarget?.video);
+          const query = buildPluginQuery({
+            tmdbId: media.tmdbId ?? (media.id.startsWith('tmdb:') ? Number(media.id.slice(5)) : null),
+            imdbId: knownImdb || media.imdbId || null,
+            isTv: media.type === 'series',
+            title: media.title,
+            originalTitle: media.originalTitle,
+            year: media.year ?? null,
+            season: s ?? null,
+            episode: ep ?? null,
+          });
+          if (own) query.ownId = own.own;
+          // The rows start as "searching"; the first plugin to land clears them
+          // all, because `findPluginStreamsEverywhere` publishes a merged list.
+          const answered = new Set<string>();
+          try {
+            await findPluginStreamsEverywhere(own ? pluginRepos.filter((repo) => repo.url === own.repoUrl) : pluginRepos, query, {
+              only: own?.plugin,
+              onSome: (hits) => {
+                if (cancelled || !hits.length) return;
+                for (const hit of hits) {
+                  const key = `${hit.plugin.id}`;
+                  if (answered.has(key)) continue;
+                  answered.add(key);
+                  const repo = pluginRepos.find((candidate) => candidate.plugins.some((p) => p.id === hit.plugin.id));
+                  if (repo) updateHealth(`plugin:${repo.url}:${hit.plugin.id}`, { status: 'ready' });
+                }
+                publish({ streams: hits.map((hit) => hit.result), errors: [] });
+              },
+            });
+            // Every plugin that did not land a link is idle, not broken.
+            for (const { repo, plugin } of pluginJobs) {
+              if (!answered.has(plugin.id)) {
+                updateHealth(`plugin:${repo.url}:${plugin.id}`, { status: 'empty', message: 'No link for this title.' });
+              }
+            }
+          } catch (error) {
+            for (const { repo, plugin } of pluginJobs) {
+              updateHealth(`plugin:${repo.url}:${plugin.id}`, {
+                status: 'error',
+                message: error instanceof Error ? error.message : 'The plugin repository failed.',
+              });
+            }
+          }
+        })();
+        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, pluginJob, cloudstreamJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
@@ -359,7 +456,7 @@ const SourceModal: React.FC<{
     };
     void load();
     return () => { cancelled = true; };
-  }, [media, season, episode, requestKey, addons, repositories, nuvioSettings]);
+  }, [media, season, episode, requestKey, addons, repositories, pluginRepositories, nuvioSettings]);
   useEffect(() => {
     if (suspended) return;
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
