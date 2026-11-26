@@ -8,6 +8,9 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.webkit.WebViewAssetLoader;
+import com.github.junrar.Archive;
+import com.github.junrar.ArchiveOptions;
+import com.github.junrar.exception.RarException;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -23,7 +26,9 @@ import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
@@ -68,6 +73,14 @@ final class BookFileReader {
                 || mediaType.equals("application/pdf") || mediaType.equals("application/epub+zip") || mediaType.equals("application/vnd.comicbook+zip");
     }
 
+    static boolean isComicArchive(String url, String disposition, String mime) {
+        String filename = URLUtil.guessFileName(url, disposition, mime).toLowerCase(Locale.ROOT);
+        String mediaType = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+        return filename.matches(".*\\.(cbr|rar|zip)$") || mediaType.equals("application/vnd.comicbook-rar")
+                || mediaType.equals("application/x-cbr") || mediaType.equals("application/vnd.rar")
+                || mediaType.equals("application/x-rar-compressed") || mediaType.equals("application/zip");
+    }
+
     void open(String url, String userAgent, String referer, Consumer<WebView> onReady, Consumer<String> onError) {
         new Thread(() -> {
             File temporary = null;
@@ -78,14 +91,27 @@ final class BookFileReader {
                     download(url, userAgent, referer, output);
                 }
                 String format = detectFormat(temporary);
+                if (format.equals("cbr")) {
+                    File comic = File.createTempFile("praha-comic-", ".cbz", activity.getCacheDir());
+                    try {
+                        convertComicArchive(temporary, comic);
+                    } catch (Exception error) {
+                        comic.delete();
+                        throw error;
+                    }
+                    temporary.delete();
+                    temporary = comic;
+                    format = "cbz";
+                }
+                String readerFormat = format;
                 StringBuilder id = new StringBuilder(64);
                 for (byte value : digest.digest()) id.append(String.format(Locale.ROOT, "%02x", value & 0xff));
                 file = temporary;
                 activity.runOnUiThread(() -> {
                     if (closed) { deleteFile(); return; }
-                    view = createViewer(format);
+                    view = createViewer(readerFormat);
                     onReady.accept(view);
-                    view.loadUrl(ORIGIN + "/reader/book-reader.html#format=" + format + "&id=" + id);
+                    view.loadUrl(ORIGIN + "/reader/book-reader.html#format=" + readerFormat + "&id=" + id);
                 });
             } catch (Exception error) {
                 if (temporary != null) temporary.delete();
@@ -152,6 +178,7 @@ final class BookFileReader {
             if (input.read(header) != header.length) throw new BookError("The site returned an empty or incomplete book.");
         }
         if (new String(header, StandardCharsets.US_ASCII).equals("%PDF-")) return "pdf";
+        if (new String(header, StandardCharsets.US_ASCII).equals("Rar!\u001a")) return "cbr";
         if (header[0] == 'P' && header[1] == 'K') {
             try (ZipFile zip = new ZipFile(file)) {
                 if (zip.size() > 10000) throw new BookError("This archive contains too many files.");
@@ -163,7 +190,7 @@ final class BookFileReader {
                     long size = entry.getSize();
                     if (size < 0 || size > 3 * MAX_BYTES - expanded) throw new BookError("This archive is too large to open.");
                     expanded += size;
-                    images |= !entry.isDirectory() && entry.getName().toLowerCase(Locale.ROOT).matches(".*\\.(jpe?g|png|webp|gif|avif)$");
+                    images |= !entry.isDirectory() && isPageImage(entry.getName());
                 }
                 if (zip.getEntry("META-INF/container.xml") != null) return "epub";
                 if (images) return "cbz";
@@ -171,7 +198,52 @@ final class BookFileReader {
                 throw new BookError("This archive is incomplete or damaged.");
             }
         }
-        throw new BookError("This link did not return a PDF, EPUB, or CBZ.");
+        throw new BookError("This link did not return a readable book or comic.");
+    }
+
+    private static boolean isPageImage(String name) {
+        return name.toLowerCase(Locale.ROOT).matches(".*\\.(jpe?g|png|webp|gif|avif)$");
+    }
+
+    // Reuse the offline CBZ viewer. Archive entries are never extracted as paths.
+    private void convertComicArchive(File source, File destination) throws IOException {
+        var options = ArchiveOptions.builder().maxDictionarySize(32L * 1024 * 1024).build();
+        try (Archive rar = new Archive(source, options);
+             ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(destination))) {
+            if (rar.getFileHeaders().size() > 10000) throw new BookError("This archive contains too many files.");
+            byte[] buffer = new byte[32768];
+            long remaining = MAX_BYTES;
+            boolean hasPages = false;
+            for (var entry : rar.getFileHeaders()) {
+                if (closed) throw new IOException("Reader closed");
+                String name = entry.getFileName().replace('\\', '/');
+                if (entry.isDirectory() || name.startsWith("__MACOSX/") || !isPageImage(name)) continue;
+                long size = entry.getFullUnpackSize();
+                if (size < 0 || size > remaining) throw new BookError("This archive is too large to open.");
+                if (entry.isEncrypted() || entry.isSplitBefore() || entry.isSplitAfter()) {
+                    throw new BookError("Choose an unprotected comic archive in a single file.");
+                }
+                zip.putNextEntry(new ZipEntry(name));
+                try (InputStream page = rar.getInputStream(entry)) {
+                    int count;
+                    while ((count = page.read(buffer)) != -1) {
+                        if (closed) throw new IOException("Reader closed");
+                        size -= count;
+                        if (size < 0) throw new BookError("This archive is damaged.");
+                        zip.write(buffer, 0, count);
+                    }
+                }
+                if (size != 0) throw new BookError("This archive is incomplete.");
+                remaining -= entry.getFullUnpackSize();
+                zip.closeEntry();
+                hasPages = true;
+            }
+            if (!hasPages) throw new BookError("This archive contains no comic pages.");
+        } catch (BookError error) {
+            throw error;
+        } catch (IOException | RarException error) {
+            throw new BookError("This comic archive is damaged or uses an unsupported format.");
+        }
     }
 
     private WebView createViewer(String format) {

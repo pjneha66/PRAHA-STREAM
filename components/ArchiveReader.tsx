@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RotateCcw, X } from 'lucide-react';
-import { openSafeExternalUrl } from '../services/androidBridge';
-import { BooksService } from '../services/archiveService';
+import { ChevronLeft, ChevronRight, Globe, LoaderCircle, RotateCcw, X } from 'lucide-react';
+import { openArchiveLoan, openPublicationUrl } from '../services/androidBridge';
+import { BooksService, canReadBookFile, type BookFile } from '../services/archiveService';
 import { readScanPage, saveScanPage } from '../services/continueStore';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
+import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 
 /**
  * In-app "Read online" viewer for archive.org text items. Renders scanned
@@ -93,6 +94,8 @@ const ArchiveReader: React.FC<{
 }> = ({ identifier, title, onClose, onPageRead }) => {
   const [leafCount, setLeafCount] = useState<number | null>(null);
   const [restricted, setRestricted] = useState(false);
+  const [readableFiles, setReadableFiles] = useState<BookFile[]>([]);
+  const [openError, setOpenError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [mode, setMode] = useState<'scroll' | 'paged'>('scroll');
@@ -102,8 +105,10 @@ const ArchiveReader: React.FC<{
   /** Real aspect (w/h) taken from the first loaded page. */
   const [pageAspect, setPageAspect] = useState<LeafDims | null>(null);
   /** Height of one leaf in px inside the scroll container (linear layout). */
-  const [leafHeight, setLeafHeight] = useState<number | null>(null);
+  const [fitLeafHeight, setFitLeafHeight] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { zoom, changeZoom } = useReaderZoom(scrollRef);
+  const leafHeight = fitLeafHeight === null ? null : fitLeafHeight * zoom;
   const scrollTarget = useRef<number | null>(null);
   const lastLayout = useRef<{ height: number | null; mode: string } | null>(null);
 
@@ -111,16 +116,23 @@ const ArchiveReader: React.FC<{
     let alive = true;
     setLeafCount(null);
     setRestricted(false);
+    setReadableFiles([]);
+    setOpenError(false);
     setError(null);
     scrollTarget.current = null;
     lastLayout.current = null;
     setCurrentPage(0);
     setFailedCount(0);
     setPageAspect(null);
-    setLeafHeight(null);
+    setFitLeafHeight(null);
     BooksService.itemLeaves(identifier)
-      .then((info) => {
+      .then(async (info) => {
         if (!alive) return;
+        if (!info.restricted && !info.leafCount) {
+          const files = await BooksService.itemFiles(identifier);
+          if (!alive) return;
+          setReadableFiles(files.filter(canReadBookFile));
+        }
         const page = Math.min(readScanPage(identifier) ?? 0, Math.max(0, info.leafCount - 1));
         scrollTarget.current = page;
         setCurrentPage(page);
@@ -137,13 +149,15 @@ const ArchiveReader: React.FC<{
 
   useLayoutEffect(() => {
     const root = scrollRef.current;
-    if (mode !== 'scroll' || !root || !leafHeight) return;
-    if (scrollTarget.current !== null || lastLayout.current?.height !== leafHeight || lastLayout.current?.mode !== mode) {
+    if (!root) return;
+    if (mode === 'paged' && lastLayout.current?.mode !== mode) root.scrollTop = 0;
+    if (mode === 'scroll' && leafHeight
+      && (scrollTarget.current !== null || lastLayout.current?.height !== fitLeafHeight || lastLayout.current?.mode !== mode)) {
       root.scrollTop = (scrollTarget.current ?? currentPage) * leafHeight;
       scrollTarget.current = null;
     }
-    lastLayout.current = { height: leafHeight, mode };
-  }, [currentPage, mode, leafHeight]);
+    lastLayout.current = { height: fitLeafHeight, mode };
+  }, [currentPage, mode, leafHeight, fitLeafHeight]);
 
   useEffect(() => {
     if (!leafCount || restricted || error) return;
@@ -165,7 +179,7 @@ const ArchiveReader: React.FC<{
       const root = scrollRef.current;
       if (!root) return;
       const width = Math.min(root.clientWidth, LEAF_MAX_WIDTH);
-      if (width > 0 && aspect.h > 0) setLeafHeight((width * aspect.h) / aspect.w);
+      if (width > 0 && aspect.h > 0) setFitLeafHeight((width * aspect.h) / aspect.w);
     };
     measure();
     window.addEventListener('resize', measure);
@@ -186,8 +200,9 @@ const ArchiveReader: React.FC<{
     if (mode === 'scroll' && scrollRef.current && leafHeight) {
       scrollRef.current.scrollTop = clamped * leafHeight;
     }
+    if (mode === 'paged' && scrollRef.current && clamped !== currentPage) scrollRef.current.scrollTop = 0;
     setCurrentPage(clamped);
-  }, [leafCount, leafHeight, mode]);
+  }, [currentPage, leafCount, leafHeight, mode]);
 
   const switchMode = (next: 'scroll' | 'paged') => {
     if (next === mode) return;
@@ -225,17 +240,17 @@ const ArchiveReader: React.FC<{
     >
       <div className="archive-reader-bar" style={{ display: chromeVisible ? 'flex' : 'none' }}>
         <strong style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayTitle}</strong>
-        <div className="archive-mode-pills" role="tablist">
+        {!restricted && Boolean(leafCount) && <div className="archive-mode-pills" role="tablist">
           <button type="button" className={mode === 'scroll' ? 'active' : ''} onClick={() => switchMode('scroll')}>Scroll</button>
           <button type="button" className={mode === 'paged' ? 'active' : ''} onClick={() => switchMode('paged')}>Paged</button>
-        </div>
+        </div>}
         <button
           type="button"
           className="icon-button"
-          aria-label="Open on archive.org"
-          onClick={() => openSafeExternalUrl(BooksService.detailsUrl(identifier))}
+          aria-label="Open Internet Archive"
+          onClick={async () => setOpenError(!await openArchiveLoan(BooksService.detailsUrl(identifier)))}
         >
-          <ExternalLink size={15} />
+          <Globe size={15} />
         </button>
         <button type="button" className="icon-button" aria-label="Close reader" onClick={onClose}>
           <X size={16} />
@@ -253,11 +268,25 @@ const ArchiveReader: React.FC<{
           </div>
         )}
 
+        {!restricted && leafCount === 0 && !error && (
+          <div className="archive-reader-error archive-file-options">
+            <p>{readableFiles.length ? 'Choose a volume to read.' : 'No readable files were listed for this item.'}</p>
+            {readableFiles.map((file) => (
+              <button type="button" key={file.url} className="button button-secondary" onClick={async () => setOpenError(!await openPublicationUrl(file.url))}>
+                {file.name}
+              </button>
+            ))}
+            {!readableFiles.length && <ArchiveBorrowButton identifier={identifier} label="Open Internet Archive" />}
+            {openError && <p role="alert">Could not open the reader. Try the file again.</p>}
+          </div>
+        )}
+
         {/* Native leaf rendering (unrestricted scans only) */}
-        {!restricted && leafCount !== null && !error && (
+        {!restricted && leafCount !== null && leafCount > 0 && !error && (
           <div
             ref={scrollRef}
             className={mode === 'scroll' ? 'archive-scroll-body' : 'archive-paged-body'}
+            style={{ '--reader-zoom': zoom } as React.CSSProperties}
             onScroll={mode === 'scroll' ? handleScroll : undefined}
             onClick={mode === 'paged' ? () => setChromeVisible((v) => !v) : undefined}
           >
@@ -269,7 +298,7 @@ const ArchiveReader: React.FC<{
                   className="archive-paged-zone archive-paged-prev"
                   onClick={(event) => {
                     event.stopPropagation();
-                    setCurrentPage(Math.max(0, currentPage - 1));
+                    scrollToLeaf(currentPage - 1);
                   }}
                 >
                   <ChevronLeft size={20} />
@@ -280,7 +309,7 @@ const ArchiveReader: React.FC<{
                   className="archive-paged-zone archive-paged-next"
                   onClick={(event) => {
                     event.stopPropagation();
-                    setCurrentPage(Math.min(leafCount - 1, currentPage + 1));
+                    scrollToLeaf(currentPage + 1);
                   }}
                 >
                   <ChevronRight size={20} />
@@ -341,8 +370,9 @@ const ArchiveReader: React.FC<{
         )}
 
         {/* Bottom scrubber */}
-        {!restricted && leafCount !== null && !error && chromeVisible && (
+        {!restricted && leafCount !== null && leafCount > 0 && !error && chromeVisible && (
           <div className="archive-reader-scrub">
+            <ReaderZoomControls zoom={zoom} onChange={changeZoom} />
             <span className="archive-page-label">Page {currentPage + 1} / {leafCount}</span>
             <input
               type="range"

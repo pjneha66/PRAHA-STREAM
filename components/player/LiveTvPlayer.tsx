@@ -127,7 +127,7 @@ const LiveTvPlayer: React.FC<LiveTvPlayerProps> = ({
     onEngineFallback: (message) => onNotice?.(message),
   });
   const {
-    videoRef, playing, waiting, currentTime, duration, volume, muted,
+    videoRef, ready, playing, waiting, currentTime, duration, volume, muted,
     play, pause, toggle, seekBy, setVolume, toggleMute, retry, nativeActive,
   } = engine;
 
@@ -594,7 +594,7 @@ const LiveTvPlayer: React.FC<LiveTvPlayerProps> = ({
         }}
       />
 
-      {waiting && !fatal && (
+      {(!ready || waiting) && !fatal && (
         <div className="ltvp-spinner" role="status" aria-label="Loading channel">
           <span />
         </div>

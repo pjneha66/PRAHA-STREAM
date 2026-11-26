@@ -233,7 +233,7 @@ const PLAYER_PACKAGES: Record<Exclude<ExternalPlayerTarget, 'chooser'>, string> 
 
 export function isAndroidApp(): boolean {
   if (typeof window === 'undefined') return false;
-  if (window.PrahaNative) return true;
+  if (window.PrahaNative || bridgeRpcAvailable()) return true;
   try {
     return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   } catch {
@@ -320,6 +320,11 @@ export async function openProtectedEmbed(url: string): Promise<boolean> {
     }
     return Boolean(window.PrahaNative?.openProtectedEmbed?.(target.href));
   } catch { return false; }
+}
+
+/** Publication links stay in the app on Android, including direct reader files. */
+export async function openPublicationUrl(url: string): Promise<boolean> {
+  return isAndroidApp() ? openProtectedEmbed(url) : openSafeExternalUrl(url);
 }
 
 export async function openArchiveLoan(url: string): Promise<boolean> {

@@ -9,9 +9,16 @@
   <body>
     <main id="pages" aria-label="Book pages"></main>
     <nav aria-label="Reading controls">
-      <button id="previous" disabled>Previous</button>
-      <span id="position" role="status">Opening book…</span>
-      <button id="next" disabled>Next</button>
+      <div id="zoom-controls" class="reader-zoom" role="group" aria-label="Page zoom" hidden>
+        <button id="zoom-out" aria-label="Zoom out" disabled>−</button>
+        <button id="zoom-reset" aria-label="Reset zoom to fit" disabled>100%</button>
+        <button id="zoom-in" aria-label="Zoom in">+</button>
+      </div>
+      <div class="reader-navigation">
+        <button id="previous" disabled>Previous</button>
+        <span id="position" role="status">Opening book…</span>
+        <button id="next" disabled>Next</button>
+      </div>
     </nav>
     <script type="module" src="/src/book-reader/reader.ts"></script>
   </body>

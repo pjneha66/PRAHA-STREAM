@@ -3,17 +3,18 @@ import {
   ArrowUpDown, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
   FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
 } from 'lucide-react';
-import { buildImageCandidates, openSafeExternalUrl } from '../services/androidBridge';
+import { buildImageCandidates, openArchiveLoan, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
-import { ARCHIVE_COLLECTIONS, BooksService, type BookFile } from '../services/archiveService';
+import { ARCHIVE_COLLECTIONS, BooksService, canReadBookFile, type BookFile } from '../services/archiveService';
 import { COMICK_SOURCE_OPTIONS as COMICK_ACTIVE_SOURCE_OPTIONS } from '../services/comickService';
 import { resolveComickPoster } from '../services/sankaService';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '../services/comicLanguages';
-import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, loadComicBookSite, openComicBookSite } from '../services/comicBookSites';
+import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, isComicDownloadSite, loadComicBookSite, openComicBookSite } from '../services/comicBookSites';
+import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 import { comicEditionKey, groupComicTitles } from '../services/comicGroups';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
@@ -299,6 +300,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
   const [readerLoading, setReaderLoading] = useState(false);
   const [readerError, setReaderError] = useState('');
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
+  const { zoom: readerZoom, changeZoom: changeReaderZoom } = useReaderZoom(readerPagesRef);
   const chapterAbortRef = useRef<AbortController | null>(null);
   const [scrubberPage, setScrubberPage] = useState(1);
   // Reader mode (port of PlayTorrio's manga reader): webtoon long-strip vs
@@ -320,7 +322,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     if (!readerImages) return;
     const clamped = Math.min(Math.max(1, page), readerImages.length);
     setScrubberPage(clamped);
-    document.getElementById(`sanka-page-${clamped - 1}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (readerMode === 'paged' && readerPagesRef.current) readerPagesRef.current.scrollTop = 0;
+    else document.getElementById(`sanka-page-${clamped - 1}`)?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
   };
 
   // Track the page under the viewport top so the scrubber label follows scrolling.
@@ -863,6 +866,9 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           <ExternalLink size={14} /> Browse {COMIC_BOOK_SITES[selectedBookSite].label}
         </button>
       )}
+      {selectedBookSite && isComicDownloadSite(selectedBookSite) && (
+        <p className="sanka-fallback-note">Open an issue and tap its download link to read it in PRAHA.</p>
+      )}
       {bookSiteError && <p role="alert">{bookSiteError}</p>}
 
       {fallbackNotice && !loading && !error && (
@@ -1177,7 +1183,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                   </button>
                 </header>
                 <div
-                  className={`sanka-reader-pages ${readerMode === 'paged' ? 'sanka-reader-paged' : ''}`}
+                  className="sanka-reader-pages"
+                  style={{ '--reader-zoom': readerZoom } as React.CSSProperties}
                   ref={readerPagesRef}
                   onScroll={readerMode === 'webtoon' ? onReaderScroll : undefined}
                 >
@@ -1193,8 +1200,9 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                       </div>
                     ))}
                 </div>
-                {readerImages.length > 4 && (
-                  <div className="sanka-page-scrubber" onClick={(e) => e.stopPropagation()}>
+                <div className="sanka-page-scrubber" onClick={(e) => e.stopPropagation()}>
+                  <ReaderZoomControls zoom={readerZoom} onChange={changeReaderZoom} />
+                  {(readerImages.length > 4 || (readerMode === 'paged' && readerImages.length > 1)) && <>
                     <button onClick={() => jumpToPage(scrubberPage - 1)} disabled={scrubberPage <= 1} aria-label="Previous page">
                       <ChevronLeft size={15} />
                     </button>
@@ -1202,8 +1210,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                     <button onClick={() => jumpToPage(scrubberPage + 1)} disabled={scrubberPage >= readerImages.length} aria-label="Next page">
                       <ChevronRight size={15} />
                     </button>
-                  </div>
-                )}
+                  </>}
+                </div>
                 <footer className="sanka-reader-footer">
                   <button
                     className="button button-secondary"
@@ -1264,7 +1272,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                   <button
                     key={file.name}
                     className="comic-archive-file"
-                    onClick={() => openSafeExternalUrl(file.url)}
+                    onClick={() => canReadBookFile(file) ? void browseBookSite(file.url) : void openSafeExternalUrl(file.url)}
                   >
                     <FileDown size={16} />
                     <span>{file.name}</span>
@@ -1281,7 +1289,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                   <BookOpen size={14} /> Read online
                 </button>
               )}
-              <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(archiveItem.slug))}>
+              <button type="button" className="button button-secondary" onClick={() => openArchiveLoan(BooksService.detailsUrl(archiveItem.slug))}>
                 <ExternalLink size={13} /> archive.org page
               </button>
             </div>

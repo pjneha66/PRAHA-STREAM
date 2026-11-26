@@ -19,8 +19,8 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 54
-        versionName "2.11.29"
+        versionCode 55
+        versionName "2.11.30"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -187,6 +187,7 @@ dependencies {
     // Origin-gated JS bridge (audit C-01). Resolves from the Play-updated
     // WebView; no new APK dependency bloat (Capacitor already ships it).
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    implementation "com.github.junrar:junrar:8.1.2"
     implementation project(':capacitor-android')
 
     // ── CloudStream extensions ──

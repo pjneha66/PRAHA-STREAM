@@ -3,9 +3,9 @@ import {
   BookOpen, CircleAlert, ExternalLink, FileDown, Library, LoaderCircle, RefreshCw, Search, X,
 } from 'lucide-react';
 import {
-  ALL_ARCHIVE_TEXTS, ARCHIVE_COLLECTIONS, BooksService, type BookFile, type BookItem,
+  ALL_ARCHIVE_TEXTS, ARCHIVE_COLLECTIONS, BooksService, canReadBookFile, type BookFile, type BookItem,
 } from '../services/archiveService';
-import { isAndroidApp, openProtectedEmbed, openSafeExternalUrl } from '../services/androidBridge';
+import { openArchiveLoan, openPublicationUrl, openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import SkeletonGrid from './SkeletonGrid';
@@ -290,7 +290,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
 
   const openSite = async (url: string) => {
     setSiteError('');
-    const opened = await (isAndroidApp() ? openProtectedEmbed(url) : openSafeExternalUrl(url));
+    const opened = await openPublicationUrl(url);
     if (!opened) setSiteError('Could not open this site. Try again.');
   };
 
@@ -356,7 +356,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         {mode !== 'all' && <button
           type="button"
           className="text-button books-external-link"
-          onClick={() => openSafeExternalUrl(SITE_URLS[mode])}
+          onClick={() => mode === 'openlibrary' ? void openSite(SITE_URLS[mode]) : void openSafeExternalUrl(SITE_URLS[mode])}
         >
           <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
         </button>}
@@ -497,7 +497,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                     </button>
                   )}
                   {selected.restricted ? <ArchiveBorrowButton key={selected.identifier} identifier={selected.identifier} /> : (
-                    <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(selected.identifier!))}>
+                    <button type="button" className="button button-secondary" onClick={() => openArchiveLoan(BooksService.detailsUrl(selected.identifier!))}>
                       <ExternalLink size={13} /> archive.org page
                     </button>
                   )}
@@ -509,7 +509,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 </button>
               )}
               {selected.openLibraryKey && (
-                <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
+                <button type="button" className="button button-secondary" onClick={() => openSite(BooksService.workUrl(selected.openLibraryKey!))}>
                   <ExternalLink size={13} /> Open Library page
                 </button>
               )}
@@ -529,7 +529,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                   <button
                     key={file.name}
                     className="books-sheet-file"
-                    onClick={() => openSafeExternalUrl(file.url)}
+                    onClick={() => canReadBookFile(file) ? void openSite(file.url) : void openSafeExternalUrl(file.url)}
                   >
                     <FileDown size={16} />
                     <span>{file.name}</span>

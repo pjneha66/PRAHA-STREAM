@@ -4,6 +4,10 @@ const pages = document.querySelector<HTMLElement>('#pages')!;
 const previous = document.querySelector<HTMLButtonElement>('#previous')!;
 const next = document.querySelector<HTMLButtonElement>('#next')!;
 const position = document.querySelector<HTMLElement>('#position')!;
+const zoomControls = document.querySelector<HTMLElement>('#zoom-controls')!;
+const zoomOut = document.querySelector<HTMLButtonElement>('#zoom-out')!;
+const zoomReset = document.querySelector<HTMLButtonElement>('#zoom-reset')!;
+const zoomIn = document.querySelector<HTMLButtonElement>('#zoom-in')!;
 const params = new URLSearchParams(location.hash.slice(1));
 const format = params.get('format');
 const digest = params.get('id');
@@ -20,6 +24,35 @@ function savePosition(value: string) {
 function showError() {
   position.textContent = 'This book couldn’t be opened. Go back and try another file.';
   previous.disabled = next.disabled = true;
+  zoomControls.hidden = true;
+}
+
+function enableZoom(applyZoom: (zoom: number) => void) {
+  let zoom = 1;
+  const changeZoom = (nextZoom: number) => {
+    zoom = nextZoom;
+    applyZoom(zoom);
+    zoomReset.textContent = `${zoom * 100}%`;
+    zoomReset.disabled = zoomOut.disabled = zoom === 1;
+    zoomIn.disabled = zoom === 3;
+  };
+  zoomOut.onclick = () => changeZoom(zoom - 0.25);
+  zoomReset.onclick = () => changeZoom(1);
+  zoomIn.onclick = () => changeZoom(zoom + 0.25);
+  zoomControls.hidden = false;
+}
+
+function enablePageZoom() {
+  let previousZoom = 1;
+  enableZoom((zoom) => {
+    const ratio = zoom / previousZoom;
+    const left = (pages.scrollLeft + pages.clientWidth / 2) * ratio - pages.clientWidth / 2;
+    const top = pages.scrollTop * ratio;
+    pages.style.setProperty('--reader-zoom', String(zoom));
+    pages.scrollLeft = left;
+    pages.scrollTop = top;
+    previousZoom = zoom;
+  });
 }
 
 async function readPdf(data: ArrayBuffer) {
@@ -67,6 +100,7 @@ async function readPdf(data: ArrayBuffer) {
 
   previous.onclick = () => void render(number - 1).catch(showError);
   next.onclick = () => void render(number + 1).catch(showError);
+  enablePageZoom();
   await render(number);
 }
 
@@ -76,6 +110,10 @@ async function readEpub(data: ArrayBuffer) {
   const book = ePub({ replacements: 'blobUrl' });
   await book.open(data);
   await book.opened;
+  // Some EPUBs list an optional cover without a matching manifest entry.
+  book.spine.each((section: import('epubjs/types/section').default) => {
+    if (!section.url) section.linear = false;
+  });
   const rendition = book.renderTo(pages, {
     width: '100%',
     height: '100%',
@@ -93,8 +131,9 @@ async function readEpub(data: ArrayBuffer) {
   previous.onclick = () => void rendition.prev().catch(showError);
   next.onclick = () => void rendition.next().catch(showError);
   const resume = readPosition();
-  if (resume?.startsWith('epubcfi(')) await rendition.display(resume).catch(() => rendition.display());
+  if (resume?.startsWith('epubcfi(') && book.spine.get(resume)?.url) await rendition.display(resume).catch(() => rendition.display());
   else await rendition.display();
+  enableZoom((zoom) => rendition.themes.fontSize(`${zoom * 100}%`));
 }
 
 async function readComic(data: ArrayBuffer) {
@@ -125,6 +164,7 @@ async function readComic(data: ArrayBuffer) {
   }
   previous.onclick = () => void render(index - 1).catch(showError);
   next.onclick = () => void render(index + 1).catch(showError);
+  enablePageZoom();
   await render(index);
 }
 

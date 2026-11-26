@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft, BookOpen, ChevronLeft, ChevronRight, ImageOff, LoaderCircle, Rows3, SkipForward,
 } from 'lucide-react';
 import { buildFallbackImageUrl } from '../services/androidBridge';
+import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 import './manga-reader.css';
 
 /**
@@ -187,6 +189,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
   const [barVisible, setBarVisible] = useState(true);
 
   const stripRef = useRef<HTMLDivElement | null>(null);
+  const { zoom, changeZoom } = useReaderZoom(stripRef);
   const restorePending = useRef(true);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -295,11 +298,15 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
     if (target) strip.scrollTop = Math.max(0, target.offsetTop - 8);
   }, [mode, page, total]);
 
+  useLayoutEffect(() => {
+    if (mode === 'paged' && stripRef.current) stripRef.current.scrollTop = 0;
+  }, [chapterId, mode, page]);
+
   const onTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
-    if (!touch) return;
-    swipeStart.current = { x: touch.clientX, y: touch.clientY };
-  }, []);
+    swipeStart.current = mode === 'paged' && zoom === 1 && event.touches.length === 1
+      ? { x: touch.clientX, y: touch.clientY } : null;
+  }, [mode, zoom]);
 
   const onTouchEnd = useCallback(
     (event: React.TouchEvent<HTMLDivElement>) => {
@@ -337,12 +344,13 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
   const onFirstPage = page <= 0;
   const brokenCount = broken.size;
 
-  return (
-    <div className="mr" role="region" aria-label={`Reader: ${chapterTitle}`}>
+  return createPortal(
+    <div className="mr" role="region" aria-label={`Reader: ${chapterTitle}`} style={{ '--reader-zoom': zoom } as React.CSSProperties}>
       <div
-        className={`mr-stage${mode === 'paged' ? ' is-paged' : ' is-webtoon'}`}
+        className={`mr-stage${mode === 'paged' ? ' is-paged' : ' is-webtoon'}${zoom > 1 ? ' is-zoomed' : ''}`}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
+        onTouchCancel={() => { swipeStart.current = null; }}
       >
         {total === 0 ? (
           <div className="mr-empty">
@@ -350,7 +358,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
             <p>This chapter has no pages yet.</p>
           </div>
         ) : mode === 'paged' ? (
-          <div className="mr-paged" onClick={() => setBarVisible((visible) => !visible)}>
+          <div className="mr-paged" ref={stripRef} onClick={() => setBarVisible((visible) => !visible)}>
             <MangaPage
               key={`${chapterId}/${page}`}
               url={images[clampPage(page)]}
@@ -433,6 +441,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
           <span className="mr-counter" aria-live="polite">
             {total > 0 ? `${clampPage(page) + 1} / ${total}` : '0 / 0'}
           </span>
+          {total > 0 && <ReaderZoomControls zoom={zoom} onChange={changeZoom} />}
 
           <button
             type="button"
@@ -464,7 +473,8 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
       <div className="mr-progress" aria-hidden="true">
         <span style={{ width: total > 0 ? `${((clampPage(page) + 1) / total) * 100}%` : '0%' }} />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

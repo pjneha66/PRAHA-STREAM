@@ -75,7 +75,6 @@ class PrahaMedia3Plugin : Plugin() {
     }
 
     private var pendingSeekMs: Long? = null
-    private var pendingPlayWhenReady = true
     private var lastCues: CueGroup? = null
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressUpdate = object : Runnable {
@@ -153,10 +152,10 @@ class PrahaMedia3Plugin : Plugin() {
         // same numbers VyseTV settled on for the same reason.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                20_000,   // min buffer to start
-                120_000,  // max buffer
-                2_500,    // buffer for playback to continue after a rebuffer
-                5_000,    // buffer for playback to start after a seek
+                20_000,   // minimum read-ahead
+                120_000,  // maximum read-ahead
+                750,      // initial playback and user-initiated seeks
+                2_500,    // recovery from a rebuffer
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -431,11 +430,10 @@ class PrahaMedia3Plugin : Plugin() {
                 // real item — an empty MediaItem would play nothing.
                 val source = DefaultMediaSourceFactory(dataSource)
                     .createMediaSource(builder.build())
-                exo.setMediaSource(source)
+                pendingSeekMs = null
+                if (startMs > 0 && !isLive) exo.setMediaSource(source, startMs)
+                else exo.setMediaSource(source)
                 exo.playWhenReady = autoPlay
-
-                pendingPlayWhenReady = autoPlay
-                pendingSeekMs = if (startMs > 0) startMs else null
 
                 if (isLive) {
                     // Live wants to sit at the edge and never buffer far behind.

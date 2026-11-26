@@ -35,6 +35,16 @@ export interface BookFile {
   sizeBytes?: number;
 }
 
+export function canReadBookFile(file: BookFile): boolean {
+  return /^(PDF|EPUB|CBZ)$/.test(file.format);
+}
+
+interface ArchiveFileData {
+  name?: string;
+  size?: string;
+  private?: string | boolean;
+}
+
 export interface ArchiveCollection {
   id: string;
   name: string;
@@ -203,16 +213,19 @@ export class BooksService {
     if (cached) return cached;
     const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('Could not load the archive.org item metadata.');
-    const data = JSON.parse(res.data) as { files?: Array<{ name?: string; size?: string; format?: string; private?: string | boolean }> };
-    const files: BookFile[] = (data.files || [])
+    const data = JSON.parse(res.data) as { files?: ArchiveFileData[] };
+    return this.cacheItemFiles(identifier, data.files);
+  }
+
+  private static cacheItemFiles(identifier: string, entries: ArchiveFileData[] = []): BookFile[] {
+    const files: BookFile[] = entries
       .filter((file) => file.name && file.private !== true && file.private !== 'true' && TEXT_FORMAT_RE.test(file.name))
       .map((file) => ({
         name: String(file.name),
         format: (String(file.name).split('.').pop() || 'file').toUpperCase(),
         url: `https://archive.org/download/${encodeURIComponent(identifier)}/${encodeURIComponent(String(file.name))}`,
         sizeBytes: file.size ? Number(file.size) || undefined : undefined,
-      }))
-      .slice(0, 12);
+      }));
     this.filesCache.set(identifier, files);
     evictOldest(this.filesCache, 40);
     return files;
@@ -228,11 +241,13 @@ export class BooksService {
     if (cached) return cached;
     const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('Could not load the archive.org item metadata.');
-    const data = JSON.parse(res.data) as { metadata?: Record<string, unknown> };
+    const data = JSON.parse(res.data) as { metadata?: Record<string, unknown>; files?: ArchiveFileData[] };
     const meta = data.metadata || {};
-    const leafCount = Number(meta.imagecount) || 0;
+    const count = Number(meta.imagecount);
+    const leafCount = Number.isSafeInteger(count) && count > 0 ? count : 0;
     const restricted = meta['access-restricted-item'] === true || meta['access-restricted-item'] === 'true';
-    if (leafCount <= 0 && !restricted) throw new Error('This item has no scanned pages to read.');
+
+    if (!restricted && !leafCount) this.cacheItemFiles(identifier, data.files);
     const info = { title: firstOf(meta.title as string | string[] | undefined) || identifier, leafCount, restricted };
     this.leavesCache.set(identifier, info);
     evictOldest(this.leavesCache, 40);

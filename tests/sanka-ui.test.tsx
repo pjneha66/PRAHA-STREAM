@@ -41,6 +41,31 @@ describe('Sanka comic reader & pagination flow', () => {
     await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith('https://annas-archive.gl/search?content=book_comic'));
   });
 
+  it.each([
+    ['Comics-All', 'https://comics-all.com', '/123-comic.html', '<a class="preview-title" href="/123-comic.html">Test Issue</a>', 'story'],
+    ['ComicSnake', 'https://comicsnake.com', '/publisher/123-comic.html', '<a class="comics_th-in" href="/publisher/123-comic.html" title="Test Issue"><img alt="Cover"></a>', 'story'],
+    ['GetComics', 'https://getcomics.org', '/publisher/test-issue/', '<article class="post"><h1 class="post-title"><a href="/publisher/test-issue/">Test Issue</a></h1></article>', 's'],
+  ])('searches %s and opens the issue in the Android publication reader', async (label, origin, path, html, searchParam) => {
+    const openProtectedEmbed = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const { origin: requestOrigin, searchParams } = new URL(String(input));
+      if (requestOrigin === origin) return {
+        ok: true, status: 200, text: async () => searchParams.get(searchParam) === 'Test Issue' ? html : '<html></html>',
+      } as Response;
+      return json({ data: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<SankaExplorer />);
+    fireEvent.click(screen.getByRole('tab', { name: label }));
+    const field = screen.getByRole('textbox', { name: 'Search manga and comics' });
+    fireEvent.change(field, { target: { value: 'Test Issue' } });
+    fireEvent.submit(field.closest('form')!);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Test Issue' }));
+    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(origin + path));
+  });
+
   it('opens directly on comics, supports Load more pagination, and reads chapter pages', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

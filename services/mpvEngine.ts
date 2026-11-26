@@ -149,17 +149,11 @@ class MpvEngine {
       }),
     ];
 
-    for (const [name, format] of Object.entries(MPV_OBSERVED_PROPERTIES)) {
-      try {
-        // mpv pushes `propertyChange` only for properties registered with
-        // mpv_observe_property. Writing `observe-<name>` used to stand in for
-        // that and does nothing at all, so the UI never saw time, duration or
-        // pause and the start guard treated every stream as dead.
-        await PrahaMpv.observe({ name, format });
-      } catch {
-        // A property mpv does not expose is skipped, not fatal.
-      }
-    }
+    // Queue property subscriptions together so cold start does not wait on a
+    // separate WebView round trip for every property.
+    await Promise.all(Object.entries(MPV_OBSERVED_PROPERTIES).map(([name, format]) =>
+      PrahaMpv.observe({ name, format }).catch(() => undefined),
+    ));
 
     this.ready = true;
     return true;

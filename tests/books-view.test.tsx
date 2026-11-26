@@ -63,6 +63,9 @@ describe('Books search and scan resume', () => {
     fireEvent.change(await within(reader).findByRole('slider', { name: 'Jump to page' }), { target: { value: '150' } });
     expect(within(reader).getByText('Page 150 / 180')).toBeTruthy();
     expect(readScanPage(archiveHit.identifier)).toBe(149);
+    fireEvent.click(within(reader).getByRole('button', { name: 'Zoom in' }));
+    expect(within(reader).getByRole('button', { name: 'Reset zoom to fit' }).textContent).toBe('125%');
+    expect(readScanPage(archiveHit.identifier)).toBe(149);
     fireEvent.click(within(reader).getByRole('button', { name: 'Paged' }));
     expect(within(reader).getByText('Page 150 / 180')).toBeTruthy();
     fireEvent.click(within(reader).getByRole('button', { name: 'Next page' }));
@@ -101,16 +104,37 @@ describe('Books search and scan resume', () => {
     expect(readScanPage('test-locked-scan')).toBeUndefined();
   });
 
-  it('opens both book sites through the isolated Android WebView', async () => {
+  it('opens public volumes in the app when the Archive listing has no scan count', async () => {
+    const openProtectedEmbed = vi.fn(() => true);
+    const openBrowser = vi.fn();
+    vi.stubGlobal('PrahaNative', { openProtectedEmbed, openBrowser });
+    fetchMock.mockResolvedValue(json({
+      metadata: { title: 'Comic Collection' },
+      files: [{ name: 'Vol 1.pdf' }, { name: 'Vol 2.cbz' }, { name: 'Locked.pdf', private: 'true' }],
+    }));
+
+    render(<ArchiveReader identifier="test-volume-collection" onClose={() => undefined} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Vol 1.pdf' }));
+    expect(openProtectedEmbed).toHaveBeenCalledWith('https://archive.org/download/test-volume-collection/Vol%201.pdf');
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Locked.pdf' })).toBeNull();
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens publication sites through the isolated Android WebView', async () => {
     fetchMock.mockResolvedValue(json({ response: { docs: [] } }));
     const openProtectedEmbed = vi.fn(() => true);
     vi.stubGlobal('PrahaNative', { openProtectedEmbed });
     render(<BooksView />);
     fireEvent.click(screen.getByRole('button', { name: 'Anna’s Archive' }));
     fireEvent.click(screen.getByRole('button', { name: 'OceanofPDF' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Open Library' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Library site' }));
     await waitFor(() => expect(openProtectedEmbed.mock.calls).toEqual([
       ['https://annas-archive.gl/'],
       ['https://theoceanofpdf.com/'],
+      ['https://openlibrary.org/'],
     ]));
   });
 });

@@ -120,7 +120,7 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
     onEngineFallback: (message) => onNotice?.(message),
   });
   const {
-    videoRef, playing, waiting, volume, muted,
+    videoRef, ready, playing, waiting, volume, muted,
     play, pause, toggle, setVolume, toggleMute, retry, nativeActive,
   } = engine;
 
@@ -422,7 +422,7 @@ const BrowserLivePlayer: React.FC<BrowserLivePlayerProps> = ({
         }}
       />
 
-      {waiting && !fatal && (
+      {(!ready || waiting) && !fatal && (
         <div className="blp-spinner" role="status" aria-label="Loading channel" data-size={full ? 'full' : 'pane'}>
           <span />
         </div>

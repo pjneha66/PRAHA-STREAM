@@ -1170,7 +1170,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sanka-reader-header h2 { overflow: hidden; margin: 2px 0 0; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .sanka-page-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .sanka-reader-pages { flex: 1; overflow: auto; overscroll-behavior: contain; text-align: center; }
-.sanka-reader-pages img { display: block; width: min(100%,850px); height: auto; margin: 0 auto; }
+.sanka-reader-pages img { display: block; width: min(calc(100% * var(--reader-zoom)), calc(850px * var(--reader-zoom))); max-width: none; height: auto; margin: 0 auto; }
+.reader-zoom-controls { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 3px; }
+.reader-zoom-controls button { display: inline-flex; justify-content: center; align-items: center; min-width: 32px; min-height: 38px; padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.reader-zoom-controls button:disabled { opacity: .5; }
 .sanka-page-fallback { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(100%,640px); margin: 14px auto; padding: 24px 16px; border: 1px dashed var(--line-strong); border-radius: 12px; background: #101216; color: var(--muted); font-size: 12px; }
 .sanka-page-fallback > div { display: flex; gap: 8px; }
 .sanka-reader-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding: 10px 14px max(10px,env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #101216; }
@@ -1410,9 +1413,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .archive-mode-pills button { padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 10px; font-weight: 650; background: transparent; }
 .archive-mode-pills button.active { background: rgba(var(--accent-rgb), .12); color: var(--accent); }
 .archive-scroll-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
-.archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
-.archive-leaf { min-height: 40px; }
-.archive-leaf img { display: block; width: min(100%, 820px); height: auto; margin: 0 auto; background: #0c0e11; }
+.archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+.archive-leaf { min-height: 40px; width: min(calc(100% * var(--reader-zoom)), calc(820px * var(--reader-zoom))); margin: 0 auto; }
+.archive-leaf img { display: block; width: 100%; height: auto; margin: 0 auto; background: #0c0e11; }
 .archive-scroll-body { overflow-anchor: none; }
 .archive-scroll-body .archive-leaf { overflow: hidden; }
 .archive-scroll-body .archive-leaf img { height: 100%; object-fit: contain; }
@@ -1422,9 +1425,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .archive-paged-next { right: 10px; }
 .archive-reader-scrub { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7; display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: rgba(9, 10, 12, .92); backdrop-filter: blur(4px); }
 .archive-page-label { flex: 0 0 auto; min-width: 82px; color: var(--muted); font-size: 11px; }
-.archive-reader-scrub input[type='range'] { flex: 1; }
+.archive-reader-scrub input[type='range'] { flex: 1; min-width: 0; }
 .archive-fallback-banner { position: absolute; left: 0; right: 0; bottom: 62px; z-index: 8; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: rgba(9, 10, 12, .92); color: var(--muted); font-size: 11px; }
 .archive-reader-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--muted); font-size: 12px; text-align: center; }
+.archive-file-options { justify-content: safe center; overflow-y: auto; }
+.archive-file-options button { max-width: min(100%, 460px); flex-shrink: 0; overflow-wrap: anywhere; }
 .archive-reader-error svg { color: var(--accent); }
 .archive-reader-error p { margin: 0; max-width: 420px; }
 
@@ -3362,8 +3367,8 @@ html.player-vlc-active .app-shell,
 
 /* Comic reader page scrubber + in-progress badges */
 .sanka-page-anchor { display: block; }
-.sanka-page-scrubber { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(8,9,11,.8); }
-.sanka-page-scrubber button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(255,255,255,.07); color: #fff; cursor: pointer; }
+.sanka-page-scrubber { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--line); background: #101216; }
+.sanka-page-scrubber > button { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 38px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(255,255,255,.07); color: #fff; cursor: pointer; }
 .sanka-page-scrubber button:disabled { opacity: .4; cursor: default; }
 .sanka-scrubber-label { font-size: 12px; font-weight: 600; color: #fff; min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
 .sanka-card-reading .sanka-poster::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: #3fb950; }
@@ -3388,8 +3393,6 @@ html.player-vlc-active .app-shell,
 .music-lyrics p.active { color: var(--accent, #f5c518); font-weight: 700; }
 
 /* Paged manga reader mode */
-.sanka-reader-paged { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; }
-.sanka-reader-paged .sanka-page-anchor { width: 100%; max-width: 900px; }
 
 /* Library collections */
 .library-card-wrap { display: flex; flex-direction: column; gap: 4px; }

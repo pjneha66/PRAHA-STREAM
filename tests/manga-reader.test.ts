@@ -244,6 +244,23 @@ describe('MangaReader', () => {
     await waitFor(() => expect(screen.getByText('12 / 43')).toBeTruthy());
   });
 
+  it('keeps a horizontal swipe on the current page while zoomed and restores page turns at fit', () => {
+    setPaged();
+    renderReader();
+    const stage = screen.getByAltText('Page 1').closest('.mr-stage')!;
+    const swipe = () => {
+      fireEvent.touchStart(stage, { touches: [{ clientX: 200, clientY: 60 }] });
+      fireEvent.touchEnd(stage, { changedTouches: [{ clientX: 80, clientY: 60 }] });
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(screen.getByRole('button', { name: 'Reset zoom to fit' }).textContent).toBe('125%');
+    swipe();
+    expect(screen.getByText('1 / 43')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset zoom to fit' }));
+    swipe();
+    expect(screen.getByText('2 / 43')).toBeTruthy();
+  });
+
   it('ignores arrow keys in webtoon mode', async () => {
     renderReader();
     expect(screen.getByText('1 / 43')).toBeTruthy();
@@ -298,13 +315,11 @@ describe('MangaReader', () => {
   });
 
   it('renders a broken page without losing the rest of the strip', async () => {
-    const { container } = renderReader({
+    renderReader({
       images: ['https://cdn.example/a.jpg', 'https://cdn.example/b.jpg'],
     });
-    const first = container.querySelector('img.mr-img') as HTMLImageElement | null;
-    expect(first).not.toBeNull();
-    fireEvent.error(first as HTMLImageElement);
+    fireEvent.error(screen.getByAltText('Page 1'));
     await waitFor(() => expect(screen.getByText('1 page could not be loaded.')).toBeTruthy());
-    expect(container.querySelectorAll('.mr-strip-item').length).toBe(2);
+    expect(screen.getByAltText('Page 2')).toBeTruthy();
   });
 });

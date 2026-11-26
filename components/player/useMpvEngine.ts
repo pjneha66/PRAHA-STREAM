@@ -320,10 +320,8 @@ export function useMpvEngine({
             setPlaying(!state.paused && !state.eofReached);
             setWaiting(state.buffering && !state.eofReached);
             if (Number.isFinite(state.currentTime)) setCurrentTime(state.currentTime);
-            if (state.duration > 0) {
-              setDuration(state.duration);
-              setReady(true);
-            }
+            if (state.duration > 0) setDuration(state.duration);
+            if (!state.buffering && (state.duration > 0 || state.currentTime > 0)) setReady(true);
             onProgressRef.current?.(state.currentTime, state.duration);
           },
           onTracks(audio, text, currentAudioId, currentTextId) {

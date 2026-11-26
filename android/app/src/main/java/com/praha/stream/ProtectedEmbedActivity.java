@@ -44,6 +44,8 @@ public final class ProtectedEmbedActivity extends Activity {
     private boolean destroyed;
     private boolean archiveLoan;
     private boolean bookSite;
+    private boolean comicSite;
+    private boolean directBook;
     private boolean pageFailed;
     /** Shown until the player's first page finishes loading, then removed. */
     private TextView loading;
@@ -55,7 +57,12 @@ public final class ProtectedEmbedActivity extends Activity {
         if (!EmbedBlocklist.isPublicHttps(target) || initialUrl.length() > 4096) { finish(); return; }
         initialHost = target.getHost().toLowerCase(Locale.ROOT);
         archiveLoan = getIntent().getBooleanExtra(EXTRA_ARCHIVE_LOAN, false);
-        bookSite = initialHost.equals("annas-archive.gl") || initialHost.equals("theoceanofpdf.com");
+        directBook = initialHost.equals("archive.org") && target.getPath() != null
+                && target.getPath().startsWith("/download/")
+                && BookFileReader.isBookDownload(initialUrl, null, null);
+        comicSite = hostMatches(initialHost, "comics-all.com", "comicsnake.com", "getcomics.org");
+        bookSite = directBook || comicSite
+                || hostMatches(initialHost, "annas-archive.gl", "theoceanofpdf.com", "oceanofpdf.com", "openlibrary.org");
         if (archiveLoan && !isArchiveItem(target)) { finish(); return; }
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -63,7 +70,7 @@ public final class ProtectedEmbedActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         closeButton = new Button(this);
         closeButton.setText("Close");
-        closeButton.setOnClickListener(v -> { if (reader != null) closeBook(); else finish(); });
+        closeButton.setOnClickListener(v -> { if (reader != null && !directBook) closeBook(); else finish(); });
         Button browser = new Button(this);
         browser.setText(isBookPage() ? "Open in browser" : "Browser (unfiltered)");
         browser.setOnClickListener(v -> {
@@ -117,8 +124,20 @@ public final class ProtectedEmbedActivity extends Activity {
         }, "embed-blocklist").start();
     }
 
+    private static boolean hostMatches(String host, String... domains) {
+        for (String domain : domains) {
+            if (host.equals(domain) || host.endsWith("." + domain)) return true;
+        }
+        return false;
+    }
+
     private boolean isBookPage() {
         return archiveLoan || bookSite;
+    }
+
+    private boolean isReaderFile(String url, String disposition, String mime) {
+        return BookFileReader.isBookDownload(url, disposition, mime)
+                || (comicSite && BookFileReader.isComicArchive(url, disposition, mime));
     }
 
     private void openBrowser(String url) {
@@ -148,8 +167,9 @@ public final class ProtectedEmbedActivity extends Activity {
         settings.setSupportMultipleWindows(true);
         web.setDownloadListener((url, userAgent, disposition, mimetype, length) -> {
             if (!bookSite) return;
-            if (BookFileReader.isBookDownload(url, disposition, mimetype)) openBook(url, userAgent);
-            else android.widget.Toast.makeText(this, "Choose a PDF, EPUB, or CBZ to read in PRAHA.", android.widget.Toast.LENGTH_SHORT).show();
+            if (isReaderFile(url, disposition, mimetype)) openBook(url, userAgent);
+            else android.widget.Toast.makeText(this, comicSite ? "Choose a CBZ, CBR, ZIP, RAR, or PDF to read in PRAHA."
+                    : "Choose a PDF, EPUB, or CBZ to read in PRAHA.", android.widget.Toast.LENGTH_SHORT).show();
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onCreateWindow(WebView view, boolean dialog, boolean gesture, android.os.Message resultMsg) {
@@ -192,9 +212,10 @@ public final class ProtectedEmbedActivity extends Activity {
                     if (!request.isForMainFrame()) return false;
                     String host = uri.getHost().toLowerCase(Locale.ROOT);
                     boolean sameSite = host.equals(initialHost) || host.endsWith("." + initialHost);
+                    if (archiveLoan && (host.equals("openlibrary.org") || host.endsWith(".archive.org"))) return false;
                     if (bookSite && "GET".equals(request.getMethod())
                             && (sameSite || request.hasGesture() || request.isRedirect())) {
-                        if (BookFileReader.isBookDownload(uri.toString(), null, null)) {
+                        if (isReaderFile(uri.toString(), null, null)) {
                             openBook(uri.toString(), web.getSettings().getUserAgentString());
                             return true;
                         }
@@ -237,7 +258,8 @@ public final class ProtectedEmbedActivity extends Activity {
             }
         });
         content.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
-        web.loadUrl(initialUrl);
+        if (directBook) openBook(initialUrl, settings.getUserAgentString());
+        else web.loadUrl(initialUrl);
     }
     private void acceptBookLink(WebView child, Uri uri) {
         if (popup != child) return;
@@ -245,7 +267,7 @@ public final class ProtectedEmbedActivity extends Activity {
         child.stopLoading();
         web.post(child::destroy);
         if (!EmbedBlocklist.isPublicHttps(uri)) return;
-        if (BookFileReader.isBookDownload(uri.toString(), null, null)) {
+        if (isReaderFile(uri.toString(), null, null)) {
             openBook(uri.toString(), web.getSettings().getUserAgentString());
         } else {
             web.loadUrl(uri.toString());
@@ -256,12 +278,12 @@ public final class ProtectedEmbedActivity extends Activity {
         if (reader != null || url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return;
         reader = new BookFileReader(this);
         TextView status = new TextView(this);
-        status.setText("Opening book…");
+        status.setText(comicSite ? "Opening comic…" : "Opening book…");
         status.setTextColor(Color.WHITE);
         status.setGravity(android.view.Gravity.CENTER);
         status.setPadding(24, 24, 24, 24);
         status.setBackgroundColor(Color.BLACK);
-        closeButton.setText("Back to site");
+        closeButton.setText(directBook ? "Back to PRAHA" : "Back to site");
         siteActions.setVisibility(View.GONE);
         String referer = web.getUrl();
         web.setVisibility(View.GONE);
@@ -298,7 +320,7 @@ public final class ProtectedEmbedActivity extends Activity {
         if (fullScreenCallback != null) { fullScreenCallback.onCustomViewHidden(); fullScreenCallback = null; }
     }
     @Override public void onBackPressed() {
-        if (reader != null) { closeBook(); return; }
+        if (reader != null) { if (directBook) finish(); else closeBook(); return; }
         if (fullScreen != null) { hideFullScreen(); return; }
         if (web != null && web.canGoBack()) { web.goBack(); return; }
         super.onBackPressed();

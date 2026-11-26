@@ -1,9 +1,12 @@
 :root { color-scheme: dark; font: 15px system-ui, sans-serif; background: #101113; color: #f2f1ed; }
 body { margin: 0; height: 100dvh; display: flex; flex-direction: column; }
 main { flex: 1; min-height: 0; overflow: auto; }
-main canvas, main > img { display: block; max-width: 100%; height: auto; margin: 0 auto; background: white; }
+main canvas, main > img { display: block; width: calc(100% * var(--reader-zoom, 1)); height: auto; margin: 0 auto; background: white; }
 main.epub { background: #fffaf0; }
-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; }
+nav { display: grid; gap: 6px; padding: 8px 12px; }
+.reader-navigation { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.reader-zoom:not([hidden]) { display: flex; justify-content: center; gap: 4px; }
+.reader-zoom button { min-width: 44px; }
 nav span { text-align: center; }
 button { min-height: 44px; padding: 0 12px; border: 1px solid #4b483d; border-radius: 8px; background: #29261d; color: inherit; font: inherit; }
 button:disabled { opacity: .45; }
