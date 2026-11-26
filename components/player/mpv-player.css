@@ -999,7 +999,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: max(16px, env(safe-area-inset-top, 16px)) 24px 20px;
+  padding: max(16px, max(var(--phone-safe-top, 0px), 16px)) 24px 20px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.45) 60%, transparent 100%);
   opacity: 0;
   transform: translateY(-8px);
@@ -1083,7 +1083,7 @@
 
 @media (max-width: 768px) {
   .mpv-top-bar {
-    padding: max(12px, env(safe-area-inset-top, 12px)) 12px 14px;
+    padding: max(12px, max(var(--phone-safe-top, 0px), 12px)) 12px 14px;
     gap: 10px;
   }
   .mpv-back-btn {
@@ -1148,7 +1148,7 @@ body.player-vlc-active .player-fullscreen-root,
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 32px 28px max(20px, env(safe-area-inset-bottom, 20px));
+  padding: 32px 28px max(20px, max(var(--phone-safe-bottom, 0px), 20px));
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.55) 60%, transparent 100%);
   opacity: 0;
   transform: translateY(8px);
@@ -1294,7 +1294,7 @@ body.player-vlc-active .player-fullscreen-root,
 
 @media (max-width: 640px) {
   .playtorrio-bottom-bar {
-    padding: 20px 14px max(14px, env(safe-area-inset-bottom, 14px));
+    padding: 20px 14px max(14px, max(var(--phone-safe-bottom, 0px), 14px));
     gap: 8px;
   }
   .playtorrio-left-group,

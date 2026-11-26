@@ -90,7 +90,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
             new LinkedBlockingQueue<Runnable>(64),
             new ThreadPoolExecutor.AbortPolicy());
     private final MoctalePageMeter moctaleMeter = new MoctalePageMeter();
-    private ActivityResultLauncher<Intent> moctaleLauncher;
+    private ActivityResultLauncher<Intent> protectedEmbedLauncher;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
     /**
      * Picking a .cs3 has to happen natively: the file lives behind a content://
@@ -249,9 +249,13 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 });
         streamProxy.start();
 
-        moctaleLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        protectedEmbedLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             if (result.getResultCode() != RESULT_OK || result.getData() == null || getBridge() == null
                     || getBridge().getWebView() == null) return;
+            if (result.getData().getBooleanExtra(ProtectedEmbedActivity.EXTRA_FIND_COMIC_SOURCE, false)) {
+                getBridge().getWebView().evaluateJavascript("window.dispatchEvent(new Event('praha:comic-find-source'));", null);
+                return;
+            }
             try {
                 String raw = result.getData().getStringExtra(ProtectedEmbedActivity.EXTRA_MOCTALE_METER);
                 if (raw == null || raw.length() > 4096) return;
@@ -704,8 +708,10 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 if (MoctalePageMeter.isTitle(Uri.parse(url))) {
                     runOnUiThread(() -> {
                         moctaleMeter.cancel(null);
-                        moctaleLauncher.launch(intent);
+                        protectedEmbedLauncher.launch(intent);
                     });
+                } else if (ProtectedEmbedActivity.isComicDownloadHost(Uri.parse(url))) {
+                    runOnUiThread(() -> protectedEmbedLauncher.launch(intent));
                 } else startActivity(intent);
                 return true;
             } catch (Exception ignored) { return false; }

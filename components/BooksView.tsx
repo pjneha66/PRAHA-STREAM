@@ -1,3 +1,5 @@
+import ReadingSaveButton from './ReadingSaveButton';
+import type { ReadingLibraryProps } from '../services/readingLibrary';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen, CircleAlert, ExternalLink, FileDown, Library, LoaderCircle, RefreshCw, Search, X,
@@ -133,7 +135,7 @@ const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> =
   );
 };
 
-const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery }) => {
+const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery, ...readingLibrary }) => {
   const [mode, setMode] = useState<SourceMode>('all');
   const [collectionId, setCollectionId] = useState<string>(ARCHIVE_COLLECTIONS[1].id);
   const [input, setInput] = useState('');
@@ -287,6 +289,19 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     } finally {
       if (seq === fileSeq.current) setFilesLoading(false);
     }
+  };
+
+  const target = readingLibrary.openReading;
+  const appliedTarget = useRef<typeof target>(null);
+  useEffect(() => {
+    if (target?.kind !== 'books' || target === appliedTarget.current) return;
+    appliedTarget.current = target;
+    void openItem(target.item);
+  }, [target, openItem]);
+
+  const closeItem = () => {
+    fileSeq.current += 1;
+    setSelected(null);
   };
 
   const resumeBook = (entry: ContinueEntry) => {
@@ -490,16 +505,16 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       {selected && (
         <div
           className="modal-backdrop"
-          onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}
+          onMouseDown={(e) => e.target === e.currentTarget && closeItem()}
         >
           <section className="books-sheet" role="dialog" aria-modal="true" aria-label={selected.title}>
-            <button className="modal-close floating" onClick={() => setSelected(null)} aria-label="Close">
+            <button className="modal-close floating" onClick={closeItem} aria-label="Close" data-android-back>
               <X size={18} />
             </button>
             <div className="books-sheet-head">
               <BookCover item={selected} />
               <div>
-                <span className="page-kicker">{selected.source === 'openlibrary' ? 'OPEN LIBRARY' : selected.id.startsWith('bookracy-') ? 'BOOKRACY' : 'INTERNET ARCHIVE'}</span>
+                <span className="page-kicker">{SOURCE_LABEL[selected.source]?.toUpperCase() || 'BOOKS'}</span>
                 <h2>{selected.title}</h2>
                 {selected.authors.length > 0 && <p className="books-sheet-authors">{selected.authors.join(', ')}</p>}
                 {selected.year && <span className="books-sheet-year">First published {selected.year}</span>}
@@ -510,6 +525,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
             {/* Actions first — on a phone the file list pushed "Read online"
                 below the fold and it looked unreachable. */}
             <div className="books-sheet-actions">
+              <ReadingSaveButton {...readingLibrary} entry={{ kind: 'books', item: selected }} />
               {selected.identifier && (
                 <>
                   {!selected.restricted && (

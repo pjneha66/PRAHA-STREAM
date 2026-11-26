@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, Bookmark, Clock3, Library, Trash2 } from 'lucide-react';
+import { ArrowRight, BookOpen, Bookmark, Clock3, Library, Trash2 } from 'lucide-react';
 import type { LibraryStatus, MediaItem, WatchProgress } from '../types';
 import { ContinueCard, MediaCard } from './MediaCard';
+import { readingKey, type ReadingEntry } from '../services/readingLibrary';
 import { readCollections, saveCollections, type Collection } from '../services/collectionsStore';
 
 const STATUS_TABS: Array<{ id: 'all' | LibraryStatus; label: string }> = [
@@ -15,6 +16,9 @@ const STATUS_TABS: Array<{ id: 'all' | LibraryStatus; label: string }> = [
 
 const LibraryView: React.FC<{
   watchlist: MediaItem[];
+  savedReading?: ReadingEntry[];
+  onOpenReading?: (entry: ReadingEntry) => void;
+  onToggleReading?: (entry: ReadingEntry) => void;
   history: WatchProgress[];
   profileName: string;
   onSelect: (item: MediaItem) => void;
@@ -26,10 +30,10 @@ const LibraryView: React.FC<{
   onClearHistory: () => void;
   compact: boolean;
 }> = ({
-  watchlist, history, profileName, onSelect, onPlay, onResumeEntry, onRemoveHistory,
+  watchlist, savedReading = [], onOpenReading, onToggleReading, history, profileName, onSelect, onPlay, onResumeEntry, onRemoveHistory,
   onToggleWatchlist, onExplore, onClearHistory, compact,
 }) => {
-  const [tab, setTab] = useState<'watchlist' | 'history'>('watchlist');
+  const [tab, setTab] = useState<'watchlist' | 'reading' | 'history'>('watchlist');
   const [statusFilter, setStatusFilter] = useState<'all' | LibraryStatus>('all');
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<'added' | 'title' | 'year' | 'rating'>('added');
@@ -91,7 +95,7 @@ const LibraryView: React.FC<{
         <div>
           <span className="page-kicker"><Library size={14} /> {profileName.toUpperCase()} · PERSONAL SPACE</span>
           <h1>My library</h1>
-          <p>Keep the stories you love organized by status, and resume any episode right where you stopped.</p>
+          <p>Find your saved video titles, books, manga, and comics.</p>
         </div>
         {tab === 'history' && history.length > 0 && (
           <button className="button button-secondary subtle-danger" onClick={onClearHistory}>
@@ -103,6 +107,9 @@ const LibraryView: React.FC<{
       <div className="library-tabs">
         <button className={tab === 'watchlist' ? 'active' : ''} onClick={() => setTab('watchlist')}>
           <Bookmark size={16} /> Watchlist <span>{watchlist.length}</span>
+        </button>
+        <button className={tab === 'reading' ? 'active' : ''} onClick={() => setTab('reading')}>
+          <BookOpen size={16} /> Reading <span>{savedReading.length}</span>
         </button>
         <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>
           <Clock3 size={16} /> Watch history <span>{history.length}</span>
@@ -203,6 +210,28 @@ const LibraryView: React.FC<{
           )}
         </>
       )}
+
+      {tab === 'reading' && (savedReading.length ? (
+        <ul className="reading-library">
+          {savedReading.map((entry) => {
+            const cover = entry.kind === 'books' ? entry.item.coverUrl : entry.kind === 'manga' ? entry.item.coverNormal : entry.item.poster;
+            const kind = entry.kind === 'books' ? 'Book' : entry.kind === 'manga' ? 'Manga' : 'Comic';
+            return <li key={readingKey(entry)}>
+              <button type="button" className="reading-library-title" onClick={() => onOpenReading?.(entry)}>
+                {cover ? <img src={cover} alt="" loading="lazy" /> : <BookOpen size={20} />}
+                <span><strong>{entry.item.title}</strong><small>{kind}</small></span>
+              </button>
+              <button type="button" className="icon-button" aria-label={`Remove ${entry.item.title} from Library`} onClick={() => onToggleReading?.(entry)}><Trash2 size={17} /></button>
+            </li>;
+          })}
+        </ul>
+      ) : (
+        <div className="empty-state library-empty">
+          <span><BookOpen size={28} /></span>
+          <h2>No saved reading yet</h2>
+          <p>Open a book, manga, or comic and choose Save to Library.</p>
+        </div>
+      ))}
 
       {tab === 'history' && (history.length ? (
         <div className="library-history-grid">

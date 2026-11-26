@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowUpDown, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
+  BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
   FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
 } from 'lucide-react';
 import { buildImageCandidates, openArchiveLoan, openSafeExternalUrl } from '../services/androidBridge';
@@ -11,9 +11,12 @@ import { ARCHIVE_COLLECTIONS, BooksService, canReadBookFile, type BookFile } fro
 import { COMICK_SOURCE_OPTIONS as COMICK_ACTIVE_SOURCE_OPTIONS } from '../services/comickService';
 import { resolveComickPoster } from '../services/sankaService';
 import ArchiveReader from './ArchiveReader';
+import ChapterOrder, { compareChapters, useChapterOrder } from './ChapterOrder';
+import ReadingSaveButton from './ReadingSaveButton';
+import type { ReadingLibraryProps } from '../services/readingLibrary';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '../services/comicLanguages';
-import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, isComicDownloadSite, loadComicBookSite, openComicBookSite, readPublicationIssue } from '../services/comicBookSites';
+import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, loadComicBookSite, openComicBookSite, readPublicationIssue } from '../services/comicBookSites';
 import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 import { comicEditionKey, groupComicTitles } from '../services/comicGroups';
 import {
@@ -263,7 +266,7 @@ async function loadAllComicSources(
   };
 }
 
-const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
+const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> = ({ prefillQuery, ...readingLibrary }) => {
   // 'archive' routes search + detail to the Internet Archive folkscanomy
   // collections instead of the Sanka web sources.
   const [source, setSource] = useState<string>('bacakomik');
@@ -293,7 +296,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [chapterQuery, setChapterQuery] = useState('');
-  const [reverseChapters, setReverseChapters] = useState(false);
+  const [chapterOrder, setChapterOrder] = useChapterOrder();
 
   const [readerImages, setReaderImages] = useState<string[] | null>(null);
   const [readerChapterIndex, setReaderChapterIndex] = useState(0);
@@ -377,14 +380,30 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     if (!await openComicBookSite(url)) setBookSiteError('Could not open the comic site.');
   };
 
-  const handleSelectTitle = (item: SankaTitle, variants = [item]) => {
-    if (isComicBookSite(item.source) && item.sourceUrl) {
-      setBookSiteError('');
-      void readPublicationIssue(item.source, item.sourceUrl)
-        .then((opened) => { if (!opened) setBookSiteError('Could not start the Android reader.'); })
-        .catch((error: unknown) => setBookSiteError(error instanceof Error ? error.message : 'Could not read this issue.'));
-      return;
+  const [publicationLoading, setPublicationLoading] = useState(false);
+  const [publicationError, setPublicationError] = useState('');
+  const publicationRequest = useRef(0);
+
+  const openPublication = async (item: SankaTitle) => {
+    if (!isComicBookSite(item.source) || !item.sourceUrl) return;
+    const request = ++publicationRequest.current;
+    setPublicationError('');
+    setPublicationLoading(true);
+    try {
+      const opened = await readPublicationIssue(item.source, item.sourceUrl, () => request === publicationRequest.current);
+      if (!opened && request === publicationRequest.current) setPublicationError('Could not open the reader.');
+    } catch (reason) {
+      if (request === publicationRequest.current) setPublicationError(reason instanceof Error ? reason.message : 'Could not read this issue.');
+    } finally {
+      if (request === publicationRequest.current) setPublicationLoading(false);
     }
+  };
+
+  const handleSelectTitle = (item: SankaTitle, variants = [item], readNow = true) => {
+    publicationRequest.current += 1;
+    setPublicationError('');
+    setBookSiteError('');
+    setPublicationLoading(false);
     chapterAbortRef.current?.abort();
     setReaderLoading(false);
     setReaderImages(null);
@@ -399,7 +418,16 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     setArchiveItem(null);
     setReaderLanguage(item.source === 'peppercarrot' && language === 'all' ? 'en' : language);
     setSelected(item);
+    if (readNow && isComicBookSite(item.source)) void openPublication(item);
   };
+
+  const target = readingLibrary.openReading;
+  const appliedTarget = useRef<typeof target>(null);
+  useEffect(() => {
+    if (target?.kind !== 'sanka' || target === appliedTarget.current) return;
+    appliedTarget.current = target;
+    handleSelectTitle(target.item, [target.item], false);
+  }, [target, handleSelectTitle]);
 
   // Lock the page behind modals: the background content must not scroll
   // under the bottom navigation while a detail/reader overlay is open.
@@ -589,7 +617,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       return;
     }
     // Archive items have no Sanka detail endpoint; they open the file overlay.
-    if (selected.id.startsWith('archive:')) {
+    if (selected.id.startsWith('archive:') || isComicBookSite(selected.source)) {
       setDetail(null);
       setDetailLoading(false);
       setDetailError('');
@@ -601,7 +629,6 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     setDetailLoading(true);
     setDetailError('');
     setChapterQuery('');
-    setReverseChapters(false);
     setChapterWindow(150);
     chapterAbortRef.current?.abort();
 
@@ -626,8 +653,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         if (readerImages) {
           setReaderImages(null);
         } else {
-          setSelected(null);
-          setReaderError('');
+          closeDetails();
         }
       }
     };
@@ -696,6 +722,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
   };
 
   const closeDetails = () => {
+    publicationRequest.current += 1;
+    setPublicationLoading(false);
     chapterAbortRef.current?.abort();
     setReaderLoading(false);
     setSelected(null);
@@ -703,6 +731,25 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     setReaderError('');
     setContinueEntries(readContinue('comic'));
   };
+
+  const findAnotherSource = () => {
+    if (!selected) return;
+    const title = selected.title.trim();
+    const suffix = title.match(/^(.*?)\s+\(([^()]+)\)$/);
+    const term = suffix && suffix[2].toLowerCase().startsWith(suffix[1].toLowerCase()) ? suffix[2] : title;
+    closeDetails();
+    setSource('all');
+    setManualSource(true);
+    setQuery(term);
+    setSubmittedQuery(term);
+    if (source === 'all' && term === submittedQuery) setAttempt((value) => value + 1);
+  };
+
+  useEffect(() => {
+    if (selected?.source !== 'comicsnake') return;
+    window.addEventListener('praha:comic-find-source', findAnotherSource);
+    return () => window.removeEventListener('praha:comic-find-source', findAnotherSource);
+  }, [selected, source, submittedQuery]);
 
   const resumeComic = (entry: ContinueEntry) => {
     const payload = (entry.payload || {}) as { language?: ComicLanguageFilter; source?: string; detailPath?: string; poster?: string; kind?: SankaTitle['kind'] };
@@ -726,30 +773,18 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     setAttempt((value) => value + 1);
   };
 
-  const chapters = detail?.chapters || [];
+  const chapters = useMemo(() => [...(detail?.chapters || [])].sort((a, b) => compareChapters(a.title, b.title)), [detail]);
   const selectedChapter = chapters[readerChapterIndex];
   const [chapterWindow, setChapterWindow] = useState(150);
 
   const displayedChapters = useMemo(() => {
     const indexed = chapters.map((chapter, index) => ({ chapter, index }));
-    const ordered = reverseChapters ? [...indexed].reverse() : indexed;
+    const ordered = chapterOrder === 'asc' ? indexed : [...indexed].reverse();
     const q = chapterQuery.trim().toLowerCase();
-    if (!q) return ordered;
-    return ordered.filter(({ chapter }) =>
-      chapter.title.toLowerCase().includes(q) || chapter.slug.toLowerCase().includes(q),
-    );
-  }, [chapters, reverseChapters, chapterQuery]);
+    return ordered.filter(({ chapter }) => chapter.title.toLowerCase().includes(q) || chapter.slug.toLowerCase().includes(q));
+  }, [chapters, chapterOrder, chapterQuery]);
 
-  const firstReadTarget = useMemo(() => {
-    if (!chapters.length) return null;
-    if (chapters.length === 1) return { chapter: chapters[0], index: 0 };
-    const firstNum = Number(chapters[0].title.match(/(\d+(?:\.\d+)?)/)?.[1] ?? NaN);
-    const lastNum = Number(chapters[chapters.length - 1].title.match(/(\d+(?:\.\d+)?)/)?.[1] ?? NaN);
-    if (Number.isFinite(firstNum) && Number.isFinite(lastNum) && firstNum > lastNum) {
-      return { chapter: chapters[chapters.length - 1], index: chapters.length - 1 };
-    }
-    return { chapter: chapters[0], index: 0 };
-  }, [chapters]);
+  const firstReadTarget = chapters.length ? { chapter: chapters[0], index: 0 } : null;
 
   const visibleEdition = selected || archiveItem;
   const visibleEditionKey = visibleEdition && comicEditionKey(visibleEdition);
@@ -869,9 +904,6 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           <ExternalLink size={14} /> Browse {COMIC_BOOK_SITES[selectedBookSite].label}
         </button>
       )}
-      {selectedBookSite && isComicDownloadSite(selectedBookSite) && (
-        <p className="sanka-fallback-note">Tap an issue to open its file in the reader.</p>
-      )}
       {bookSiteError && <p role="alert">{bookSiteError}</p>}
 
       {fallbackNotice && !loading && !error && (
@@ -937,7 +969,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                 item.year,
                 item.status,
                 item.rating ? `★ ${item.rating}` : undefined,
-              ].filter(Boolean).join(' · ') || 'Manga / comic';
+              ].filter(Boolean).join(' · ') || sourceLabel(item.source);
+              const kind = item.comicType || (isComicBookSite(item.source) || isArchiveSource(item.source) ? 'Comic' : 'Manga');
 
               const readingEntry = readingSlugs.has(item.slug)
                 ? continueEntries.find((entry) => entry.id === item.slug)
@@ -963,7 +996,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                         }
                         fallback={<div className="comic-poster-fallback"><BookOpen size={26} /></div>}
                       />
-                      <span className="comic-kind">{item.comicType ? item.comicType.toUpperCase() : 'MANGA'}</span>
+                      <span className="comic-kind">{kind.toUpperCase()}</span>
                       {item.chapter && <span className="comic-chapter-badge">{item.chapter}</span>}
                       {readingEntry && <span className="comic-resume"><Play size={10} /> Resume</span>}
                     </div>
@@ -1023,9 +1056,26 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           onMouseDown={(event) => { if (event.target === event.currentTarget && !readerImages) closeDetails(); }}
         >
           <section className="sanka-detail-modal" role="dialog" aria-modal="true" aria-labelledby="sanka-detail-title">
-            <button className="modal-close floating" onClick={closeDetails} aria-label="Close manga details">
+            <button className="modal-close floating" onClick={closeDetails} aria-label="Close comic details" data-android-back>
               <X size={18} />
             </button>
+            {isComicBookSite(selected.source) ? <div className="publication-issue">
+              <h2 id="sanka-detail-title">{selected.title}</h2>
+              <div className="comic-archive-actions">
+                <ReadingSaveButton {...readingLibrary} entry={{ kind: 'sanka', item: selected }} />
+                <button type="button" className="button button-primary button-small" disabled={publicationLoading} onClick={() => void openPublication(selected)}>
+                  {publicationLoading ? <LoaderCircle size={16} className="spin" /> : <BookOpen size={16} />} {publicationLoading ? 'Finding reader file…' : 'Read issue'}
+                </button>
+                {selected.sourceUrl && <button type="button" className="button button-secondary button-small" onClick={() => void browseBookSite(selected.sourceUrl!)}>
+                  <ExternalLink size={16} /> Open listing
+                </button>}
+                <button type="button" className="button button-secondary button-small" onClick={findAnotherSource}>
+                  <Search size={16} /> Find another source
+                </button>
+              </div>
+              {publicationError && <p className="sanka-inline-error" role="alert">{publicationError}</p>}
+              {bookSiteError && <p className="sanka-inline-error" role="alert">{bookSiteError}</p>}
+            </div> : <>
             <div className="sanka-detail-header">
               <SafeComicImg
                 src={detail?.poster || selected.poster}
@@ -1064,13 +1114,13 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                     >
                       <Play size={13} /> Start {firstReadTarget.chapter.title}
                     </button>
-                    {chapters.length > 1 && firstReadTarget.index !== 0 && (
+                    {chapters.length > 1 && (
                       <button
                         type="button"
                         className="button button-secondary button-small"
-                        onClick={() => void openChapter(chapters[0], 0)}
+                        onClick={() => void openChapter(chapters[chapters.length - 1], chapters.length - 1)}
                       >
-                        Latest ({chapters[0].title})
+                        Latest ({chapters[chapters.length - 1].title})
                       </button>
                     )}
                   </div>
@@ -1094,6 +1144,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
               )}
 
               {sourceSwitcher}
+              <ReadingSaveButton {...readingLibrary} entry={{ kind: 'sanka', item: selected }} />
               <div className="sanka-chapter-heading">
                 <h3>Chapters <span>({chapters.length})</span></h3>
                 {(selected.source === 'mangadex' || selected.source === 'peppercarrot') && (
@@ -1110,14 +1161,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                         aria-label="Filter chapters"
                       />
                     )}
-                    <button
-                      type="button"
-                      className="sanka-sort-btn"
-                      onClick={() => setReverseChapters((rev) => !rev)}
-                      aria-label="Toggle chapter order"
-                    >
-                      <ArrowUpDown size={12} /> {reverseChapters ? 'Reversed' : 'Default order'}
-                    </button>
+                    <ChapterOrder value={chapterOrder} onChange={(order) => { setChapterOrder(order); setChapterWindow(150); }} />
                   </div>
                 )}
               </div>
@@ -1150,6 +1194,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                 )}
               </div>
             </div>
+            </>}
           </section>
 
           {readerImages && selectedChapter && (
@@ -1160,7 +1205,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
             >
               <section className="sanka-reader" role="dialog" aria-modal="true" aria-labelledby="sanka-reader-title">
                 <header className="sanka-reader-header">
-                  <button className="icon-button" onClick={() => setReaderImages(null)} aria-label="Back to chapters">
+                  <button className="icon-button" onClick={() => setReaderImages(null)} aria-label="Back to chapters" data-android-back>
                     <ChevronLeft size={17} />
                   </button>
                   <div>
@@ -1258,12 +1303,13 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
           onMouseDown={(event) => event.target === event.currentTarget && setArchiveItem(null)}
         >
           <section className="comic-archive-sheet" role="dialog" aria-modal="true" aria-label={archiveItem.title}>
-            <button className="modal-close floating" onClick={() => setArchiveItem(null)} aria-label="Close">
+            <button className="modal-close floating" onClick={() => setArchiveItem(null)} aria-label="Close comic details" data-android-back>
               <X size={18} />
             </button>
             <span className="page-kicker">INTERNET ARCHIVE · {sourceLabel(archiveItem.source)}</span>
             <h2>{archiveItem.title}</h2>
             {sourceSwitcher}
+            <ReadingSaveButton {...readingLibrary} entry={{ kind: 'sanka', item: archiveItem }} />
             {archiveItem.summary && <p className="comic-archive-summary">{archiveItem.summary}</p>}
             {archiveLoading && (
               <p className="sanka-inline-status"><LoaderCircle size={16} className="spin" /> Loading files…</p>

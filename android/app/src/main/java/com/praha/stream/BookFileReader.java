@@ -1,5 +1,6 @@
 package com.praha.stream;
 
+import android.content.Context;
 import android.net.Uri;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
@@ -15,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
@@ -23,12 +25,18 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
+import org.json.JSONArray;
 import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
@@ -38,7 +46,10 @@ import okhttp3.ResponseBody;
 
 /** Downloads a book into app cache and reads it in a separate, offline WebView. */
 final class BookFileReader {
-    private static final long MAX_BYTES = 96L * 1024 * 1024;
+    private static final long MIB = 1024L * 1024;
+    private static final long MAX_BYTES = 256 * MIB;
+    private static final long MAX_PAGE_BYTES = 32 * MIB;
+    private static final long MAX_EPUB_BYTES = 96 * MIB;
     private static final String ORIGIN = "https://" + WebViewAssetLoader.DEFAULT_DOMAIN;
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
             .proxy(Proxy.NO_PROXY)
@@ -53,17 +64,60 @@ final class BookFileReader {
                 return addresses;
             })
             .followRedirects(false)
-            .callTimeout(35, TimeUnit.SECONDS)
+            .readTimeout(25, TimeUnit.SECONDS)
+            .callTimeout(5, TimeUnit.MINUTES)
             .build();
 
+    private static final Set<File> ACTIVE_COMIC_FILES = new HashSet<>();
+
     private final ProtectedEmbedActivity activity;
+    private final boolean comicDownload;
     private volatile boolean closed;
     private volatile Call call;
     private volatile File file;
+    private List<String> comicPages = List.of();
     private WebView view;
 
-    BookFileReader(ProtectedEmbedActivity activity) {
+    BookFileReader(ProtectedEmbedActivity activity, boolean comicDownload) {
         this.activity = activity;
+        this.comicDownload = comicDownload;
+    }
+
+    private static File comicCache(Context context) {
+        return new File(context.getCacheDir(), "comicsnake-reader");
+    }
+
+    static boolean clearComicCache(Context context) {
+        synchronized (ACTIVE_COMIC_FILES) {
+            File directory = comicCache(context);
+            if (!directory.exists()) return true;
+            File[] files = directory.listFiles();
+            if (files == null) return false;
+            boolean cleared = true;
+            for (File entry : files) {
+                if (!ACTIVE_COMIC_FILES.contains(entry) && !entry.delete() && entry.exists()) cleared = false;
+            }
+            return cleared;
+        }
+    }
+
+    private File newTemporaryFile(String prefix, String suffix) throws IOException {
+        if (!comicDownload) return File.createTempFile(prefix, suffix, activity.getCacheDir());
+        synchronized (ACTIVE_COMIC_FILES) {
+            File directory = comicCache(activity);
+            if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Could not create comic cache");
+            File entry = File.createTempFile(prefix, suffix, directory);
+            ACTIVE_COMIC_FILES.add(entry);
+            return entry;
+        }
+    }
+
+    private void removeTemporaryFile(File entry) {
+        if (entry == null) return;
+        synchronized (ACTIVE_COMIC_FILES) {
+            entry.delete();
+            ACTIVE_COMIC_FILES.remove(entry);
+        }
     }
 
     static boolean isBookDownload(String url, String disposition, String mime) {
@@ -77,32 +131,37 @@ final class BookFileReader {
         String filename = URLUtil.guessFileName(url, disposition, mime).toLowerCase(Locale.ROOT);
         String mediaType = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
         return filename.matches(".*\\.(cbr|rar|zip)$") || mediaType.equals("application/vnd.comicbook-rar")
-                || mediaType.equals("application/x-cbr") || mediaType.equals("application/vnd.rar")
+                || mediaType.equals("application/x-cbz") || mediaType.equals("application/x-cbr") || mediaType.equals("application/vnd.rar")
                 || mediaType.equals("application/x-rar-compressed") || mediaType.equals("application/zip");
     }
 
-    void open(String url, String userAgent, String referer, Consumer<WebView> onReady, Consumer<String> onError) {
+    void open(String url, String userAgent, String referer, Consumer<WebView> onReady, Consumer<String> onError, Consumer<String> onProgress) {
         new Thread(() -> {
             File temporary = null;
             try {
-                temporary = File.createTempFile("praha-book-", ".download", activity.getCacheDir());
+                temporary = newTemporaryFile("praha-book-", ".download");
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 try (var output = new DigestOutputStream(new FileOutputStream(temporary), digest)) {
-                    download(url, userAgent, referer, output);
+                    download(url, userAgent, referer, output, onProgress);
                 }
                 String format = detectFormat(temporary);
+                if (format.equals("epub") && temporary.length() > MAX_EPUB_BYTES) {
+                    throw new BookError("The EPUB exceeds the 96 MB reader limit.");
+                }
                 if (format.equals("cbr")) {
-                    File comic = File.createTempFile("praha-comic-", ".cbz", activity.getCacheDir());
+                    progress(onProgress, "Preparing comic pages…");
+                    File comic = newTemporaryFile("praha-comic-", ".cbz");
                     try {
                         convertComicArchive(temporary, comic);
                     } catch (Exception error) {
-                        comic.delete();
+                        removeTemporaryFile(comic);
                         throw error;
                     }
-                    temporary.delete();
+                    removeTemporaryFile(temporary);
                     temporary = comic;
                     format = "cbz";
                 }
+                if (format.equals("cbz")) comicPages = listComicPages(temporary);
                 String readerFormat = format;
                 StringBuilder id = new StringBuilder(64);
                 for (byte value : digest.digest()) id.append(String.format(Locale.ROOT, "%02x", value & 0xff));
@@ -114,15 +173,22 @@ final class BookFileReader {
                     view.loadUrl(ORIGIN + "/reader/book-reader.html#format=" + readerFormat + "&id=" + id);
                 });
             } catch (Exception error) {
-                if (temporary != null) temporary.delete();
+                removeTemporaryFile(temporary);
                 String message = error instanceof BookError ? error.getMessage() : "The book could not be downloaded. Go back and try the link again.";
                 activity.runOnUiThread(() -> { if (!closed) onError.accept(message); });
             }
         }, "praha-book-download").start();
     }
 
-    private void download(String raw, String userAgent, String referer, DigestOutputStream output) throws IOException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+    private void progress(Consumer<String> action, String message) {
+        activity.runOnUiThread(() -> { if (!closed) action.accept(message); });
+    }
+
+    private void download(String raw, String userAgent, String referer, DigestOutputStream output,
+                          Consumer<String> onProgress) throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(5);
+        long usable = activity.getCacheDir().getUsableSpace();
+        long limit = Math.min(MAX_BYTES, Math.max(0, usable - 32 * MIB));
         HttpUrl url = HttpUrl.parse(raw);
         HttpUrl referringPage = referer == null ? null : HttpUrl.parse(referer);
         for (int attempt = 0; attempt < 6; attempt++) {
@@ -135,7 +201,7 @@ final class BookFileReader {
                 HttpUrl.Builder refererUrl = referringPage.newBuilder().fragment(null);
                 if (!sameHost) refererUrl.encodedPath("/").query(null);
                 request.header("Referer", refererUrl.build().toString());
-                if (sameHost) {
+                if (sameHost || (comicDownload && attempt == 0)) {
                     String cookies = CookieManager.getInstance().getCookie(url.toString());
                     if (cookies != null && !cookies.isEmpty()) request.header("Cookie", cookies);
                 }
@@ -152,15 +218,24 @@ final class BookFileReader {
                 }
                 ResponseBody body = response.body();
                 if (!response.isSuccessful() || body == null) throw new BookError("The site did not provide a readable file. Go back and try the link again.");
-                if (body.contentLength() > MAX_BYTES) throw new BookError("This book is too large to open on this device.");
+                long expected = body.contentLength();
+                if (expected > limit) throw new BookError(largeFileMessage(limit));
                 try (InputStream stream = body.byteStream()) {
                     byte[] buffer = new byte[32768];
                     long total = 0;
+                    long lastUpdate = 0;
                     int size;
                     while (!closed && (size = stream.read(buffer)) != -1) {
                         total += size;
-                        if (total > MAX_BYTES) throw new BookError("This book is too large to open on this device.");
+                        if (total > limit) throw new BookError(largeFileMessage(limit));
                         output.write(buffer, 0, size);
+                        long now = System.nanoTime();
+                        if (now - lastUpdate >= TimeUnit.SECONDS.toNanos(1)) {
+                            lastUpdate = now;
+                            progress(onProgress, expected > 0
+                                    ? "Downloading… " + (total * 100 / expected) + "%"
+                                    : "Downloading… " + (total / MIB) + " MB");
+                        }
                     }
                 }
                 if (closed) throw new IOException("Reader closed");
@@ -170,6 +245,10 @@ final class BookFileReader {
             }
         }
         throw new BookError("This download link could not be opened.");
+    }
+
+    private static String largeFileMessage(long limit) {
+        return limit < MAX_BYTES ? "There isn’t enough free storage to open this file." : "This file exceeds the 256 MB reader limit.";
     }
 
     private static String detectFormat(File file) throws IOException {
@@ -182,17 +261,19 @@ final class BookFileReader {
         if (header[0] == 'P' && header[1] == 'K') {
             try (ZipFile zip = new ZipFile(file)) {
                 if (zip.size() > 10000) throw new BookError("This archive contains too many files.");
+                boolean epub = zip.getEntry("META-INF/container.xml") != null;
+                long expandedLimit = 3 * (epub ? MAX_EPUB_BYTES : MAX_BYTES);
                 long expanded = 0;
                 boolean images = false;
                 var entries = zip.entries();
                 while (entries.hasMoreElements()) {
                     var entry = entries.nextElement();
                     long size = entry.getSize();
-                    if (size < 0 || size > 3 * MAX_BYTES - expanded) throw new BookError("This archive is too large to open.");
+                    if (size < 0 || size > expandedLimit - expanded) throw new BookError("This archive is too large to open.");
                     expanded += size;
                     images |= !entry.isDirectory() && isPageImage(entry.getName());
                 }
-                if (zip.getEntry("META-INF/container.xml") != null) return "epub";
+                if (epub) return "epub";
                 if (images) return "cbz";
             } catch (java.util.zip.ZipException error) {
                 throw new BookError("This archive is incomplete or damaged.");
@@ -212,14 +293,14 @@ final class BookFileReader {
              ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(destination))) {
             if (rar.getFileHeaders().size() > 10000) throw new BookError("This archive contains too many files.");
             byte[] buffer = new byte[32768];
-            long remaining = MAX_BYTES;
+            long remaining = Math.min(MAX_BYTES, Math.max(0, destination.getUsableSpace() - 32 * MIB));
             boolean hasPages = false;
             for (var entry : rar.getFileHeaders()) {
                 if (closed) throw new IOException("Reader closed");
                 String name = entry.getFileName().replace('\\', '/');
                 if (entry.isDirectory() || name.startsWith("__MACOSX/") || !isPageImage(name)) continue;
                 long size = entry.getFullUnpackSize();
-                if (size < 0 || size > remaining) throw new BookError("This archive is too large to open.");
+                if (size < 0 || size > MAX_PAGE_BYTES || size > remaining) throw new BookError("This archive is too large to open.");
                 if (entry.isEncrypted() || entry.isSplitBefore() || entry.isSplitAfter()) {
                     throw new BookError("Choose an unprotected comic archive in a single file.");
                 }
@@ -246,6 +327,94 @@ final class BookFileReader {
         }
     }
 
+    private static List<String> listComicPages(File document) throws IOException {
+        List<String> pages = new ArrayList<>();
+        try (ZipFile zip = new ZipFile(document)) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (entry.isDirectory() || name.startsWith("__MACOSX/") || !isPageImage(name)) continue;
+                if (entry.getSize() > MAX_PAGE_BYTES) throw new BookError("A comic page exceeds the 32 MB reader limit.");
+                pages.add(name);
+            }
+        }
+        if (pages.isEmpty()) throw new BookError("This archive contains no comic pages.");
+        return pages;
+    }
+
+    private WebResourceResponse comicPage(File document, int index) throws IOException {
+        if (index < 0 || index >= comicPages.size()) return null;
+        String name = comicPages.get(index);
+        ZipFile zip = new ZipFile(document);
+        try {
+            InputStream stream = zip.getInputStream(zip.getEntry(name));
+            String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            return new WebResourceResponse("image/" + (extension.equals("jpg") ? "jpeg" : extension), null,
+                    new FilterInputStream(stream) {
+                        @Override public void close() throws IOException {
+                            try { super.close(); } finally { zip.close(); }
+                        }
+                    });
+        } catch (IOException | RuntimeException error) {
+            zip.close();
+            throw error;
+        }
+    }
+
+    private static WebResourceResponse pdfResponse(File document, String range) throws IOException {
+        long length = document.length();
+        Map<String, String> headers = new java.util.HashMap<>();
+        headers.put("Accept-Ranges", "bytes");
+        if (range == null) {
+            headers.put("Content-Length", Long.toString(length));
+            return new WebResourceResponse("application/pdf", null, 200, "OK", headers, new FileInputStream(document));
+        }
+        long start = -1;
+        long end = -1;
+        if (range.matches("bytes=[0-9]{1,10}-[0-9]{0,10}")) {
+            String[] bounds = range.substring(6).split("-", -1);
+            start = Long.parseLong(bounds[0]);
+            end = bounds[1].isEmpty() ? length - 1 : Math.min(Long.parseLong(bounds[1]), length - 1);
+        }
+        if (start < 0 || start > end) {
+            headers.put("Content-Range", "bytes */" + length);
+            return new WebResourceResponse("application/pdf", null, 416, "Range Not Satisfiable", headers, new ByteArrayInputStream(new byte[0]));
+        }
+        long count = end - start + 1;
+        headers.put("Content-Length", Long.toString(count));
+        headers.put("Content-Range", "bytes " + start + "-" + end + "/" + length);
+        FileInputStream input = new FileInputStream(document);
+        try {
+            input.getChannel().position(start);
+        } catch (IOException error) {
+            input.close();
+            throw error;
+        }
+        return new WebResourceResponse("application/pdf", null, 206, "Partial Content", headers, new FilterInputStream(input) {
+            private long remaining = count;
+            @Override public int read() throws IOException {
+                if (remaining == 0) return -1;
+                int value = in.read();
+                if (value >= 0) remaining--;
+                return value;
+            }
+            @Override public int read(byte[] buffer, int offset, int size) throws IOException {
+                if (size == 0) return 0;
+                if (remaining == 0) return -1;
+                int read = in.read(buffer, offset, (int) Math.min(size, remaining));
+                if (read > 0) remaining -= read;
+                return read;
+            }
+            @Override public int available() throws IOException { return (int) Math.min(remaining, super.available()); }
+            @Override public long skip(long size) throws IOException {
+                long skipped = super.skip(Math.min(size, remaining));
+                remaining -= skipped;
+                return skipped;
+            }
+        });
+    }
+
     private WebView createViewer(String format) {
         var assets = new WebViewAssetLoader.AssetsPathHandler(activity);
         var loader = new WebViewAssetLoader.Builder()
@@ -257,18 +426,7 @@ final class BookFileReader {
                     if (response != null && path.endsWith(".wasm")) response.setMimeType("application/wasm");
                     return response;
                 })
-                .addPathHandler("/document/", path -> {
-                    File document = file;
-                    if (!path.equals("book") || document == null) return null;
-                    try {
-                        String mime = switch (format) {
-                            case "pdf" -> "application/pdf";
-                            case "epub" -> "application/epub+zip";
-                            default -> "application/vnd.comicbook+zip";
-                        };
-                        return new WebResourceResponse(mime, null, new FileInputStream(document));
-                    } catch (IOException error) { return null; }
-                }).build();
+                .build();
         WebView reader = new WebView(activity);
         var settings = reader.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -283,7 +441,32 @@ final class BookFileReader {
             }
 
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                WebResourceResponse response = loader.shouldInterceptRequest(request.getUrl());
+                Uri url = request.getUrl();
+                File document = file;
+                if (document != null && ORIGIN.equals(url.getScheme() + "://" + url.getEncodedAuthority())) {
+                    String path = url.getPath();
+                    try {
+                        if ("/document/book".equals(path)) {
+                            if (format.equals("pdf")) {
+                                // WebView applies HTTP Range itself to intercepted InputStreams.
+                                // Pass PDF.js offsets through the local query to avoid double seeking.
+                                return pdfResponse(document, url.getQueryParameter("range"));
+                            }
+                            if (format.equals("epub")) return new WebResourceResponse("application/epub+zip", null, new FileInputStream(document));
+                        }
+                        if (format.equals("cbz") && path != null) {
+                            if (path.equals("/document/pages")) {
+                                byte[] names = new JSONArray(comicPages).toString().getBytes(StandardCharsets.UTF_8);
+                                return new WebResourceResponse("application/json", "UTF-8", new ByteArrayInputStream(names));
+                            }
+                            if (path.matches("/document/page/[0-9]{1,5}")) {
+                                WebResourceResponse page = comicPage(document, Integer.parseInt(url.getLastPathSegment()));
+                                if (page != null) return page;
+                            }
+                        }
+                    } catch (IOException ignored) { }
+                }
+                WebResourceResponse response = loader.shouldInterceptRequest(url);
                 return response != null ? response : new WebResourceResponse("text/plain", "UTF-8", 404,
                         "Not found", java.util.Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
             }
@@ -293,7 +476,7 @@ final class BookFileReader {
 
     private void deleteFile() {
         File document = file;
-        if (document != null) document.delete();
+        removeTemporaryFile(document);
         file = null;
     }
 

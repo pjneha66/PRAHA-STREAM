@@ -1,21 +1,25 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronLeft, LoaderCircle, RotateCcw, Search, X } from 'lucide-react';
 import { MangaService, type MangaChapter, type MangaItem } from '../services/mangaService';
 import MangaReader from './MangaReader';
+import ChapterOrder, { compareChapters, useChapterOrder } from './ChapterOrder';
+import ReadingSaveButton from './ReadingSaveButton';
+import type { MangaSource, ReadingLibraryProps } from '../services/readingLibrary';
 import { mangaDexCatalog, mangaDexDetail, mangaDexPages } from '../services/mangaDexService';
 import { NSFW_COPY } from '../services/nsfwGate';
 import './manga-view.css';
 
-type MangaSource = 'WeebCentral' | 'MangaDex';
-interface MangaViewProps { prefillQuery?: string }
+interface MangaViewProps extends ReadingLibraryProps { prefillQuery?: string }
 
 const MangaView: React.FC<MangaViewProps> = (props) => {
-  const [source, setSource] = useState<MangaSource>('WeebCentral');
-  return <MangaCatalog key={source} {...props} source={source} onSourceChange={setSource} />;
+  const [source, setSource] = useState<MangaSource>(props.openReading?.kind === 'manga' ? props.openReading.source : 'WeebCentral');
+  const [fromLibrary, setFromLibrary] = useState(Boolean(props.openReading));
+  return <MangaCatalog key={source} {...props} openReading={fromLibrary ? props.openReading : null} source={source}
+    onSourceChange={(next) => { if (next !== source) { setFromLibrary(false); setSource(next); } }} />;
 };
 
 const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceChange: (source: MangaSource) => void }> = ({
-  prefillQuery, source, onSourceChange,
+  prefillQuery, source, onSourceChange, ...readingLibrary
 }) => {
   const [query, setQuery] = useState(prefillQuery || '');
   const [submitted, setSubmitted] = useState(prefillQuery || '');
@@ -25,6 +29,10 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<MangaItem | null>(null);
   const [chapters, setChapters] = useState<MangaChapter[]>([]);
+  const [chapterOrder, setChapterOrder] = useChapterOrder();
+  const [chapterError, setChapterError] = useState('');
+  const detailRequest = useRef(0);
+  const pageRequest = useRef(0);
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [reader, setReader] = useState<{
     chapter: MangaChapter;
@@ -34,6 +42,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
   const [readerLoading, setReaderLoading] = useState(false);
 
   const load = useCallback(async (reset = true) => {
+    const request = ++pageRequest.current;
     setLoading(true);
     setError('');
     try {
@@ -44,6 +53,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
           type: item.comicType || 'Manga', url: '', synopsis: item.summary, year: item.year,
         }))
         : submitted ? await MangaService.searchManga(submitted, nextPage) : await MangaService.getManga(nextPage);
+      if (request !== pageRequest.current) return;
       setPage(nextPage);
       if (reset) {
         setItems(result);
@@ -51,9 +61,9 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
         setItems((current) => [...current, ...result]);
       }
     } catch {
-      setError(`Could not reach ${source}. Try again in a moment.`);
+      if (request === pageRequest.current) setError(`Could not reach ${source}. Try again in a moment.`);
     } finally {
-      setLoading(false);
+      if (request === pageRequest.current) setLoading(false);
     }
   }, [submitted, page, source]);
 
@@ -69,61 +79,71 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     }
   }, [prefillQuery]);
 
-  const openDetail = async (item: MangaItem) => {
+  const closeDetail = () => {
+    detailRequest.current += 1;
+    setReaderLoading(false);
+    setDetail(null);
+  };
+
+  const openDetail = useCallback(async (item: MangaItem) => {
+    const request = ++detailRequest.current;
     setDetail(item);
     setChapters([]);
+    setChapterError('');
     setChaptersLoading(true);
+    const ascending = (a: MangaChapter, b: MangaChapter) => compareChapters(a.name, b.name, a.chapterNumber, b.chapterNumber);
     try {
       if (source === 'MangaDex') {
         const full = await mangaDexDetail(item.id, undefined, 'en');
+        if (request !== detailRequest.current) return;
         setDetail({ ...item, synopsis: full.summary, author: full.author, tags: full.genres });
-        setChapters(full.chapters.map((entry) => ({ id: entry.slug, name: entry.title, url: '' })));
+        setChapters(full.chapters.map((entry) => ({ id: entry.slug, name: entry.title, url: '' })).sort(ascending));
       } else {
-        const [full, list] = await Promise.all([
+        const [full, list] = await Promise.allSettled([
           MangaService.getSeriesDetail(item.id),
           MangaService.getChapters(item.id),
         ]);
-        setDetail(full);
-        setChapters(list);
+        if (request !== detailRequest.current) return;
+        if (full.status === 'fulfilled') setDetail(full.value);
+        if (list.status === 'rejected') throw list.reason;
+        setChapters([...list.value].sort(ascending));
       }
     } catch {
-      // The card already carries enough detail to show the chapter list empty.
+      if (request === detailRequest.current) setChapterError('Could not load chapters.');
     } finally {
-      setChaptersLoading(false);
+      if (request === detailRequest.current) setChaptersLoading(false);
     }
-  };
+  }, [source]);
+
+  const target = readingLibrary.openReading;
+  const appliedTarget = useRef<typeof target>(null);
+  useEffect(() => {
+    if (target?.kind !== 'manga' || target.source !== source || target === appliedTarget.current) return;
+    appliedTarget.current = target;
+    void openDetail(target.item);
+  }, [target, source, openDetail]);
 
   const openChapter = async (chapter: MangaChapter, index: number) => {
+    const request = detailRequest.current;
+    setChapterError('');
     setReaderLoading(true);
     try {
       const images = await (source === 'MangaDex' ? mangaDexPages(chapter.id) : MangaService.getChapterImages(chapter.id));
-      if (!images.length) {
-        setError('This chapter has no readable images right now.');
-        return;
-      }
+      if (request !== detailRequest.current) return;
+      if (!images.length) throw new Error('This chapter has no readable images right now.');
       setReader({ chapter, images, index });
-    } catch {
-      setError('Could not load this chapter.');
+    } catch (error) {
+      if (request === detailRequest.current) setChapterError(error instanceof Error ? error.message : 'Could not load this chapter.');
     } finally {
-      setReaderLoading(false);
+      if (request === detailRequest.current) setReaderLoading(false);
     }
   };
 
-  const openNeighbour = useCallback(async (delta: number) => {
-    if (!reader) return;
-    const nextIndex = reader.index + delta;
-    const next = chapters[nextIndex];
-    if (!next) return;
-    setReaderLoading(true);
-    try {
-      const images = await (source === 'MangaDex' ? mangaDexPages(next.id) : MangaService.getChapterImages(next.id));
-      if (images.length) setReader({ chapter: next, images, index: nextIndex });
-    } catch {
-      setError('Could not load this chapter.');
-    } finally {
-      setReaderLoading(false);
-    }
-  }, [reader, chapters, source]);
+  const openNeighbour = (delta: number) => {
+    if (!reader || readerLoading) return;
+    const index = reader.index + delta;
+    if (chapters[index]) void openChapter(chapters[index], index);
+  };
 
   const heading = useMemo(() => {
     if (submitted) return `Results for “${submitted}”`;
@@ -227,9 +247,9 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
       )}
 
       {detail && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDetail(null)}>
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeDetail()}>
           <section className="manga-detail" role="dialog" aria-modal="true" aria-label={detail.title}>
-            <button className="modal-close floating" onClick={() => setDetail(null)} aria-label="Close">
+            <button className="modal-close floating" onClick={closeDetail} aria-label="Close manga details" data-android-back>
               <X size={18} />
             </button>
             <div className="manga-detail-top">
@@ -243,12 +263,19 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
                 )}
               </div>
             </div>
-            <h3>Chapters</h3>
+            <ReadingSaveButton {...readingLibrary} entry={{ kind: 'manga', item: detail, source }} />
+            <div className="sanka-chapter-heading">
+              <h3>Chapters</h3>
+              {chapters.length > 1 && <ChapterOrder value={chapterOrder} onChange={setChapterOrder} />}
+            </div>
+            {chapterError && <p className="sanka-inline-error" role="alert">{chapterError}</p>}
             {chaptersLoading ? (
               <div className="manga-loading"><LoaderCircle size={18} className="spin" /> Loading chapters…</div>
             ) : (
               <div className="manga-chapters">
-                {chapters.map((chapter, index) => (
+                {(chapterOrder === 'asc' ? chapters : [...chapters].reverse()).map((chapter, displayIndex) => {
+                  const index = chapterOrder === 'asc' ? displayIndex : chapters.length - displayIndex - 1;
+                  return (
                   <button
                     key={chapter.id}
                     type="button"
@@ -258,8 +285,9 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
                   >
                     <span>{chapter.name || `Chapter ${chapter.chapterNumber ?? index + 1}`}</span>
                   </button>
-                ))}
-                {!chapters.length && <p>No chapters found for this series.</p>}
+                  );
+                })}
+                {!chapters.length && !chapterError && <p>No chapters found for this series.</p>}
               </div>
             )}
           </section>
@@ -275,6 +303,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
           onClose={() => setReader(null)}
           onNextChapter={reader.index < chapters.length - 1 ? () => void openNeighbour(1) : undefined}
           onPrevChapter={reader.index > 0 ? () => void openNeighbour(-1) : undefined}
+          status={readerLoading ? 'Loading chapter…' : chapterError}
           hasNextChapter={reader.index < chapters.length - 1}
         />
       )}

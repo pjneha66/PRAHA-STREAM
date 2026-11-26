@@ -55,20 +55,48 @@ function enablePageZoom() {
   });
 }
 
-async function readPdf(data: ArrayBuffer) {
-  const [{ getDocument, GlobalWorkerOptions }, { default: worker }] = await Promise.all([
+async function readPdf() {
+  const [{ getDocument, GlobalWorkerOptions, PDFDataRangeTransport }, { default: worker }] = await Promise.all([
     import('pdfjs-dist/legacy/build/pdf.mjs'),
     import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
   ]);
   GlobalWorkerOptions.workerSrc = worker;
   const assets = new URL('/assets/pdfjs/', location.origin).href;
-  const pdf = await getDocument({
-    data,
+  const rangeUrl = (start: number, end: number) => `/document/book?range=bytes=${start}-${end - 1}`;
+  const initial = await fetch(rangeUrl(0, 65536));
+  const length = Number(initial.headers.get('Content-Range')?.split('/')[1]);
+  if (initial.status !== 206 || !Number.isSafeInteger(length) || length < 1) throw new Error('Invalid PDF length');
+  const abort = new AbortController();
+  class LocalPdfRange extends PDFDataRangeTransport {
+    requestDataRange(begin: number, end: number) {
+      void fetch(rangeUrl(begin, end), { signal: abort.signal })
+        .then(async (response) => {
+          if (response.status !== 206) throw new Error('PDF data unavailable');
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.length !== end - begin) throw new Error('Incomplete PDF data');
+          this.onDataRange(begin, bytes);
+        })
+        .catch(() => {
+          if (!abort.signal.aborted) {
+            showError();
+            void task.destroy().catch(() => undefined);
+          }
+        });
+    }
+    abort() { abort.abort(); }
+  }
+
+  const range = new LocalPdfRange(length, new Uint8Array(await initial.arrayBuffer()));
+  const task = getDocument({
+    range,
+    disableAutoFetch: true,
+    disableStream: true,
     cMapUrl: `${assets}cmaps/`,
     standardFontDataUrl: `${assets}standard_fonts/`,
     iccUrl: `${assets}iccs/`,
     wasmUrl: `${assets}wasm/`,
-  }).promise;
+  });
+  const pdf = await task.promise;
   const resume = Number(readPosition());
   let number = Number.isInteger(resume) ? Math.min(Math.max(resume, 1), pdf.numPages) : 1;
   const canvas = document.createElement('canvas');
@@ -136,11 +164,11 @@ async function readEpub(data: ArrayBuffer) {
   enableZoom((zoom) => rendition.themes.fontSize(`${zoom * 100}%`));
 }
 
-async function readComic(data: ArrayBuffer) {
-  const { default: JSZip } = await import('jszip');
-  const archive = await JSZip.loadAsync(data);
-  const images = Object.values(archive.files)
-    .filter((file) => !file.dir && !file.name.startsWith('__MACOSX/') && /\.(jpe?g|png|webp|gif|avif)$/i.test(file.name))
+async function readComic() {
+  const response = await fetch('/document/pages');
+  if (!response.ok) throw new Error('Comic unavailable');
+  const names: string[] = await response.json();
+  const images = names.map((name, index) => ({ name, index }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!images.length) throw new Error('Comic has no images');
 
@@ -150,10 +178,8 @@ async function readComic(data: ArrayBuffer) {
   pages.append(image);
   async function render(page: number) {
     previous.disabled = next.disabled = true;
-    const blob = await images[page].async('blob');
-    const oldUrl = image.src;
-    image.src = URL.createObjectURL(blob);
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    image.src = `/document/page/${images[page].index}`;
+    await image.decode();
     index = page;
     image.alt = `Page ${index + 1}`;
     pages.scrollTop = 0;
@@ -170,10 +196,11 @@ async function readComic(data: ArrayBuffer) {
 
 async function openBook() {
   if (!digest || !/^[a-f0-9]{64}$/.test(digest) || (format !== 'pdf' && format !== 'epub' && format !== 'cbz')) throw new Error('Invalid book');
+  if (format === 'pdf') return readPdf();
+  if (format === 'cbz') return readComic();
   const response = await fetch('/document/book');
   if (!response.ok) throw new Error('Book unavailable');
-  const data = await response.arrayBuffer();
-  await (format === 'pdf' ? readPdf(data) : format === 'epub' ? readEpub(data) : readComic(data));
+  await readEpub(await response.arrayBuffer());
 }
 
 void openBook().catch(showError);

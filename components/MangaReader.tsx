@@ -34,6 +34,7 @@ export interface MangaReaderProps {
   onNextChapter?: () => void;
   onPrevChapter?: () => void;
   hasNextChapter?: boolean;
+  status?: string;
 }
 
 const MODE_KEY = 'praha.manga.reader-mode.v1';
@@ -181,6 +182,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
   onNextChapter,
   onPrevChapter,
   hasNextChapter = false,
+  status,
 }) => {
   const total = images.length;
   const [mode, setMode] = useState<MangaReaderMode>(readMode);
@@ -429,7 +431,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
 
       {barVisible ? (
         <div className="mr-bar">
-          <button type="button" className="mr-btn" onClick={onClose} aria-label="Back (Esc)">
+          <button type="button" className="mr-btn" onClick={onClose} aria-label="Back (Esc)" data-android-back>
             <ArrowLeft size={18} aria-hidden="true" />
           </button>
 
@@ -462,9 +464,10 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
             </button>
           ) : null}
         </div>
-      ) : null}
+      ) : <button type="button" className="mr-back-hidden" onClick={onClose} tabIndex={-1} aria-hidden="true" data-android-back />}
 
-      {brokenCount > 0 ? (
+      {status && <p className="mr-note" role="status">{status}</p>}
+      {!status && brokenCount > 0 ? (
         <p className="mr-note" role="status">
           {brokenCount} page{brokenCount === 1 ? '' : 's'} could not be loaded.
         </p>

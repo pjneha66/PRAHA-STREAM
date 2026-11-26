@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -17,6 +18,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -28,6 +30,7 @@ import java.util.Locale;
 
 /** A separate, unprivileged WebView: never attach Capacitor or any JavaScript bridge here. */
 public final class ProtectedEmbedActivity extends Activity {
+    static final String EXTRA_FIND_COMIC_SOURCE = "find_comic_source";
     static final String EXTRA_MOCTALE_METER = "moctale_meter";
     public static final String EXTRA_DIRECT_BOOK = "direct_book";
     public static final String EXTRA_URL = "embed_url";
@@ -37,6 +40,11 @@ public final class ProtectedEmbedActivity extends Activity {
     private View bookView;
     private BookFileReader reader;
     private Button closeButton;
+    private LinearLayout toolbar;
+    private final Runnable pageTimeout = () -> {
+        if (web != null) web.stopLoading();
+        showPageError();
+    };
     private LinearLayout siteActions;
     private FrameLayout content;
     private View fullScreen;
@@ -48,6 +56,7 @@ public final class ProtectedEmbedActivity extends Activity {
     private boolean archiveLoan;
     private boolean bookSite;
     private boolean comicSite;
+    private boolean comicDownloadHost;
     private boolean directBook;
     private boolean moctaleSite;
     private boolean moctaleMeterReturned;
@@ -67,51 +76,83 @@ public final class ProtectedEmbedActivity extends Activity {
                 || (initialHost.equals("archive.org") && target.getPath() != null
                     && target.getPath().startsWith("/download/")
                     && BookFileReader.isBookDownload(initialUrl, null, null));
-        comicSite = hostMatches(initialHost, "comics-all.com", "comicsnake.com", "getcomics.org");
+        comicDownloadHost = isComicDownloadHost(target) && !directBook;
+        comicSite = comicDownloadHost || hostMatches(initialHost, "comics-all.com", "comicsnake.com", "getcomics.org");
         bookSite = directBook || comicSite
                 || hostMatches(initialHost, "annas-archive.gl", "theoceanofpdf.com", "oceanofpdf.com", "openlibrary.org");
         if (archiveLoan && !isArchiveItem(target)) { finish(); return; }
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.BLACK);
-        LinearLayout bar = new LinearLayout(this);
-        closeButton = new Button(this);
+        toolbar = new LinearLayout(this);
+        toolbar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        toolbar.setBackgroundColor(0xff15171b);
+        closeButton = actionButton();
         closeButton.setText("Close");
-        closeButton.setOnClickListener(v -> { if (reader != null && !directBook) closeBook(); else finish(); });
-        Button browser = new Button(this);
-        browser.setText(moctaleSite ? "Browser" : isBookPage() ? "Open in browser" : "Browser (unfiltered)");
+        closeButton.setOnClickListener(v -> { if (fullScreen != null) hideFullScreen(); else if (reader != null && !directBook) closeBook(); else finish(); });
+        Button browser = actionButton();
+        browser.setText("Browser");
         browser.setOnClickListener(v -> {
             String currentUrl = web == null ? null : web.getUrl();
             openBrowser(currentUrl != null ? currentUrl : initialUrl);
         });
         siteActions = new LinearLayout(this);
-        siteActions.addView(browser);
-        bar.addView(closeButton);
-        bar.addView(siteActions);
-        if (isBookPage()) {
-            Button reload = new Button(this);
+        if (comicDownloadHost) {
+            Button clear = actionButton();
+            clear.setText("Clear cache");
+            clear.setOnClickListener(v -> {
+                boolean cleared = BookFileReader.clearComicCache(this);
+                android.widget.Toast.makeText(this, cleared ? "Comic cache cleared." : "Could not clear the comic cache.",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                closeBook();
+                if (web != null) web.loadUrl(initialUrl);
+                else openPlayer();
+            });
+            siteActions.addView(clear);
+            Button other = actionButton();
+            other.setText("Find another source");
+            other.setOnClickListener(v -> {
+                setResult(RESULT_OK, new Intent().putExtra(EXTRA_FIND_COMIC_SOURCE, true));
+                finish();
+            });
+            siteActions.addView(other);
+        } else {
+            siteActions.addView(browser);
+        }
+        toolbar.addView(closeButton);
+        toolbar.addView(siteActions);
+        if (!directBook && !moctaleSite && !comicDownloadHost) {
+            Button reload = actionButton();
             reload.setText("Reload");
-            reload.setOnClickListener(v -> { if (web != null) web.reload(); });
+            reload.setOnClickListener(v -> {
+                if (web == null) {
+                    if (isBookPage() || filter != null) openPlayer();
+                    else recreate();
+                } else if (web.getUrl() == null) web.loadUrl(initialUrl);
+                else web.reload();
+            });
             siteActions.addView(reload);
         }
         if (moctaleSite) {
-            Button title = new Button(this);
+            Button title = actionButton();
             title.setText("Title");
-            title.setOnClickListener(v -> { if (web != null) web.loadUrl(initialUrl); });
+            title.setOnClickListener(v -> { if (web != null) web.loadUrl(initialUrl); else openPlayer(); });
             siteActions.addView(title);
-            Button meter = new Button(this);
+            Button meter = actionButton();
             meter.setText("Use Meter");
             meter.setOnClickListener(v -> readMoctaleMeter(0, true));
             siteActions.addView(meter);
         }
-        layout.addView(bar);
+        layout.addView(toolbar);
         content = new FrameLayout(this);
         layout.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         loading = new TextView(this);
         loading.setText(moctaleSite ? "Opening Moctale…" : archiveLoan ? "Opening Internet Archive…" : bookSite ? "Opening book site…" : "Loading protected player…");
         loading.setTextColor(Color.WHITE);
+        loading.setGravity(android.view.Gravity.CENTER);
+        loading.setPadding(dp(18), dp(18), dp(18), dp(18));
         loading.setBackgroundColor(Color.BLACK);
-        content.addView(loading);
+        content.addView(loading, new FrameLayout.LayoutParams(-1, -1));
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         ViewCompat.setOnApplyWindowInsetsListener(layout, (view, insets) -> {
             Insets safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
@@ -132,7 +173,7 @@ public final class ProtectedEmbedActivity extends Activity {
                     if (destroyed || isFinishing()) return;
                     filter = loaded;
                     content.removeAllViews();
-                    if (filter.blocks(initialHost)) { loading.setText("This player is blocked by the host list. Use Browser (unfiltered) if you trust it."); content.addView(loading); return; }
+                    if (filter.blocks(initialHost)) { loading.setText("This player is blocked by the host list. Choose another provider or use Browser."); content.addView(loading); return; }
                     openPlayer();
                 });
             } catch (Exception error) {
@@ -141,11 +182,30 @@ public final class ProtectedEmbedActivity extends Activity {
         }, "embed-blocklist").start();
     }
 
+    private int dp(int size) {
+        return Math.round(size * getResources().getDisplayMetrics().density);
+    }
+
+    private Button actionButton() {
+        Button button = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        button.setAllCaps(false);
+        button.setTextColor(Color.WHITE);
+        return button;
+    }
+
     private static boolean hostMatches(String host, String... domains) {
         for (String domain : domains) {
             if (host.equals(domain) || host.endsWith("." + domain)) return true;
         }
         return false;
+    }
+
+    static boolean isComicDownloadHost(Uri uri) {
+        if (!EmbedBlocklist.isPublicHttps(uri) || (uri.getPort() != -1 && uri.getPort() != 443)) return false;
+        String host = uri.getHost();
+        String path = uri.getPath();
+        return ("florenfile.com".equalsIgnoreCase(host) || "www.florenfile.com".equalsIgnoreCase(host))
+                && path != null && path.matches("(?i)/[a-z0-9]+/[^/]+\\.(?:cbz|cbr|zip|rar|pdf)\\.html");
     }
 
     private boolean isBookPage() {
@@ -173,6 +233,7 @@ public final class ProtectedEmbedActivity extends Activity {
 
     private void openPlayer() {
         web = new WebView(this); // No addJavascriptInterface or Capacitor bridge.
+        web.setBackgroundColor(Color.BLACK);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -182,9 +243,12 @@ public final class ProtectedEmbedActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(true);
+        if (comicDownloadHost) settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         web.setDownloadListener((url, userAgent, disposition, mimetype, length) -> {
             if (!bookSite) return;
-            if (isReaderFile(url, disposition, mimetype)) openBook(url, userAgent);
+            boolean attachment = comicDownloadHost && disposition != null
+                    && disposition.toLowerCase(Locale.ROOT).startsWith("attachment");
+            if (isReaderFile(url, disposition, mimetype) || attachment) openBook(url, userAgent);
             else android.widget.Toast.makeText(this, comicSite ? "Choose a CBZ, CBR, ZIP, RAR, or PDF to read in PRAHA."
                     : "Choose a PDF, EPUB, or CBZ to read in PRAHA.", android.widget.Toast.LENGTH_SHORT).show();
         });
@@ -216,7 +280,8 @@ public final class ProtectedEmbedActivity extends Activity {
             @Override public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (fullScreen != null) { callback.onCustomViewHidden(); return; }
                 fullScreen = view; fullScreenCallback = callback;
-                web.setVisibility(View.GONE);
+                web.setVisibility(View.INVISIBLE);
+                toolbar.setVisibility(View.GONE);
                 content.addView(view, new FrameLayout.LayoutParams(-1, -1));
             }
             @Override public void onHideCustomView() { hideFullScreen(); }
@@ -232,7 +297,8 @@ public final class ProtectedEmbedActivity extends Activity {
                     if (!EmbedBlocklist.isPublicHttps(uri)) return true;
                     if (!request.isForMainFrame()) return false;
                     String host = uri.getHost().toLowerCase(Locale.ROOT);
-                    boolean sameSite = host.equals(initialHost) || host.endsWith("." + initialHost);
+                    boolean sameSite = comicDownloadHost ? hostMatches(host, "florenfile.com")
+                            : host.equals(initialHost) || host.endsWith("." + initialHost);
                     if (archiveLoan && (host.equals("openlibrary.org") || host.endsWith(".archive.org"))) return false;
                     if (bookSite && "GET".equals(request.getMethod())
                             && (sameSite || request.hasGesture() || request.isRedirect())) {
@@ -260,16 +326,37 @@ public final class ProtectedEmbedActivity extends Activity {
             }
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 pageFailed = false;
+                view.removeCallbacks(pageTimeout);
+                view.postDelayed(pageTimeout, 25_000);
+                loading.setText(moctaleSite ? "Opening Moctale…" : isBookPage() ? "Opening listing…" : "Loading player…");
+                if (loading.getParent() == null) content.addView(loading, new FrameLayout.LayoutParams(-1, -1));
+            }
+            @Override public void onPageCommitVisible(WebView view, String url) {
+                view.removeCallbacks(pageTimeout);
+                if (!pageFailed && loading.getParent() != null) content.removeView(loading);
             }
             @Override public void onPageFinished(WebView view, String url) {
+                view.removeCallbacks(pageTimeout);
                 if (!pageFailed && loading.getParent() != null) content.removeView(loading);
                 if (moctaleSite && MoctalePageMeter.isRequestedPage(url, initialUrl)) readMoctaleMeter(10, false);
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame() && isBookPage()) showPageError();
+                if (request.isForMainFrame()) { view.removeCallbacks(pageTimeout); showPageError(); }
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse error) {
-                if (request.isForMainFrame() && isBookPage()) showPageError();
+                if (request.isForMainFrame() && (!comicDownloadHost || error.getStatusCode() != 403)) {
+                    view.removeCallbacks(pageTimeout);
+                    showPageError();
+                }
+            }
+            @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                view.removeCallbacks(pageTimeout);
+                hideFullScreen();
+                content.removeView(view);
+                view.destroy();
+                if (view == web) web = null;
+                if (reader == null) showPageError();
+                return true;
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -298,23 +385,47 @@ public final class ProtectedEmbedActivity extends Activity {
 
     private void openBook(String url, String userAgent) {
         if (reader != null || url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return;
-        reader = new BookFileReader(this);
+        reader = new BookFileReader(this, comicDownloadHost);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(android.view.Gravity.CENTER);
+        panel.setPadding(dp(24), dp(24), dp(24), dp(24));
+        panel.setBackgroundColor(Color.BLACK);
+        ProgressBar spinner = new ProgressBar(this);
+        panel.addView(spinner, new LinearLayout.LayoutParams(dp(32), dp(32)));
         TextView status = new TextView(this);
-        status.setText(comicSite ? "Opening comic…" : "Opening book…");
+        boolean comic = comicSite || BookFileReader.isComicArchive(url, null, null);
+        status.setText(comic ? "Opening comic…" : "Opening book…");
         status.setTextColor(Color.WHITE);
         status.setGravity(android.view.Gravity.CENTER);
-        status.setPadding(24, 24, 24, 24);
-        status.setBackgroundColor(Color.BLACK);
+        status.setPadding(0, dp(16), 0, dp(16));
+        panel.addView(status);
+        Button retry = actionButton();
+        retry.setText("Retry");
+        retry.setVisibility(View.GONE);
+        retry.setOnClickListener(v -> {
+            closeBook();
+            if (web != null) openBook(url, userAgent);
+            else openPlayer();
+        });
+        panel.addView(retry);
         closeButton.setText(directBook ? "Back to PRAHA" : "Back to site");
         siteActions.setVisibility(View.GONE);
         String referer = web.getUrl();
+        web.removeCallbacks(pageTimeout);
         web.setVisibility(View.GONE);
-        bookView = status;
-        content.addView(status, new FrameLayout.LayoutParams(-1, -1));
+        if (loading.getParent() != null) content.removeView(loading);
+        bookView = panel;
+        content.addView(panel, new FrameLayout.LayoutParams(-1, -1));
         reader.open(url, userAgent, referer, view -> {
-            content.removeView(status);
+            content.removeView(panel);
             bookView = view;
             content.addView(view, new FrameLayout.LayoutParams(-1, -1));
+        }, message -> {
+            status.setText(message);
+            spinner.setVisibility(View.GONE);
+            retry.setVisibility(View.VISIBLE);
+            if (comicDownloadHost) siteActions.setVisibility(View.VISIBLE);
         }, status::setText);
     }
 
@@ -361,13 +472,17 @@ public final class ProtectedEmbedActivity extends Activity {
 
     private void showPageError() {
         pageFailed = true;
-        loading.setText("The site could not load. Tap Reload or Open in browser.");
-        if (loading.getParent() == null) content.addView(loading);
+        loading.setText(moctaleSite ? "Moctale could not load. Tap Title to retry or open it in Browser."
+                : comicDownloadHost ? "The comic download page is unavailable. Try another source."
+                : isBookPage() ? "The listing could not load. Tap Reload to retry or open it in Browser."
+                : "The player could not load. Tap Reload, or close it and choose another provider.");
+        if (loading.getParent() == null) content.addView(loading, new FrameLayout.LayoutParams(-1, -1));
     }
 
     private void hideFullScreen() {
         if (fullScreen == null) return;
         content.removeView(fullScreen); fullScreen = null;
+        toolbar.setVisibility(View.VISIBLE);
         if (web != null) web.setVisibility(View.VISIBLE);
         if (fullScreenCallback != null) { fullScreenCallback.onCustomViewHidden(); fullScreenCallback = null; }
     }
@@ -377,11 +492,19 @@ public final class ProtectedEmbedActivity extends Activity {
         if (web != null && web.canGoBack()) { web.goBack(); return; }
         super.onBackPressed();
     }
+    @Override protected void onPause() {
+        if (web != null) web.onPause();
+        super.onPause();
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (web != null) web.onResume();
+    }
     @Override protected void onDestroy() {
         destroyed = true; hideFullScreen();
         closeBook();
         if (popup != null) { popup.destroy(); popup = null; }
-        if (web != null) { content.removeView(web); web.stopLoading(); web.destroy(); web = null; }
+        if (web != null) { web.removeCallbacks(pageTimeout); content.removeView(web); web.stopLoading(); web.destroy(); web = null; }
         super.onDestroy();
     }
 }

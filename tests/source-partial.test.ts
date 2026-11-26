@@ -18,6 +18,15 @@ const mock = vi.hoisted(() => {
         ]),
       },
       {
+        id: 'slow-regular',
+        name: 'Slow regular',
+        note: '',
+        scraper: vi.fn(async () => {
+          await slowGate;
+          return [{ url: 'https://slow-regular/one.m3u8', server: 'Slow regular', quality: '720p', type: 'hls' }];
+        }),
+      },
+      {
         id: 'slow',
         name: 'Slow',
         note: '',
@@ -39,7 +48,7 @@ vi.mock('../services/p2p/torrServerController', () => ({
 import { scrapeFilmSources } from '../services/sourceOrchestrator';
 
 describe('scrapeFilmSources partial publishing', () => {
-  it('publishes the fast lane while the long lane is still running', async () => {
+  it('publishes the fast answer while both regular and long-timeout sources are still running', async () => {
     const seen: string[][] = [];
     const finished = scrapeFilmSources(
       { id: '1', title: 'A Film' },
@@ -55,6 +64,6 @@ describe('scrapeFilmSources partial publishing', () => {
     // The result is only complete once the long lane is released.
     mock.releaseSlow();
     const result = await finished;
-    expect(result.streams).toHaveLength(2);
+    expect(result.streams).toHaveLength(3);
   });
 });

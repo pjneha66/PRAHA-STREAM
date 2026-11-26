@@ -264,7 +264,7 @@ body.player-vlc-active .ltvp-root,
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 50px 12px calc(18px + env(safe-area-inset-bottom, 0px));
+  padding: 50px 12px calc(18px + max(var(--phone-safe-bottom, 0px), 0px));
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0));
   opacity: 1;
   transition: opacity 110ms ease;
@@ -399,7 +399,7 @@ body.player-vlc-active .ltvp-root,
 .ltvp-panel {
   position: absolute;
   top: 70px;
-  bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(110px + max(var(--phone-safe-bottom, 0px), 0px));
   right: -360px;
   width: 280px;
   display: flex;
@@ -649,7 +649,7 @@ body.player-pane-active .ltv-root,
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: calc(14px + env(safe-area-inset-top, 0px)) 22px 40px;
+  padding: calc(14px + max(var(--phone-safe-top, 0px), 0px)) 22px 40px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0));
 }
 
@@ -731,13 +731,13 @@ body.player-pane-active .ltv-root,
 
 .blp-bottom {
   margin-top: auto;
-  padding: 26px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 26px 10px calc(10px + max(var(--phone-safe-bottom, 0px), 0px));
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
 }
 
 /* VyseTV: 50 above the transport in full screen, 26 in the pane. */
 .blp-root.is-full .blp-bottom {
-  padding: 50px 22px calc(18px + env(safe-area-inset-bottom, 0px));
+  padding: 50px 22px calc(18px + max(var(--phone-safe-bottom, 0px), 0px));
 }
 
 .blp-guide-slot {

@@ -1,5 +1,5 @@
 import { load } from 'cheerio';
-import { openPublicationUrl, openReaderFile } from './androidBridge';
+import { isAndroidApp, openPublicationUrl, openReaderFile } from './androidBridge';
 import { fetchReadingPage } from './readingRelay';
 import type { BookFile } from './archiveService';
 import type { ComicLanguageFilter } from './comicLanguages';
@@ -111,8 +111,12 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
 const fileExtension = /\.(pdf|epub|cbz|cbr|zip|rar)$/i;
 
 export async function loadPublicationFiles(source: ComicBookSite, location: string): Promise<BookFile[]> {
+  return (await publicationLinks(source, location)).files;
+}
+
+async function publicationLinks(source: ComicBookSite, location: string) {
   const page = new URL(location);
-  if (page.origin !== COMIC_BOOK_SITES[source].origin || page.username || page.password) return [];
+  if (page.origin !== COMIC_BOOK_SITES[source].origin || page.username || page.password) return { files: [] };
   const $ = load(await fetchReadingPage(source, page.href));
   const files = new Map<string, BookFile>();
   const add = (href: string | undefined, mayRedirect = false) => {
@@ -134,12 +138,24 @@ export async function loadPublicationFiles(source: ComicBookSite, location: stri
   (content.length ? content : $('body')).find('a[href]').each((_, link) => {
     add($(link).attr('href'), source === 'getcomics' && $(link).is('a.aio-red[title="DOWNLOAD NOW"]'));
   });
-  return [...files.values()];
+  const host = source === 'comicsnake'
+    ? $('a[href]').toArray().map((link) => $(link).attr('href') || '').find((href) => {
+        try {
+          const url = new URL(href, page);
+          return url.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443')
+            && (url.hostname === 'florenfile.com' || url.hostname === 'www.florenfile.com')
+            && /^\/[a-z0-9]+\/[^/]+\.(?:cbz|cbr|zip|rar|pdf)\.html$/i.test(url.pathname);
+        } catch { return false; }
+      })
+    : undefined;
+  return { files: [...files.values()], host: host ? new URL(host, page).href : undefined };
 }
 
-export async function readPublicationIssue(source: ComicBookSite, url: string): Promise<boolean> {
-  const files = await loadPublicationFiles(source, url);
+export async function readPublicationIssue(source: ComicBookSite, url: string, isCurrent = () => true): Promise<boolean> {
+  const { files, host } = await publicationLinks(source, url);
   const bestFile = files.find((file) => file.format !== 'ZIP' && file.format !== 'RAR') || files[0];
-  if (!bestFile) throw new Error('This issue has no direct reader file. Its download host may require a manual step.');
-  return openReaderFile(bestFile.url);
+  if (!isCurrent()) return false;
+  if (bestFile) return openReaderFile(bestFile.url);
+  if (host && isAndroidApp()) return openPublicationUrl(host);
+  throw new Error('This listing has no direct reader file. Try another source or open the listing.');
 }

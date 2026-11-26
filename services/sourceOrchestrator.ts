@@ -100,6 +100,7 @@ export async function scrapeFilmSources(
   options: {
     enabledIds?: string[];
     timeoutMs?: number;
+    signal?: AbortSignal;
     /** Called with everything finished so far, in FILM_SOURCES order. */
     onPartial?: (result: ScrapeResult) => void;
   } = {},
@@ -113,13 +114,19 @@ export async function scrapeFilmSources(
       });
   const timeoutMs = options.timeoutMs ?? 8000;
 
-  /** One source's answer, with its own budget when it asked for one. */
-  const ask = (source: FilmSource) =>
-    Promise.race([
-      source.scraper(query),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), Math.max(timeoutMs, source.timeoutMs ?? 0))),
-    ]);
+  const ask = async (source: FilmSource) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        source.scraper(query),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('timeout')), Math.max(timeoutMs, source.timeoutMs ?? 0));
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 
   // A phone cannot hold every scraper's concurrent HTML parses, so the ordinary
   // scrapers run in small waves. The long-budget sources (Movy's 17 servers, Knaben's two
@@ -141,29 +148,24 @@ export async function scrapeFilmSources(
     }
     return { streams, failures };
   };
-  const publish = () => { options.onPartial?.(collect()); };
+  const run = async (source: FilmSource) => {
+    if (options.signal?.aborted) return;
+    try {
+      answers.set(source.id, await ask(source));
+    } catch (reason) {
+      answers.set(source.id, reason instanceof Error ? reason : new Error(String(reason)));
+    }
+    if (!options.signal?.aborted && options.onPartial) options.onPartial(collect());
+  };
 
-  const longJob = (async () => {
-    const settled = await Promise.allSettled(longLane.map(ask));
-    settled.forEach((result, index) => {
-      const source = longLane[index];
-      answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
-    });
-    if (longLane.length) publish();
-  })();
-
-  const CONCURRENCY = 8;
-  for (let offset = 0; offset < wavable.length; offset += CONCURRENCY) {
-    const wave = wavable.slice(offset, offset + CONCURRENCY);
-    const settled = await Promise.allSettled(wave.map(ask));
-    settled.forEach((result, index) => {
-      const source = wave[index];
-      answers.set(source.id, result.status === 'fulfilled' ? result.value : new Error(String(result.reason?.message || result.reason)));
-    });
-    // Each wave is visible immediately; the last one is the full list.
-    publish();
-  }
-  await longJob;
+  const work = wavable.values();
+  const worker = async () => {
+    for (const source of work) {
+      if (options.signal?.aborted) return;
+      await run(source);
+    }
+  };
+  await Promise.all([...longLane.map(run), ...Array.from({ length: Math.min(8, wavable.length) }, worker)]);
 
   return collect();
 }

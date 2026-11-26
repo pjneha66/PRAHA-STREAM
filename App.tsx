@@ -5,6 +5,7 @@ import HomeView from './components/HomeView';
 import EmbedModal from './components/EmbedModal';
 import DiscoverView from './components/DiscoverView';
 import LibraryView from './components/LibraryView';
+import { readingKey, type ReadingEntry } from './services/readingLibrary';
 import ExtensionsView from './components/ExtensionsView';
 import CloudStreamView from './components/CloudStreamView';
 import ExploreView from './components/ExploreView';
@@ -360,6 +361,14 @@ const App: React.FC = () => {
     : `praha.v2.profile.${activeProfile.id}.history`;
 
   const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>(watchlistKey, []);
+  const [savedReading, setSavedReading] = usePersistentState<ReadingEntry[]>(`${watchlistKey}.reading`, []);
+  const [readingTarget, setReadingTarget] = useState<ReadingEntry | null>(null);
+  const toggleReading = (entry: ReadingEntry) => {
+    const key = readingKey(entry);
+    setSavedReading((current) => current.some((item) => readingKey(item) === key)
+      ? current.filter((item) => readingKey(item) !== key)
+      : [entry, ...current]);
+  };
   const [history, setHistory] = usePersistentState<WatchProgress[]>(historyKey, []);
   const recentTitles = useMemo(() => {
     const latest = new Map<string, WatchProgress>();
@@ -559,6 +568,9 @@ const App: React.FC = () => {
         setSelected(null);
         return;
       }
+      const pageClose = [...document.querySelectorAll<HTMLButtonElement>('[data-android-back]')].reverse()
+        .find((button) => button.getClientRects().length > 0);
+      if (pageClose) { pageClose.click(); return; }
       if (viewRef.current !== 'home') {
         setView('home');
         return;
@@ -854,6 +866,8 @@ const App: React.FC = () => {
     // player returns instantly), so a tab change must dismiss it explicitly —
     // otherwise its overlay would sit on top of the newly selected page.
     setSourceState(null);
+    setEmbedState(null);
+    setReadingTarget(null);
     setView(next);
     window.scrollTo({ top: 0, behavior: settings.reduceMotion ? 'auto' : 'smooth' });
   };
@@ -1110,7 +1124,6 @@ const App: React.FC = () => {
     const media = embedStateRef.current?.media;
     if (!media) return;
     rememberPlaybackOrigin(null);
-    setEmbedState(null);
     startVideo({ media, stream, season, episode, episodeTitle, alternatives });
   };
 
@@ -1305,6 +1318,7 @@ const App: React.FC = () => {
     setProfiles((cur) => cur.filter((p) => p.id !== profileId));
     try {
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.watchlist`);
+      window.localStorage.removeItem(`praha.v2.profile.${profileId}.watchlist.reading`);
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.history`);
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.home-rows`);
       window.localStorage.removeItem(`praha.v2.profile.${profileId}.preferred-source`);
@@ -1429,6 +1443,9 @@ const App: React.FC = () => {
   } else if (view === 'sanka') {
     page = (
       <SankaExplorer
+        savedReading={savedReading}
+        onToggleReading={toggleReading}
+        openReading={readingTarget?.kind === 'sanka' ? readingTarget : null}
         prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
       />
     );
@@ -1437,6 +1454,9 @@ const App: React.FC = () => {
     // The Comics tab above keeps Sanka/Comick untouched.
     page = (
       <MangaView
+        savedReading={savedReading}
+        onToggleReading={toggleReading}
+        openReading={readingTarget?.kind === 'manga' ? readingTarget : null}
         prefillQuery={searchPrefill?.view === 'manga' ? searchPrefill.term : undefined}
       />
     );
@@ -1471,6 +1491,9 @@ const App: React.FC = () => {
   } else if (view === 'books') {
     page = (
       <BooksView
+        savedReading={savedReading}
+        onToggleReading={toggleReading}
+        openReading={readingTarget?.kind === 'books' ? readingTarget : null}
         compact={settings.compactCards}
         prefillQuery={searchPrefill?.view === 'books' ? searchPrefill.term : undefined}
       />
@@ -1521,6 +1544,9 @@ const App: React.FC = () => {
   } else if (view === 'library') {
     page = (
       <LibraryView
+        savedReading={savedReading}
+        onToggleReading={toggleReading}
+        onOpenReading={(entry) => { navigate(entry.kind); setReadingTarget(entry); }}
         watchlist={watchlist}
         history={recentTitles}
         profileName={activeProfile.name}
@@ -1657,7 +1683,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} lastSource={lastSourceFor(embedState.media)} onClose={() => setEmbedState(null)} onPlay={playStreamFromEmbed} />}
+      {embedState && <EmbedModal suspended={Boolean(player)} media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} lastSource={lastSourceFor(embedState.media)} onClose={() => setEmbedState(null)} onPlay={playStreamFromEmbed} />}
 
       {sourceState && (
         <SourceModal

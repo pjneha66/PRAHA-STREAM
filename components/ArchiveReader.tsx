@@ -252,7 +252,7 @@ const ArchiveReader: React.FC<{
         >
           <Globe size={15} />
         </button>
-        <button type="button" className="icon-button" aria-label="Close reader" onClick={onClose}>
+        <button type="button" className="icon-button" aria-label="Close reader" onClick={onClose} data-android-back>
           <X size={16} />
         </button>
       </div>

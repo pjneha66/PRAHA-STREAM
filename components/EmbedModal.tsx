@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, ChevronDown, CircleAlert, ExternalLink, Globe, LoaderCircle, Play,
-  RefreshCw, ShieldCheck, Sparkles, Trash2, X,
+  RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, X,
 } from 'lucide-react';
 import type { MediaItem, StreamResult } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -11,13 +12,13 @@ import { tmdbService } from '../services/tmdbService';
 import { DEFAULT_EMBED_UPDATE_URL, EMBED_UPDATE_INTERVAL, fetchEmbedUpdate, validateUpdateUrl, type TemplateOverrides } from '../services/embedUpdates';
 import { filmQueryFromMedia, scrapeFilmSources } from '../services/sourceOrchestrator';
 import { sourceKey } from '../services/sourcePreferences';
-import { FILM_SOURCES } from '../services/filmSources';
 
 interface EmbedModalProps {
   media: MediaItem;
   initialSeason?: number;
   initialEpisode?: number;
   lastSource?: string;
+  suspended?: boolean;
   onClose: () => void;
   /** Hands a VyseTV scraper result to the real player instead of an iframe. */
   onPlay?: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
@@ -26,6 +27,7 @@ interface EmbedModalProps {
 /** One source's results, so the list reads as "who found what" instead of a flat dump. */
 interface SourceGroup {
   sourceName: string;
+  torrent: boolean;
   streams: StreamResult[];
 }
 
@@ -52,7 +54,7 @@ function clampPositiveInt(raw: string, current: number): number {
  * direct results come first (they are real streams, not iframes), and the embed
  * sites sit below them as a clearly-labelled fallback — never mixed in.
  */
-const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, lastSource, onClose, onPlay }) => {
+const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, lastSource, suspended = false, onClose, onPlay }) => {
   const [custom, setCustom] = usePersistentState<EmbedProvider[]>('praha.v2.embed-providers', []);
   const [overrides, setOverrides] = usePersistentState<Record<string, { movie: string; series: string }>>('praha.v2.embed-overrides', {});
   const [updateConfig, setUpdateConfig] = usePersistentState<{ enabled: boolean; url: string }>('praha.v2.embed-update-config', { enabled: true, url: DEFAULT_EMBED_UPDATE_URL });
@@ -73,6 +75,8 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
   const [name, setName] = useState('');
   const [movie, setMovie] = useState('');
   const [series, setSeries] = useState('');
+  const embedSites = useRef<HTMLElement>(null);
+  const [openingProvider, setOpeningProvider] = useState('');
   const [query, setQuery] = useState('');
 
   // VyseTV's sources — Movy and Knaben included — are the preferred ones. Their
@@ -84,20 +88,21 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
   const [vyseKey, setVyseKey] = useState(0);
 
   useEffect(() => {
-    let active = true;
+    const controller = new AbortController();
     setVyseLoading(true);
     setVyseStreams([]);
     setVyseFailures(0);
     const filmQuery = filmQueryFromMedia(media, media.type === 'series' ? season : undefined, media.type === 'series' ? episode : undefined);
-    scrapeFilmSources(filmQuery)
-      .then((result) => {
-        if (!active) return;
-        setVyseStreams(result.streams);
-        setVyseFailures(result.failures.length);
-      })
-      .catch(() => { if (active) setVyseFailures(1); })
-      .finally(() => { if (active) setVyseLoading(false); });
-    return () => { active = false; };
+    const publish = (result: Awaited<ReturnType<typeof scrapeFilmSources>>) => {
+      if (controller.signal.aborted) return;
+      setVyseStreams(result.streams);
+      setVyseFailures(result.failures.length);
+    };
+    scrapeFilmSources(filmQuery, { signal: controller.signal, onPartial: publish })
+      .then(publish)
+      .catch(() => { if (!controller.signal.aborted) setVyseFailures(1); })
+      .finally(() => { if (!controller.signal.aborted) setVyseLoading(false); });
+    return () => controller.abort();
   }, [media, season, episode, vyseKey]);
 
   useEffect(() => { setFeedDraft(updateConfig.url || ''); }, [updateConfig.url]);
@@ -139,11 +144,12 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
     return () => { active = false; };
   }, [media]);
   useEffect(() => {
+    if (suspended) return;
     const handle = (event: KeyboardEvent) => { if (event.key === 'Escape') { if (frame) setFrame(null); else onClose(); } };
     window.addEventListener('keydown', handle);
     document.body.classList.add('modal-open');
     return () => { window.removeEventListener('keydown', handle); document.body.classList.remove('modal-open'); };
-  }, [frame, onClose]);
+  }, [frame, onClose, suspended]);
 
   const remote = updateConfig.enabled && updateCache.url === updateConfig.url ? updateCache.providers : {};
   const remotePresets = applyEmbedOverrides(EMBED_PRESETS, remote);
@@ -158,11 +164,13 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
     const out: SourceGroup[] = [];
     const index = new Map<string, number>();
     for (const stream of rankedStreams) {
-      const key = stream.provider || stream.sourceName;
+      const sourceName = stream.provider || stream.sourceName;
+      const torrent = Boolean(stream.infoHash);
+      const key = JSON.stringify([sourceName, torrent]);
       const at = index.get(key);
       if (at === undefined) {
         index.set(key, out.length);
-        out.push({ sourceName: key, streams: [stream] });
+        out.push({ sourceName, torrent, streams: [stream] });
       } else {
         out[at].streams.push(stream);
       }
@@ -171,10 +179,12 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
   }, [rankedStreams]);
 
   const torrentCount = vyseStreams.filter((stream) => Boolean(stream.infoHash)).length;
+  const directCount = vyseStreams.length - torrentCount;
 
   const start = async (provider: EmbedProvider, external: boolean) => {
     setError('');
     setPendingExternal(null);
+    setOpeningProvider(provider.id);
     let item = resolved;
     let resolvedAsync = false;
     const template = media.type === 'series' ? provider.series : provider.movie;
@@ -197,6 +207,7 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
         if (!(await openProtectedEmbed(url))) setError('Could not open the protected player. Update the Android app or use Browser.');
       } else setFrame({ url, name: provider.name });
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not build the player URL.'); }
+    finally { setOpeningProvider(''); }
   };
   const edit = (provider: EmbedProvider) => {
     setEditing(provider); setEditMovie(provider.movie); setEditSeries(provider.series); setError('');
@@ -236,20 +247,47 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
     onPlay(stream, media.type === 'series' ? season : undefined, media.type === 'series' ? episode : undefined, undefined, alternatives);
   };
 
-  const hasDirect = vyseStreams.length > 0;
+  const sourceGroups = (torrent: boolean) => (
+    <div className="source-groups">
+      {groups.filter((group) => group.torrent === torrent).map((group) => (
+        <div className="source-group" key={group.sourceName}>
+          <div className="source-group-head">
+            <strong>{group.sourceName}</strong>
+            <small>{group.streams.length} {group.streams.length === 1 ? 'stream' : 'streams'}</small>
+          </div>
+          <div className="source-group-list">
+            {group.streams.slice(0, 12).map((stream, index) => (
+              <div className="source-row" key={`${stream.id}-${index}`}>
+                <div className="source-row-info">
+                  <strong>{stream.title}</strong>
+                  <small>
+                    {[stream.quality, stream.language, stream.size, stream.seeders !== undefined ? `${stream.seeders} seeders` : undefined, torrent ? 'torrent' : stream.format].filter(Boolean).join(' · ') || 'Stream'}
+                  </small>
+                </div>
+                <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, rankedStreams.filter((candidate) => candidate !== stream && Boolean(candidate.infoHash) === torrent))}>
+                  <Play size={14} /> Play
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
-  return <div className="modal-backdrop source-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+  return createPortal(<div className={`modal-backdrop source-backdrop embed-backdrop${suspended ? ' source-suspended' : ''}`} aria-hidden={suspended || undefined} inert={suspended || undefined} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="source-modal embed-modal" role="dialog" aria-modal="true" aria-label={`Sources and embedded players for ${media.title}`}>
       <header className="source-header embed-header">
         <div className="embed-header-copy">
-          <span className="page-kicker">FALLBACK PLAYER</span>
+          <span className="page-kicker">PLAYBACK SOURCES</span>
           <h2>{media.title}</h2>
           <div className="source-header-meta">
             {media.year && <span>{media.year}</span>}
             <span>{media.type === 'movie' ? 'Movie' : 'Series'}</span>
-            <span>{FILM_SOURCES.length} built-in sources</span>
           </div>
         </div>
+        {!frame && <button type="button" className="button button-secondary button-small embed-jump"
+          onClick={() => embedSites.current?.scrollIntoView({ block: 'start' })}>Embed sites</button>}
         <button className="modal-close" onClick={onClose} aria-label="Close sources"><X size={20} /></button>
       </header>
 
@@ -275,14 +313,16 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
         />
         <p className="embed-frame-note"><CircleAlert size={13} /> Some sites block embedding or need cookies. If it does not load, use “Open in browser”. PRAHA cannot verify iframe playback or save its progress.</p>
       </div> : <>
-        {media.type === 'series' && <div className="embed-episode">
-          {/* `Number('')` is 0 and `Number('1.5')` is 1.5; both reach
-              buildEmbedUrl, which throws on anything but a positive integer.
-              Clamping on the way in keeps the state valid at all times, so the
-              user can clear the box to retype without an error flash. */}
-          <label>Season <input type="number" min="1" value={season} onChange={(e) => setSeason(clampPositiveInt(e.target.value, season))} /></label>
-          <label>Episode <input type="number" min="1" value={episode} onChange={(e) => setEpisode(clampPositiveInt(e.target.value, episode))} /></label>
-        </div>}
+        {media.type === 'series' && <form className="embed-episode" onSubmit={(event) => {
+          event.preventDefault();
+          const fields = new FormData(event.currentTarget);
+          setSeason(clampPositiveInt(String(fields.get('season')), season));
+          setEpisode(clampPositiveInt(String(fields.get('episode')), episode));
+        }} key={`${season}:${episode}`}>
+          <label>Season <input name="season" type="number" min="1" required defaultValue={season} /></label>
+          <label>Episode <input name="episode" type="number" min="1" required defaultValue={episode} /></label>
+          <button type="submit" className="button button-secondary button-small">Apply</button>
+        </form>}
 
         <div className="embed-body">
           {/* Direct results first: they play in the real player, so they beat any
@@ -293,52 +333,28 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
               <div className="embed-block-title">
                 <span className="embed-block-icon direct"><Sparkles size={16} /></span>
                 <div>
-                  <h3>Direct sources <span className={`embed-block-count ${hasDirect ? 'ok' : ''}`}>{vyseStreams.length}</span></h3>
-                  <p>These streams play in PRAHA’s video player.</p>
+                  <h3>Direct sources <span className={`embed-block-count ${directCount ? 'ok' : ''}`}>{directCount}</span></h3>
+                  <p>Play in PRAHA’s video player.</p>
                 </div>
               </div>
-              <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Search the sources again">
-                <RefreshCw size={14} className={vyseLoading ? 'spin' : undefined} /> Retry
-              </button>
+              {!vyseLoading && <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Search the sources again">
+                <RefreshCw size={14} /> Retry
+              </button>}
             </div>
 
-            {vyseLoading && <p className="embed-status"><LoaderCircle size={15} className="spin" /> Searching {FILM_SOURCES.length} sources…</p>}
-            {!vyseLoading && !vyseStreams.length && <p className="embed-status">Nothing direct{vyseFailures ? ` · ${vyseFailures} sources failed` : ''}. Use an embed site below.</p>}
+            {vyseLoading && <p className="embed-status"><LoaderCircle size={15} className="spin" /> Checking sources…</p>}
+            {!vyseLoading && directCount === 0 && <p className="embed-status">Nothing direct{vyseFailures ? ` · ${vyseFailures} sources failed` : ''}. Use an embed site below.</p>}
 
-            {hasDirect && <div className="source-groups">
-              {groups.map((group) => <div className="source-group" key={group.sourceName}>
-                <div className="source-group-head">
-                  <strong>{group.sourceName}</strong>
-                  <small>{group.streams.length} {group.streams.length === 1 ? 'stream' : 'streams'}</small>
-                </div>
-                <div className="source-group-list">
-                  {group.streams.slice(0, 12).map((stream, index) => {
-                    const torrent = Boolean(stream.infoHash);
-                    return <div className="source-row" key={`${stream.id}-${index}`}>
-                      <div className="source-row-info">
-                        <strong>{stream.title}</strong>
-                        <small>
-                          {[stream.quality, stream.language, stream.size, stream.seeders !== undefined ? `${stream.seeders} seeders` : undefined, torrent ? 'torrent' : stream.format].filter(Boolean).join(' · ') || 'Stream'}
-                        </small>
-                      </div>
-                      <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, rankedStreams.filter((candidate) => candidate !== stream))}>
-                        <Play size={14} /> Play
-                      </button>
-                    </div>;
-                  })}
-                </div>
-              </div>)}
-            </div>}
-            {torrentCount > 0 && <p className="embed-status note">{torrentCount} torrent {torrentCount === 1 ? 'result needs' : 'results need'} P2P streaming or a debrid service to play.</p>}
+            {directCount > 0 && sourceGroups(false)}
           </section>
 
-          <section className="embed-block" aria-label="Embed sites">
+          <section className="embed-block embed-sites" aria-label="Embed sites" ref={embedSites}>
             <div className="embed-block-head">
               <div className="embed-block-title">
                 <span className="embed-block-icon fallback"><Globe size={16} /></span>
                 <div>
                   <h3>Embed sites <span className="embed-block-count">{providers.length}</span></h3>
-                  <p>Third-party websites, not verified streams. Use these only if nothing above plays.</p>
+                  <p>Open a provider website in the in-app player.</p>
                 </div>
               </div>
               <label className="embed-filter">
@@ -352,15 +368,16 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
                 const isCustom = provider.id.startsWith('custom-');
                 const edited = Boolean(overrides && Object.prototype.hasOwnProperty.call(overrides, provider.id));
                 const fromFeed = Boolean(remote && Object.prototype.hasOwnProperty.call(remote, provider.id));
+                const template = media.type === 'series' ? provider.series : provider.movie;
                 return <article className={`embed-card${isCustom ? ' embed-card-custom' : ''}`} key={provider.id}>
                   <div className="embed-card-head">
                     <strong>{provider.name}</strong>
-                    <small>{isCustom ? 'Your player' : edited ? 'Edited locally' : fromFeed ? 'Feed updated' : hostOf(provider.movie)}</small>
+                    <small>{hostOf(template)}{isCustom ? ' · Custom' : edited ? ' · Edited' : fromFeed ? ' · Updated' : ''}</small>
                   </div>
                   <div className="embed-card-actions">
-                    <button className="button button-primary button-small" onClick={() => void start(provider, false)}><Play size={14} /> {isAndroidApp() ? 'Protected player' : 'Open here'}</button>
-                    <button className="button button-secondary button-small" onClick={() => void start(provider, true)} aria-label={`Open ${provider.name} in browser`}>Browser <ExternalLink size={13} /></button>
-                    <button className="button button-secondary button-small" onClick={() => edit(provider)} aria-label={`Edit ${provider.name} templates`}>Edit</button>
+                    <button className="button button-primary button-small" disabled={Boolean(openingProvider)} onClick={() => void start(provider, false)}>{openingProvider === provider.id ? <LoaderCircle size={14} className="spin" /> : <Play size={14} />} Open player</button>
+                    <button className="button button-secondary button-small" disabled={Boolean(openingProvider)} onClick={() => void start(provider, true)} aria-label={`Open ${provider.name} in browser`}>Browser <ExternalLink size={13} /></button>
+                    <button className="icon-button" onClick={() => edit(provider)} aria-label={`Edit ${provider.name} templates`}><Settings2 size={16} /></button>
                     {isCustom && <button className="icon-button" aria-label={`Remove ${provider.name}`} onClick={() => setCustom((current) => current.filter((item) => item.id !== provider.id))}><Trash2 size={15} /></button>}
                   </div>
                 </article>;
@@ -368,6 +385,12 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
               {!providers.length && <p className="embed-status">No matching players.</p>}
             </div>
           </section>
+
+          {torrentCount > 0 && <details className="embed-block embed-torrents">
+            <summary>Torrent sources ({torrentCount})</summary>
+            <p className="embed-status">Requires P2P streaming or a debrid service.</p>
+            {sourceGroups(true)}
+          </details>}
 
           {editing && <div className="embed-add embed-edit-open">
             <strong>Update {editing.name}</strong>
@@ -401,6 +424,6 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
         </div>
       </>}
     </section>
-  </div>;
+  </div>, document.body);
 };
 export default EmbedModal;

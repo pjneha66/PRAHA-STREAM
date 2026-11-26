@@ -4,7 +4,7 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface for Strem
 
 **No media is bundled in this repository.** Every title, poster, trailer, cast list, rating, and backdrop is fetched live from TMDB with your own API key, and every stream comes from the addons/repositories you install.
 
-Current version: **2.11.31** · Android phone release: [v2.11.31](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/android-phone-v2.11.31)
+Current version: **2.11.32** · Android phone release: [v2.11.32](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/android-phone-v2.11.32)
 
 ---
 

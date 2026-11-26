@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import React, { useEffect, useState } from 'react';
 import { MonitorPlay } from 'lucide-react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
@@ -188,6 +189,7 @@ const SourceModal: React.FC<{
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     let loadingCleared = false;
     const clearLoading = () => {
       if (cancelled || loadingCleared) return;
@@ -278,14 +280,15 @@ const SourceModal: React.FC<{
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
 
         // Stage 1 — the VyseTV scrapers (see FILM_SOURCES) plus Movy. They
-        // publish as they finish in waves, and rankStreams keeps them at the top
+        // publish as each source finishes, and rankStreams keeps them at the top
         // of the list. Movy and Knaben have their own longer budgets, so their
         // results arrive last; the fast scrapers must not be held back waiting
         // for them.
         const filmJob = extensionOnly ? Promise.resolve() : runProvider('vysetv:scrapers', async () => {
           const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep), {
+            signal: controller.signal,
             onPartial: (partial) => {
-              // Publish each wave as it lands, but keep the provider's health
+              // Publish each result as it lands, but keep the provider's health
               // entry as "searching" until the full list arrives.
               if (!cancelled && partial.streams.length) publish({ streams: partial.streams, errors: [] });
             },
@@ -305,18 +308,20 @@ const SourceModal: React.FC<{
         // whatever prefix a stream addon happens to accept. `addonTarget`
         // resolves the episode's own video id, and `streamAskFor` picks, per
         // addon, the first id that addon declared it understands.
-        const metaTarget = media.source === 'stremio' && media.addonUrl
-          ? await addonTarget(media, addons, media.type === 'series' ? { season: s, episode: ep } : undefined)
+        const metaTargetJob = media.source === 'stremio' && media.addonUrl
+          ? addonTarget(media, addons, media.type === 'series' ? { season: s, episode: ep } : undefined)
             .catch(() => null)
-          : null;
-        const streamAsk = metaTarget
-          ? (addon: InstalledAddon) => {
-            const id = streamIdFor(addon, metaTarget);
-            return id ? { id, type: metaTarget.type } : null;
-          }
-          : undefined;
-
+          : Promise.resolve(null);
         const stremioJob = extensionOnly ? Promise.resolve() : (async () => {
+          const metaTarget = await metaTargetJob;
+          if (cancelled) return;
+          const streamAsk = metaTarget
+            ? (addon: InstalledAddon) => {
+                const id = streamIdFor(addon, metaTarget);
+                return id ? { id, type: metaTarget.type } : null;
+              }
+            : undefined;
+
           const imdbId = streamAsk ? undefined : knownImdb || (await idJob).imdbId;
           const resolved = streamAsk ? media : { ...media, imdbId: imdbId || media.imdbId };
           await Promise.all(enabledAddons.map((addon) => {
@@ -404,6 +409,8 @@ const SourceModal: React.FC<{
           if (!pluginRepos.length) return;
           // One of a plugin's own titles (from its catalog): that plugin alone,
           // asked by the id it gave it — the site's own link, not a name search.
+          const metaTarget = await metaTargetJob;
+          if (cancelled) return;
           const own = pluginCatalogs.pluginOwnOf(media, metaTarget?.video);
           const query = buildPluginQuery({
             tmdbId: media.tmdbId ?? (media.id.startsWith('tmdb:') ? Number(media.id.slice(5)) : null),
@@ -459,7 +466,7 @@ const SourceModal: React.FC<{
       }
     };
     void load();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [media, season, episode, requestKey, addons, repositories, pluginRepositories, nuvioSettings]);
   useEffect(() => {
     if (suspended) return;
@@ -483,7 +490,7 @@ const SourceModal: React.FC<{
   const currentEpTitle = episodes.find((e) => e.episode === episode)?.title
     ?? (season === initialSeason && episode === initialEpisode ? initialEpisodeTitle : undefined);
 
-  return (
+  return createPortal(
     <div
       className={`modal-backdrop source-backdrop ${suspended ? 'source-suspended' : ''}`}
       onMouseDown={(event) => event.target === event.currentTarget && !suspended && onClose()}
@@ -532,7 +539,8 @@ const SourceModal: React.FC<{
           </div>
         )}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

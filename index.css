@@ -393,7 +393,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .media-card:hover .watchlist-button, .watchlist-button.selected, .watchlist-button:focus-visible { opacity: 1; }
 .watchlist-button:hover, .watchlist-button.selected { color: var(--accent); background: rgba(8,9,10,.86); }
 .media-card-copy { display: flex; flex-direction: column; width: 100%; padding: 10px 3px 0; background: none; text-align: left; }
-.media-card-copy strong { overflow: hidden; color: #eef1f4; font-size: 13px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.media-card-copy strong { max-width: 100%; overflow: hidden; color: #eef1f4; font-size: 13px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .media-card-copy > span { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: #9097a0; font-size: 11px; }
 .media-card-copy i { width: 2px; height: 2px; border-radius: 50%; background: #5e646c; }
 .artwork-fallback { display: flex; align-items: center; justify-content: center; padding: 20px; background: radial-gradient(circle at 80% 0, rgba(var(--accent-rgb), .15), transparent 50%), linear-gradient(145deg, #242a30, #111316); color: #bbc1c6; text-align: center; }
@@ -1176,7 +1176,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .reader-zoom-controls button:disabled { opacity: .5; }
 .sanka-page-fallback { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(100%,640px); margin: 14px auto; padding: 24px 16px; border: 1px dashed var(--line-strong); border-radius: 12px; background: #101216; color: var(--muted); font-size: 12px; }
 .sanka-page-fallback > div { display: flex; gap: 8px; }
-.sanka-reader-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding: 10px 14px max(10px,env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #101216; }
+.sanka-reader-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding: 10px 14px max(10px,var(--phone-safe-bottom)); border-top: 1px solid var(--line); background: #101216; }
 .sanka-reader-footer > span { color: var(--muted); font-size: 11px; text-align: center; }
 .sanka-reader-footer .button { min-height: 36px; padding: 0 12px; font-size: 11px; }
 .sanka-reader-loading { position: fixed; inset: 0; z-index: 140; display: flex; align-items: center; justify-content: center; gap: 9px; background: rgba(6,7,9,.75); color: var(--text); font-size: 12px; }
@@ -1406,14 +1406,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    the full-screen shell to its content width (broke the error/panels). */
 .archive-reader-shell.archive-reader-shell { align-items: stretch; justify-content: flex-start; padding: 0; }
 .archive-reader-shell > div { width: 100%; }
-.archive-reader-bar { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; min-height: 52px; padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; border-bottom: 1px solid var(--line); background: var(--bg-soft); }
+.archive-reader-bar { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; min-height: 52px; padding: calc(8px + var(--phone-safe-top)) 12px 8px; border-bottom: 1px solid var(--line); background: var(--bg-soft); }
 .archive-reader-bar strong { color: var(--text); font-size: 13px; font-weight: 640; }
 .archive-reader-bar .icon-button { width: 34px; height: 34px; }
 .archive-mode-pills { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .archive-mode-pills button { padding: 4px 10px; border-radius: 6px; color: var(--muted); font-size: 10px; font-weight: 650; background: transparent; }
 .archive-mode-pills button.active { background: rgba(var(--accent-rgb), .12); color: var(--accent); }
 .archive-scroll-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; }
-.archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+.archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; padding-bottom: calc(60px + var(--phone-safe-bottom)); }
 .archive-leaf { min-height: 40px; width: min(calc(100% * var(--reader-zoom)), calc(820px * var(--reader-zoom))); margin: 0 auto; }
 .archive-leaf img { display: block; width: 100%; height: auto; margin: 0 auto; background: #0c0e11; }
 .archive-scroll-body { overflow-anchor: none; }
@@ -1423,7 +1423,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .archive-paged-zone { position: fixed; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; align-items: center; justify-content: center; width: 46px; height: 74px; border-radius: 12px; background: rgba(12, 14, 17, .72); color: var(--text); backdrop-filter: blur(2px); }
 .archive-paged-prev { left: 10px; }
 .archive-paged-next { right: 10px; }
-.archive-reader-scrub { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7; display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); background: rgba(9, 10, 12, .92); backdrop-filter: blur(4px); }
+.archive-reader-scrub { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7; display: flex; align-items: center; gap: 12px; padding: 10px 14px calc(10px + var(--phone-safe-bottom)); border-top: 1px solid var(--line); background: rgba(9, 10, 12, .92); backdrop-filter: blur(4px); }
 .archive-page-label { flex: 0 0 auto; min-width: 82px; color: var(--muted); font-size: 11px; }
 .archive-reader-scrub input[type='range'] { flex: 1; min-width: 0; }
 .archive-fallback-banner { position: absolute; left: 0; right: 0; bottom: 62px; z-index: 8; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: rgba(9, 10, 12, .92); color: var(--muted); font-size: 11px; }
@@ -3617,3 +3617,94 @@ html.player-vlc-active .app-shell,
   .plugin-browser-grid { grid-template-columns: 1fr; }
 }
 
+
+:root {
+  --phone-safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --phone-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  --phone-safe-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --phone-safe-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+}
+.source-backdrop .source-header, .embed-modal .embed-header { position: sticky; top: 0; z-index: 4; background: #101216; }
+.embed-modal .embed-header h2 { white-space: normal; overflow-wrap: anywhere; }
+.embed-modal .embed-episode { flex-wrap: wrap; align-items: center; padding: 12px 20px 0; }
+.embed-episode input { width: 3.5rem; }
+.embed-card-actions .button { min-height: 42px; }
+.embed-card-actions .icon-button { margin-left: auto; }
+.embed-sites { scroll-margin-top: 108px; }
+.embed-torrents summary { cursor: pointer; font-weight: 650; }
+.embed-jump { white-space: nowrap; }
+.publication-issue { padding: 22px; }
+.publication-issue h2 { padding-right: 44px; overflow-wrap: anywhere; }
+.sanka-search > svg, .sanka-search > button { flex-shrink: 0; }
+.sanka-search { min-height: 48px; }
+.sanka-search .button { min-height: 36px; }
+.chapter-order { min-width: 0; }
+.reading-library { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.reading-library li { display: flex; align-items: center; justify-content: space-between; min-width: 0; padding: 10px; gap: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-soft); }
+.reading-library-title { display: flex; align-items: center; text-align: left; gap: 12px; min-width: 0; flex: 1; }
+.reading-library-title img { width: 42px; height: 60px; object-fit: cover; border-radius: 4px; }
+.reading-library-title span { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.reading-library-title small { color: var(--muted); }
+.reading-library li > button:last-child { flex-shrink: 0; }
+.mr-back-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+@media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+  html { overflow-x: clip; }
+  .topbar { padding-top: max(14px, var(--phone-safe-top)); }
+  .mobile-nav {
+    width: calc(100dvw - 28px - var(--phone-safe-left) - var(--phone-safe-right));
+    left: calc(14px + var(--phone-safe-left));
+    right: auto;
+    bottom: max(14px, calc(var(--phone-safe-bottom) + 8px));
+  }
+  .modal-backdrop, .sanka-modal-backdrop {
+    padding: calc(var(--phone-safe-top) + 6px) max(8px, var(--phone-safe-right))
+      calc(var(--phone-safe-bottom) + 6px) max(8px, var(--phone-safe-left));
+  }
+  body:has(> .source-backdrop:not(.source-suspended)) > #root { visibility: hidden; contain: paint; }
+  .modal-backdrop.source-backdrop {
+    inset: 0 auto auto 0;
+    width: 100dvw;
+    height: 100dvh;
+    padding: var(--phone-safe-top) var(--phone-safe-right) var(--phone-safe-bottom) var(--phone-safe-left);
+    background: #101216;
+    backdrop-filter: none;
+    animation: none;
+    contain: paint;
+  }
+  .modal-backdrop.details-modal-shell {
+    padding: var(--phone-safe-top) var(--phone-safe-right) var(--phone-safe-bottom) var(--phone-safe-left);
+  }
+  .details-modal-shell .modal-close.floating {
+    position: sticky;
+    top: 8px;
+    margin: 8px 12px -52px auto;
+    width: 44px;
+    height: 44px;
+    background: #15171b;
+  }
+  .details-modal-shell .details-backdrop { height: clamp(146px, 30dvh, 215px); }
+  .details-modal-shell .details-poster { width: clamp(84px, 25vw, 110px); height: auto; }
+  .source-backdrop .source-modal, .manga-detail, .sanka-detail-modal, .books-sheet, .comic-archive-sheet {
+    max-height: 100%;
+  }
+  .source-backdrop .source-modal {
+    width: 100%; height: 100%; min-width: 0;
+    border: 0; border-radius: 0;
+    animation: none;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+  .embed-modal .source-header { gap: 8px; }
+  .embed-modal .embed-jump { min-height: 38px; padding-inline: 9px; }
+  .source-backdrop .modal-close, .books-sheet .modal-close, .manga-detail .modal-close, .sanka-detail-modal .modal-close, .comic-archive-sheet .modal-close { width: 44px; height: 44px; }
+  .embed-modal .embed-episode { padding-inline: 13px; gap: 8px; }
+  .embed-modal .embed-episode label { gap: 5px; }
+  .embed-modal .embed-episode .button { min-height: 38px; }
+  .embed-modal .embed-filter input, .sanka-search input { font-size: 16px; }
+  .embed-modal .embed-block-head > .button { align-self: flex-start; }
+  .sanka-catalog-controls > .source-select, .sanka-catalog-controls > .sanka-search { flex: 0 0 100%; width: 100%; }
+  .sanka-catalog-controls .source-select select { width: 100%; }
+  .sanka-fallback-note { margin-top: 10px; }
+  .sanka-results-heading { flex-wrap: wrap; gap: 8px; }
+  .library-tabs { flex-wrap: wrap; gap: 8px 14px; }
+}
