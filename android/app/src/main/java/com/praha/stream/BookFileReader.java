@@ -65,7 +65,6 @@ final class BookFileReader {
             })
             .followRedirects(false)
             .readTimeout(25, TimeUnit.SECONDS)
-            .callTimeout(5, TimeUnit.MINUTES)
             .build();
 
     private static final Set<File> ACTIVE_COMIC_FILES = new HashSet<>();
@@ -186,14 +185,18 @@ final class BookFileReader {
 
     private void download(String raw, String userAgent, String referer, DigestOutputStream output,
                           Consumer<String> onProgress) throws IOException {
-        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(5);
+        // FlorenFile free downloads can take over an hour near the reader size limit.
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(comicDownload ? 120 : 5);
         long usable = activity.getCacheDir().getUsableSpace();
         long limit = Math.min(MAX_BYTES, Math.max(0, usable - 32 * MIB));
         HttpUrl url = HttpUrl.parse(raw);
         HttpUrl referringPage = referer == null ? null : HttpUrl.parse(referer);
         for (int attempt = 0; attempt < 6; attempt++) {
             if (closed) throw new IOException("Reader closed");
-            if (url == null || url.port() != 443 || !EmbedBlocklist.isPublicHttps(Uri.parse(url.toString()))) break;
+            if (url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url.toString()))) break;
+            // Verified FlorenFile links use HTTPS on port 183 on their numbered file servers.
+            boolean florenFileServer = comicDownload && url.port() == 183 && url.host().matches("s[0-9]+\\.florenfile\\.com");
+            if (url.port() != 443 && !florenFileServer) break;
             Request.Builder request = new Request.Builder().url(url);
             if (userAgent != null && !userAgent.isEmpty()) request.header("User-Agent", userAgent);
             if (referringPage != null) {
