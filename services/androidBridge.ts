@@ -32,6 +32,9 @@ export interface PrahaNativeInterface {
   isTelevision(): boolean;
   openBrowser?(url: string): boolean;
   openProtectedEmbed?(url: string): boolean;
+  loadMoctaleMeter?(url: string): boolean;
+  cancelMoctaleMeter?(url: string): boolean;
+  openReaderFile?(url: string): boolean;
   openArchiveLoan?(url: string): boolean;
   openPrivateDnsSettings?(): boolean;
   configureAppDns?(provider: string, fallback: boolean): boolean;
@@ -322,9 +325,31 @@ export async function openProtectedEmbed(url: string): Promise<boolean> {
   } catch { return false; }
 }
 
+export async function loadAndroidMoctaleMeter(url: string): Promise<boolean> {
+  try {
+    if (bridgeRpcAvailable()) return Boolean(await prahaRpc<boolean>('loadMoctaleMeter', [url], 3000));
+    return Boolean(window.PrahaNative?.loadMoctaleMeter?.(url));
+  } catch { return false; }
+}
+
+export function cancelAndroidMoctaleMeter(url: string): void {
+  if (bridgeRpcAvailable()) prahaRpcFire('cancelMoctaleMeter', [url], 3000);
+  else window.PrahaNative?.cancelMoctaleMeter?.(url);
+}
+
 /** Publication links stay in the app on Android, including direct reader files. */
 export async function openPublicationUrl(url: string): Promise<boolean> {
   return isAndroidApp() ? openProtectedEmbed(url) : openSafeExternalUrl(url);
+}
+
+/** Open a resolved publication directly in the isolated Android file reader. */
+export async function openReaderFile(url: string): Promise<boolean> {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== 'https:' || target.username || target.password) return false;
+    if (bridgeRpcAvailable()) return Boolean(await prahaRpc<boolean>('openReaderFile', [target.href], 8000));
+    return Boolean(window.PrahaNative?.openReaderFile?.(target.href));
+  } catch { return false; }
 }
 
 export async function openArchiveLoan(url: string): Promise<boolean> {

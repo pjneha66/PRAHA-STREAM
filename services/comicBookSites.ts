@@ -1,5 +1,7 @@
 import { load } from 'cheerio';
-import { nativeFetchText, openPublicationUrl } from './androidBridge';
+import { openPublicationUrl, openReaderFile } from './androidBridge';
+import { fetchReadingPage } from './readingRelay';
+import type { BookFile } from './archiveService';
 import type { ComicLanguageFilter } from './comicLanguages';
 import type { SankaTitle, SankaTitlesPage } from './sankaService';
 
@@ -29,16 +31,19 @@ export function isComicBookSite(source: string): source is ComicBookSite {
   return Object.hasOwn(COMIC_BOOK_SITES, source);
 }
 
-export function comicBookSiteUrl(source: ComicBookSite, query: string, language: ComicLanguageFilter = 'all', page = 1): string {
+export function comicBookSiteUrl(source: ComicBookSite, query: string, language: ComicLanguageFilter = 'all', page = 1, books = false): string {
   const url = new URL('/', COMIC_BOOK_SITES[source].origin);
   if (source === 'annasarchive') {
     url.pathname = '/search';
-    url.searchParams.set('content', 'book_comic');
+    if (books) {
+      url.searchParams.append('content', 'book_fiction');
+      url.searchParams.append('content', 'book_nonfiction');
+    } else url.searchParams.set('content', 'book_comic');
     if (query) url.searchParams.set('q', query);
     if (language !== 'all') url.searchParams.set('lang', language);
     if (page > 1) url.searchParams.set('page', String(page));
   } else if (source === 'oceanofpdf') {
-    url.searchParams.set('s', query || 'comics');
+    url.searchParams.set('s', query || (books ? 'books' : 'comics'));
     if (page > 1) url.searchParams.set('paged', String(page));
   } else if (!query || source === 'getcomics') {
     if (page > 1) url.pathname = `/page/${page}/`;
@@ -59,18 +64,12 @@ export async function openComicBookSite(url: string): Promise<boolean> {
   return openPublicationUrl(url);
 }
 
-export async function loadComicBookSite(source: ComicBookSite, query: string, language: ComicLanguageFilter, page: number): Promise<SankaTitlesPage> {
-  if (source !== 'annasarchive' && language !== 'all' && !(language === 'en' && isComicDownloadSite(source))) {
+export async function loadComicBookSite(source: ComicBookSite, query: string, language: ComicLanguageFilter, page: number, books = false): Promise<SankaTitlesPage> {
+  if (source !== 'annasarchive' && language !== 'all' && !(language === 'en' && (isComicDownloadSite(source) || books))) {
     return { page, items: [], hasMore: false };
   }
-  const url = comicBookSiteUrl(source, query, language, page);
-  const response = await nativeFetchText(url, { timeoutMs: 6500 });
-  if (!response.ok) throw new Error('Open the site to browse its catalog.');
-
-  const $ = load(response.data);
-  if (!response.data || /ddos.guard|just a moment|verify you are human/i.test($('title').text())) {
-    throw new Error('The site requires a browser check.');
-  }
+  const url = comicBookSiteUrl(source, query, language, page, books);
+  const $ = load(await fetchReadingPage(source, url));
   const origin = COMIC_BOOK_SITES[source].origin;
   const items = new Map<string, SankaTitle>();
   const markup = CATALOG_MARKUP[source];
@@ -106,4 +105,41 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
           || $(link).text().trim() === String(page + 1);
       }),
   };
+}
+
+
+const fileExtension = /\.(pdf|epub|cbz|cbr|zip|rar)$/i;
+
+export async function loadPublicationFiles(source: ComicBookSite, location: string): Promise<BookFile[]> {
+  const page = new URL(location);
+  if (page.origin !== COMIC_BOOK_SITES[source].origin || page.username || page.password) return [];
+  const $ = load(await fetchReadingPage(source, page.href));
+  const files = new Map<string, BookFile>();
+  const add = (href: string | undefined, mayRedirect = false) => {
+    if (!href) return;
+    try {
+      const url = new URL(href, page);
+      if (url.protocol !== 'https:' || url.username || url.password) return;
+      const format = url.pathname.match(fileExtension)?.[1]?.toUpperCase();
+      if (!format && !mayRedirect) return;
+      if (mayRedirect && (url.origin !== page.origin || !url.pathname.startsWith('/dls/'))) return;
+      files.set(url.href, {
+        name: format ? decodeURIComponent(url.pathname.split('/').pop() || format) : 'Read comic',
+        format: format || 'Comic',
+        url: url.href,
+      });
+    } catch { /* Ignore malformed links. */ }
+  };
+  const content = $('article, main, .fullstory, .comics_full');
+  (content.length ? content : $('body')).find('a[href]').each((_, link) => {
+    add($(link).attr('href'), source === 'getcomics' && $(link).is('a.aio-red[title="DOWNLOAD NOW"]'));
+  });
+  return [...files.values()];
+}
+
+export async function readPublicationIssue(source: ComicBookSite, url: string): Promise<boolean> {
+  const files = await loadPublicationFiles(source, url);
+  const bestFile = files.find((file) => file.format !== 'ZIP' && file.format !== 'RAR') || files[0];
+  if (!bestFile) throw new Error('This issue has no direct reader file. Its download host may require a manual step.');
+  return openReaderFile(bestFile.url);
 }

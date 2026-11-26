@@ -11,6 +11,7 @@ import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
 import MangaView from './components/MangaView';
+import NovelsView from './components/NovelsView';
 import AudiobooksView from './components/AudiobooksView';
 import BooksView from './components/BooksView';
 import MusicView from './components/MusicView';
@@ -66,7 +67,7 @@ const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 // Loaded like `PlayerModal`, so neither is in the first bundle.
 const LiveTvPlayer = React.lazy(() => import('./components/player/LiveTvPlayer'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'discover', 'flow', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -1465,6 +1466,8 @@ const App: React.FC = () => {
     );
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
+  } else if (view === 'novels') {
+    page = <NovelsView />;
   } else if (view === 'books') {
     page = (
       <BooksView

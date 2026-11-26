@@ -2,21 +2,21 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BookOpen, ChevronLeft, LoaderCircle, RotateCcw, Search, X } from 'lucide-react';
 import { MangaService, type MangaChapter, type MangaItem } from '../services/mangaService';
 import MangaReader from './MangaReader';
+import { mangaDexCatalog, mangaDexDetail, mangaDexPages } from '../services/mangaDexService';
 import { NSFW_COPY } from '../services/nsfwGate';
 import './manga-view.css';
 
-/**
- * The Manga tab — WeebCentral only.
- *
- * PRAHA's Comics tab keeps Sanka/Comick exactly as it was. This view is the
- * separate Manga tab the port plan asks for: WeebCentral catalogue + the
- * VyseTV-style webtoon/paged chapter reader.
- */
-interface MangaViewProps {
-  prefillQuery?: string;
-}
+type MangaSource = 'WeebCentral' | 'MangaDex';
+interface MangaViewProps { prefillQuery?: string }
 
-const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
+const MangaView: React.FC<MangaViewProps> = (props) => {
+  const [source, setSource] = useState<MangaSource>('WeebCentral');
+  return <MangaCatalog key={source} {...props} source={source} onSourceChange={setSource} />;
+};
+
+const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceChange: (source: MangaSource) => void }> = ({
+  prefillQuery, source, onSourceChange,
+}) => {
   const [query, setQuery] = useState(prefillQuery || '');
   const [submitted, setSubmitted] = useState(prefillQuery || '');
   const [page, setPage] = useState(1);
@@ -37,21 +37,25 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
     setLoading(true);
     setError('');
     try {
-      const result = submitted
-        ? await MangaService.searchManga(submitted, reset ? 1 : page)
-        : await MangaService.getManga(reset ? 1 : page);
+      const nextPage = reset ? 1 : page + 1;
+      const result: MangaItem[] = source === 'MangaDex'
+        ? (await mangaDexCatalog(submitted, nextPage, 'popular', undefined, 'en')).items.map((item) => ({
+          id: item.slug, title: item.title, coverNormal: item.poster || '', coverSmall: item.poster || '',
+          type: item.comicType || 'Manga', url: '', synopsis: item.summary, year: item.year,
+        }))
+        : submitted ? await MangaService.searchManga(submitted, nextPage) : await MangaService.getManga(nextPage);
+      setPage(nextPage);
       if (reset) {
         setItems(result);
-        setPage(1);
       } else {
         setItems((current) => [...current, ...result]);
       }
     } catch {
-      setError('Could not reach WeebCentral. Try again in a moment.');
+      setError(`Could not reach ${source}. Try again in a moment.`);
     } finally {
       setLoading(false);
     }
-  }, [submitted, page]);
+  }, [submitted, page, source]);
 
   useEffect(() => {
     void load(true);
@@ -70,12 +74,18 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
     setChapters([]);
     setChaptersLoading(true);
     try {
-      const [full, list] = await Promise.all([
-        MangaService.getSeriesDetail(item.id),
-        MangaService.getChapters(item.id),
-      ]);
-      setDetail(full);
-      setChapters(list);
+      if (source === 'MangaDex') {
+        const full = await mangaDexDetail(item.id, undefined, 'en');
+        setDetail({ ...item, synopsis: full.summary, author: full.author, tags: full.genres });
+        setChapters(full.chapters.map((entry) => ({ id: entry.slug, name: entry.title, url: '' })));
+      } else {
+        const [full, list] = await Promise.all([
+          MangaService.getSeriesDetail(item.id),
+          MangaService.getChapters(item.id),
+        ]);
+        setDetail(full);
+        setChapters(list);
+      }
     } catch {
       // The card already carries enough detail to show the chapter list empty.
     } finally {
@@ -86,12 +96,14 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
   const openChapter = async (chapter: MangaChapter, index: number) => {
     setReaderLoading(true);
     try {
-      const images = await MangaService.getChapterImages(chapter.id);
+      const images = await (source === 'MangaDex' ? mangaDexPages(chapter.id) : MangaService.getChapterImages(chapter.id));
       if (!images.length) {
         setError('This chapter has no readable images right now.');
         return;
       }
       setReader({ chapter, images, index });
+    } catch {
+      setError('Could not load this chapter.');
     } finally {
       setReaderLoading(false);
     }
@@ -104,17 +116,19 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
     if (!next) return;
     setReaderLoading(true);
     try {
-      const images = await MangaService.getChapterImages(next.id);
+      const images = await (source === 'MangaDex' ? mangaDexPages(next.id) : MangaService.getChapterImages(next.id));
       if (images.length) setReader({ chapter: next, images, index: nextIndex });
+    } catch {
+      setError('Could not load this chapter.');
     } finally {
       setReaderLoading(false);
     }
-  }, [reader, chapters]);
+  }, [reader, chapters, source]);
 
   const heading = useMemo(() => {
     if (submitted) return `Results for “${submitted}”`;
-    return 'Popular manga on WeebCentral';
-  }, [submitted]);
+    return `Popular manga on ${source}`;
+  }, [submitted, source]);
 
   return (
     <div className="standard-page manga-page page-enter">
@@ -123,11 +137,17 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
           <BookOpen size={20} />
           <div>
             <h1>Manga</h1>
-            <p>WeebCentral catalogue · {NSFW_COPY.title}: {NSFW_COPY.modes[0].label} by default</p>
+            <p>English manga · {NSFW_COPY.title}: {NSFW_COPY.modes[0].label} by default</p>
           </div>
         </div>
       </div>
 
+      <div className="comic-source-rail" role="tablist" aria-label="Manga source">
+        {(['WeebCentral', 'MangaDex'] as const).map((name) => (
+          <button type="button" key={name} role="tab" aria-selected={source === name}
+            className={`comic-source-chip${source === name ? ' active' : ''}`} onClick={() => onSourceChange(name)}>{name}</button>
+        ))}
+      </div>
       <form
         className="manga-search"
         onSubmit={(event) => {
@@ -159,7 +179,7 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
         <div className="manga-loading"><LoaderCircle size={22} className="spin" /> Loading manga…</div>
       ) : error && !items.length ? (
         <div className="empty-state manga-empty" role="alert">
-          <h2>Couldn’t reach WeebCentral</h2>
+          <h2>Couldn’t reach {source}</h2>
           <p>{error}</p>
           <button className="button button-secondary" onClick={() => void load(true)}>
             <RotateCcw size={15} /> Try again
@@ -195,7 +215,6 @@ const MangaView: React.FC<MangaViewProps> = ({ prefillQuery }) => {
                 className="button button-secondary"
                 disabled={loading}
                 onClick={() => {
-                  setPage((current) => current + 1);
                   void load(false);
                 }}
               >

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Blocks, Check, Clapperboard, ExternalLink, Film, LoaderCircle, MessageSquare, Play, Plus, Sparkles, Star, Tv, Users, X,
 } from 'lucide-react';
@@ -7,6 +8,7 @@ import { animeService, hasAnikuraId } from '../services/animeService';
 import type { LibraryStatus, MediaItem, TmdbEpisodeInfo, WatchProgress } from '../types';
 import { Artwork, MediaCard } from './MediaCard';
 import AnimeDiscussion from './AnimeDiscussion';
+import MoctaleMeter from './MoctaleMeter';
 
 const STATUS_OPTIONS: Array<{ value: LibraryStatus; label: string }> = [
   { value: 'watching', label: 'Watching' },
@@ -227,8 +229,8 @@ const DetailsModal: React.FC<{
     [animeEpisodes, episodes, selectedSeason],
   );
 
-  return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+  const modal = (
+    <div className="modal-backdrop details-modal-shell" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="details-modal details-modal-rich" role="dialog" aria-modal="true" aria-label={item.title}>
         <button className="modal-close floating" onClick={onClose} aria-label="Close details"><X size={20} /></button>
 
@@ -285,6 +287,11 @@ const DetailsModal: React.FC<{
                 {item.anime.anilistId ? <span>AniList {item.anime.anilistId}</span> : null}
                 {item.imdbId ? <span>{item.imdbId}</span> : null}
               </div>
+            )}
+
+            {item.source !== 'youtube' && item.source !== 'iptv' && (
+              <MoctaleMeter title={item.title} year={item.year || baseItem.year || item.anime?.seasonYear?.toString()}
+                type={isAnime || item.addonType === 'anime' ? 'anime' : item.type} />
             )}
 
             <p className="details-overview">{item.overview || 'No description is available for this title yet.'}</p>
@@ -531,6 +538,7 @@ const DetailsModal: React.FC<{
       </section>
     </div>
   );
+  return typeof document === 'undefined' ? modal : createPortal(modal, document.body);
 };
 
 export default DetailsModal;

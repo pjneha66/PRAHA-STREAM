@@ -89,6 +89,8 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
             4, 4, 30L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<Runnable>(64),
             new ThreadPoolExecutor.AbortPolicy());
+    private final MoctalePageMeter moctaleMeter = new MoctalePageMeter();
+    private ActivityResultLauncher<Intent> moctaleLauncher;
     private ActivityResultLauncher<Intent> subtitlePickerLauncher;
     /**
      * Picking a .cs3 has to happen natively: the file lives behind a content://
@@ -247,6 +249,17 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 });
         streamProxy.start();
 
+        moctaleLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (result.getResultCode() != RESULT_OK || result.getData() == null || getBridge() == null
+                    || getBridge().getWebView() == null) return;
+            try {
+                String raw = result.getData().getStringExtra(ProtectedEmbedActivity.EXTRA_MOCTALE_METER);
+                if (raw == null || raw.length() > 4096) return;
+                JSONObject meter = new JSONObject(raw);
+                dispatchMoctaleMeter(meter);
+            } catch (Exception ignored) { }
+        });
+
         subtitlePickerLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -372,6 +385,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
 
     @Override
     public void onDestroy() {
+        moctaleMeter.cancel(null);
         // Do not leave extensions holding a destroyed activity.
         if (com.lagradost.cloudstream3.CommonActivity.INSTANCE.getActivity() == this) {
             com.lagradost.cloudstream3.CommonActivity.INSTANCE.setActivity(null);
@@ -525,6 +539,12 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return rpcBridge.openBrowser(args.optString(0, ""));
             case "openProtectedEmbed":
                 return rpcBridge.openProtectedEmbed(args.optString(0, ""));
+            case "loadMoctaleMeter":
+                return rpcBridge.loadMoctaleMeter(args.optString(0, ""));
+            case "cancelMoctaleMeter":
+                return rpcBridge.cancelMoctaleMeter(args.optString(0, ""));
+            case "openReaderFile":
+                return rpcBridge.openReaderFile(args.optString(0, ""));
             case "openArchiveLoan":
                 return rpcBridge.openArchiveLoan(args.optString(0, ""));
             case "openPrivateDnsSettings":
@@ -662,6 +682,12 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         }
     }
 
+    private void dispatchMoctaleMeter(JSONObject meter) {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+        getBridge().getWebView().evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('praha:moctale-meter', { detail: " + meter + " }));", null);
+    }
+
     public class PrahaJsBridge {
         @JavascriptInterface
         public boolean isAndroid() {
@@ -675,7 +701,36 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 if (url == null || url.length() > 4096 || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return false;
                 Intent intent = new Intent(MainActivity.this, ProtectedEmbedActivity.class);
                 intent.putExtra(ProtectedEmbedActivity.EXTRA_URL, url);
-                startActivity(intent);
+                if (MoctalePageMeter.isTitle(Uri.parse(url))) {
+                    runOnUiThread(() -> {
+                        moctaleMeter.cancel(null);
+                        moctaleLauncher.launch(intent);
+                    });
+                } else startActivity(intent);
+                return true;
+            } catch (Exception ignored) { return false; }
+        }
+
+        @JavascriptInterface
+        public boolean loadMoctaleMeter(String url) {
+            if (url == null || url.length() > 4096 || !MoctalePageMeter.isTitle(Uri.parse(url))) return false;
+            runOnUiThread(() -> moctaleMeter.load(MainActivity.this, url, MainActivity.this::dispatchMoctaleMeter));
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean cancelMoctaleMeter(String url) {
+            runOnUiThread(() -> moctaleMeter.cancel(url));
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean openReaderFile(String url) {
+            if (url == null || url.length() > 4096 || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return false;
+            try {
+                startActivity(new Intent(MainActivity.this, ProtectedEmbedActivity.class)
+                        .putExtra(ProtectedEmbedActivity.EXTRA_URL, url)
+                        .putExtra(ProtectedEmbedActivity.EXTRA_DIRECT_BOOK, true));
                 return true;
             } catch (Exception ignored) { return false; }
         }

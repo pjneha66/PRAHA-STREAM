@@ -5,19 +5,22 @@ import {
 import {
   ALL_ARCHIVE_TEXTS, ARCHIVE_COLLECTIONS, BooksService, canReadBookFile, type BookFile, type BookItem,
 } from '../services/archiveService';
-import { openArchiveLoan, openPublicationUrl, openSafeExternalUrl } from '../services/androidBridge';
+import { openArchiveLoan, openPublicationUrl, openReaderFile, openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { BookracyService } from '../services/bookracyService';
 import { readContinue, readScanPage, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
+import { loadComicBookSite, loadPublicationFiles } from '../services/comicBookSites';
 import './books-view.css';
 
-type Catalog = 'openlibrary' | 'archive' | 'bookracy';
+type PublicationSite = 'annasarchive' | 'oceanofpdf';
+type Catalog = 'openlibrary' | 'archive' | 'bookracy' | PublicationSite;
+const isPublicationSite = (source: string): source is PublicationSite => source === 'annasarchive' || source === 'oceanofpdf';
 type SourceMode = Catalog | 'all';
-const CATALOGS: Catalog[] = ['archive', 'openlibrary', 'bookracy'];
-const SITE_URLS: Record<Catalog, string> = { archive: 'https://archive.org', openlibrary: 'https://openlibrary.org', bookracy: 'https://bookracy.com' };
+const CATALOGS: Catalog[] = ['archive', 'openlibrary', 'bookracy', 'annasarchive', 'oceanofpdf'];
+const SITE_URLS: Partial<Record<Catalog, string>> = { archive: 'https://archive.org', openlibrary: 'https://openlibrary.org', bookracy: 'https://bookracy.com' };
 
 function mergeBooks(current: BookItem[], incoming: BookItem[]): BookItem[] {
   const byEdition = new Map(current.map((book) => [book.identifier || book.id, book]));
@@ -43,6 +46,8 @@ const SOURCE_LABEL: Record<SourceMode, string> = {
   archive: 'Archive.org',
   openlibrary: 'Open Library',
   bookracy: 'Bookracy',
+  annasarchive: 'Anna’s Archive',
+  oceanofpdf: 'OceanofPDF',
 };
 
 /**
@@ -100,7 +105,7 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
 };
 
 const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> = ({ item, onOpen }) => {
-  const sourceBadge = item.source === 'openlibrary'
+  const sourceBadge = isPublicationSite(item.source) ? SOURCE_LABEL[item.source] : item.source === 'openlibrary'
     ? 'OL'
     : item.id.startsWith('bookracy-')
       ? 'Bookracy'
@@ -120,7 +125,7 @@ const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> =
         </div>
         <div className="book-copy">
           <h3 title={item.title}>{item.title}</h3>
-          <p>{item.authors.join(', ') || (item.source === 'archive' ? 'archive.org' : 'Open Library')}</p>
+          <p>{item.authors.join(', ') || SOURCE_LABEL[item.source]}</p>
           {item.year && <span>{item.year}</span>}
         </div>
       </button>
@@ -186,7 +191,10 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     const activeCatalogs = CATALOGS.filter((catalog) => pages.current[catalog] !== undefined);
     const results = await Promise.allSettled(activeCatalogs.map(async (catalog) => {
       const page = pages.current[catalog]!;
-      const books = await (catalog === 'archive'
+      const site = isPublicationSite(catalog) ? await loadComicBookSite(catalog, submitted, 'en', page, true) : null;
+      const books: BookItem[] = site && isPublicationSite(catalog)
+        ? site.items.map((item) => ({ id: item.id, title: item.title, authors: [], source: catalog, sourceUrl: item.sourceUrl, coverUrl: item.poster }))
+        : await (catalog === 'archive'
         ? BooksService.searchArchive(submitted, collection, page)
         : catalog === 'openlibrary'
           ? BooksService.searchOpenLibrary(submitted || 'classics', page)
@@ -194,7 +202,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       if (seq === requestSeq.current) {
         setItems((current) => mergeBooks(current, books));
         if (books.length) setLoading(false);
-        if (books.length < 24) delete pages.current[catalog];
+        if (site ? !site.hasMore : books.length < 24) delete pages.current[catalog];
         else pages.current[catalog] = page + 1;
       }
       return books;
@@ -238,6 +246,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         openLibraryKey: item.openLibraryKey,
         downloadUrl: item.downloadUrl,
         source: item.source,
+        sourceUrl: item.sourceUrl,
         authors: item.authors,
         year: item.year,
         restricted: item.restricted,
@@ -251,7 +260,21 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     setSelected(item);
     setFiles(null);
     setFilesError('');
-    setFilesLoading(Boolean(item.identifier && !item.restricted));
+    setFilesLoading(Boolean((item.identifier && !item.restricted) || item.sourceUrl));
+    if (isPublicationSite(item.source) && item.sourceUrl) {
+      try {
+        const list = await loadPublicationFiles(item.source, item.sourceUrl);
+        if (seq !== fileSeq.current) return;
+        setFiles(list);
+        if (!list.length) setFilesError('This listing does not provide a direct reader file.');
+        else rememberBook(item);
+      } catch {
+        if (seq === fileSeq.current) setFilesError('Could not load the reader files.');
+      } finally {
+        if (seq === fileSeq.current) setFilesLoading(false);
+      }
+      return;
+    }
     if (!item.identifier || item.restricted) {
       rememberBook(item);
       return;
@@ -279,6 +302,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       openLibraryKey: payload.openLibraryKey,
       downloadUrl: payload.downloadUrl,
       source: payload.source || 'archive',
+      sourceUrl: payload.sourceUrl,
     };
     if (item.identifier && !item.restricted) setReaderItem(item);
     else void openItem(item);
@@ -292,6 +316,11 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     setSiteError('');
     const opened = await openPublicationUrl(url);
     if (!opened) setSiteError('Could not open this site. Try again.');
+  };
+
+  const openFile = async (file: BookFile) => {
+    const opened = await openReaderFile(file.url);
+    setFilesError(opened ? '' : 'Could not start the Android reader.');
   };
 
   const findOtherCopies = (book: BookItem) => {
@@ -353,10 +382,10 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
             </select>
           </label>
         )}
-        {mode !== 'all' && <button
+        {mode !== 'all' && SITE_URLS[mode] && <button
           type="button"
           className="text-button books-external-link"
-          onClick={() => mode === 'openlibrary' ? void openSite(SITE_URLS[mode]) : void openSafeExternalUrl(SITE_URLS[mode])}
+          onClick={() => mode === 'openlibrary' ? void openSite(SITE_URLS[mode]!) : void openSafeExternalUrl(SITE_URLS[mode]!)}
         >
           <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
         </button>}
@@ -416,15 +445,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         </div>
       )}
 
-      <div className="books-notice">
-        <button type="button" className="button button-secondary button-small" onClick={() => void openSite('https://annas-archive.gl/')}>
-          Anna’s Archive
-        </button>
-        <button type="button" className="button button-secondary button-small" onClick={() => void openSite('https://theoceanofpdf.com/')}>
-          OceanofPDF
-        </button>
-        {siteError && <span role="status">{siteError}</span>}
-      </div>
+      {siteError && <p role="status">{siteError}</p>}
 
       {showShelves && (
         <div className="books-shelves">
@@ -529,7 +550,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                   <button
                     key={file.name}
                     className="books-sheet-file"
-                    onClick={() => canReadBookFile(file) ? void openSite(file.url) : void openSafeExternalUrl(file.url)}
+                    onClick={() => isPublicationSite(selected.source) ? void openFile(file) : canReadBookFile(file) ? void openSite(file.url) : void openSafeExternalUrl(file.url)}
                   >
                     <FileDown size={16} />
                     <span>{file.name}</span>

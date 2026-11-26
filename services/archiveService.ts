@@ -22,7 +22,8 @@ export interface BookItem {
   openLibraryKey?: string;
   /** Direct download link for sources (e.g. Bookracy) that have no archive.org identifier. */
   downloadUrl?: string;
-  source: 'openlibrary' | 'archive';
+  source: 'openlibrary' | 'archive' | 'annasarchive' | 'oceanofpdf';
+  sourceUrl?: string;
   note?: string;
   /** Lending-locked on archive.org — page images are 403 without a loan. */
   restricted?: boolean;

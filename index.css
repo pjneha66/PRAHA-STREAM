@@ -1437,6 +1437,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .modal-close { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.04); color: #c5c9ce; }
 .modal-close:hover { background: rgba(255,255,255,.1); color: #fff; }
 .modal-close.floating { position: absolute; right: 16px; top: 16px; z-index: 5; background: rgba(7,8,9,.55); backdrop-filter: blur(3px); }
+.modal-backdrop.details-modal-shell { inset: 0 auto auto 0; width: 100dvw; height: 100dvh; contain: paint; backdrop-filter: none; -webkit-backdrop-filter: none; animation: none; }
+.details-modal-shell .details-modal { animation: none; isolation: isolate; overflow-x: hidden; }
 .details-modal { position: relative; overflow: auto; width: min(880px, 96vw); max-height: 91vh; border: 1px solid var(--line-strong); border-radius: 20px; background: #101216; box-shadow: 0 35px 100px rgba(0,0,0,.55); animation: modal-in .3s ease; }
 .details-backdrop { position: relative; height: 275px; overflow: hidden; }
 .details-backdrop > img, .details-backdrop > .artwork-fallback { width: 100%; height: 100%; object-fit: cover; }
@@ -1449,6 +1451,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .details-copy h2 { margin: 7px 0 10px; font-size: 30px; line-height: 1.1; letter-spacing: -1px; }
 .genre-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
 .genre-list > span { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; color: #a8aeb5; font-size: 8px; }
+.moctale-meter { max-width: calc(100dvw - 28px); margin: 14px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.moctale-meter header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.moctale-meter h3 { margin: 0; font-size: 13px; }
+.moctale-meter header button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; color: var(--accent); font-size: 12px; }
+.moctale-meter dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0 0; }
+.moctale-meter dl div { padding: 6px; border-radius: 7px; background: var(--surface); }
+.moctale-meter dt, .moctale-meter p { color: var(--muted); font-size: 11px; }
+.moctale-meter dd { margin: 3px 0 0; font-size: 14px; font-weight: 700; }
+.moctale-meter p { margin: 7px 0 0; }
 .details-overview { margin: 16px 0; color: #a5abb2; font-size: 10px; line-height: 1.75; }
 .details-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .button-secondary.is-saved { border-color: rgba(var(--accent-rgb), .2); color: var(--accent); }
@@ -2037,6 +2048,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .sanka-reader-footer .button { min-height: 38px; }
   .sanka-reader-footer > span { max-width: 75px; }
   .details-modal, .source-modal { width: 100%; max-height: 96vh; border-radius: 22px 22px 0 0; }
+  html:has(.details-modal-shell) { overflow: hidden; }
+  body:has(.details-modal-shell) > #root { visibility: hidden; contain: paint; }
+  .modal-backdrop.details-modal-shell { display: block; background: #101216; }
+  .details-modal-shell .details-modal {
+    width: 100%; height: 100%; max-height: none;
+    border: 0; border-radius: 0; box-shadow: none;
+    overscroll-behavior: contain;
+  }
+  .details-modal-shell .modal-close.floating { backdrop-filter: none; -webkit-backdrop-filter: none; }
   .details-backdrop { height: 210px; }
   .details-body { display: flex; flex-direction: column; gap: 16px; margin-top: -45px; padding: 0 16px 28px; }
   .details-poster { flex: 0 0 auto; width: 110px; height: 165px; aspect-ratio: 2/3; align-self: flex-start; margin-top: 0; border-radius: 12px; box-shadow: 0 14px 35px rgba(0, 0, 0, 0.7); }

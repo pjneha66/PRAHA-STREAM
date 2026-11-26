@@ -1,3 +1,5 @@
+import { fetchReadingIndex, readingIndexes, readingPageTarget } from '../readingSources.mjs';
+import { fetchMoctaleMeter, moctaleLookup } from '../moctale.mjs';
 import { hostedComicPage } from '../comickSources.mjs';
 
 const cors = {
@@ -48,9 +50,28 @@ async function relay(request) {
   const incoming = new URL(request.url);
   const route = incoming.searchParams.get('route') || '';
   incoming.searchParams.delete('route');
-  if (!route && request.method === 'GET') return Response.json({ status: 'ok', sources: ['mangadex', 'comick'] }, { headers: cors });
+  if (!route && request.method === 'GET') return Response.json({
+    status: 'ok', sources: ['mangadex', 'comick', 'moctale'], readingIndexes: Object.keys(readingIndexes),
+  }, { headers: cors });
+  if (route === '/moctale-meter' && request.method === 'GET') {
+    const lookup = moctaleLookup(incoming.searchParams.get('title'), incoming.searchParams.get('year'), incoming.searchParams.get('type'));
+    if (!lookup) return reply(400, 'Expected a title, year, and media type.');
+    const data = await fetchMoctaleMeter(lookup);
+    return Response.json(data, {
+      headers: { ...cors, 'Cache-Control': data.state === 'unavailable' ? 'public, s-maxage=30' : 'public, s-maxage=900' },
+    });
+  }
   const [family, ...parts] = route.replace(/^\//, '').split('/');
   const path = '/' + parts.join('/');
+  if (family === 'reading-index' && request.method === 'GET' && parts.length === 1 && Object.hasOwn(readingIndexes, parts[0])) {
+    try {
+      return Response.json({ repository: parts[0], entries: await fetchReadingIndex(parts[0]) }, {
+        headers: { ...cors, 'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=3600' },
+      });
+    } catch {
+      return reply(502, 'Could not load the reading repository.');
+    }
+  }
   let target;
   let body;
   let stream = false;
@@ -82,6 +103,12 @@ async function relay(request) {
       contentType = 'application/x-ndjson';
     }
     headers['Content-Type'] = 'application/json';
+  } else if (family === 'reading-page' && request.method === 'GET' && parts.length === 1) {
+    target = readingPageTarget(parts[0], incoming.searchParams.get('url'));
+    if (!target) return reply(400, 'Unsupported reading source URL.');
+    headers.Accept = 'text/html';
+    headers['User-Agent'] = 'Mozilla/5.0 (compatible; PRAHA-STREAM)';
+    contentType = 'text/plain; charset=utf-8';
   } else if (route === '/comick-page' && request.method === 'GET') {
     target = hostedComicPage(incoming.searchParams.get('url'));
     if (!target) return reply(400, 'Unsupported comic source.');

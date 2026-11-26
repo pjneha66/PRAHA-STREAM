@@ -13,7 +13,7 @@ import { resolveComickPoster } from '../services/sankaService';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '../services/comicLanguages';
-import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, isComicDownloadSite, loadComicBookSite, openComicBookSite } from '../services/comicBookSites';
+import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, isComicDownloadSite, loadComicBookSite, openComicBookSite, readPublicationIssue } from '../services/comicBookSites';
 import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 import { comicEditionKey, groupComicTitles } from '../services/comicGroups';
 import {
@@ -379,7 +379,10 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
 
   const handleSelectTitle = (item: SankaTitle, variants = [item]) => {
     if (isComicBookSite(item.source) && item.sourceUrl) {
-      void browseBookSite(item.sourceUrl);
+      setBookSiteError('');
+      void readPublicationIssue(item.source, item.sourceUrl)
+        .then((opened) => { if (!opened) setBookSiteError('Could not start the Android reader.'); })
+        .catch((error: unknown) => setBookSiteError(error instanceof Error ? error.message : 'Could not read this issue.'));
       return;
     }
     chapterAbortRef.current?.abort();
@@ -867,7 +870,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         </button>
       )}
       {selectedBookSite && isComicDownloadSite(selectedBookSite) && (
-        <p className="sanka-fallback-note">Open an issue and tap its download link to read it in PRAHA.</p>
+        <p className="sanka-fallback-note">Tap an issue to open its file in the reader.</p>
       )}
       {bookSiteError && <p role="alert">{bookSiteError}</p>}
 

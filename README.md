@@ -4,7 +4,7 @@ A local-first **Android, Android TV, and Web/PWA** streaming interface for Strem
 
 **No media is bundled in this repository.** Every title, poster, trailer, cast list, rating, and backdrop is fetched live from TMDB with your own API key, and every stream comes from the addons/repositories you install.
 
-Current version: **2.11.30** · Android phone release: [v2.11.30](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/android-phone-v2.11.30)
+Current version: **2.11.31** · Android phone release: [v2.11.31](https://github.com/pjneha66/PRAHA-STREAM/releases/tag/android-phone-v2.11.31)
 
 ---
 
@@ -43,7 +43,7 @@ Live TV fixtures use Vite’s ESPN relay in development. To use the relay with a
 
 Hosted Comics uses the standalone Vercel relay for MangaDex and supported Comick providers. Android uses its native HTTP bridge. Vite handles MangaDex and Comick locally in development. Set `VITE_COMICS_RELAY_URL` to use another relay deployment, or set `VITE_MANGADEX_RELAY=1` to use a same-origin MangaDex route.
 
-Deploy the relay independently with `vercel deploy --cwd relay --prod`. The relay exposes public catalog and chapter metadata and permits chapter HTML only from supported comic hosts. Archive.org and Sanka already allow cross-origin catalog requests.
+Deploy the relay independently with `vercel deploy --cwd relay --prod`. The relay exposes public catalog and chapter metadata and permits chapter HTML only from supported comic hosts. It also exposes English repository metadata at `/api/relay?route=/reading-index/<repository>` and allowlisted reading pages for selected sources. Repository listings carry metadata only. The Moctale Meter relay looks up public values. On Android, PRAHA can read the Meter from the title page automatically. Open Moctale to complete sign-in when needed. Archive.org and Sanka already allow cross-origin catalog requests.
 
 Quality checks:
 

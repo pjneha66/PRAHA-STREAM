@@ -18,14 +18,17 @@ describe('Sanka comic reader & pagination flow', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows OceanofPDF titles and opens filtered Anna’s Archive search when its catalog asks for a browser', async () => {
+  it('opens OceanofPDF files directly and preserves the explicit catalog fallback', async () => {
     const openProtectedEmbed = vi.fn(() => true);
-    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+    const openReaderFile = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openProtectedEmbed, openReaderFile });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('annas-archive.gl')) return json({}, 403);
       if (url.includes('theoceanofpdf.com')) return {
-        ok: true, status: 200, text: async () => '<div class="wp-block-post"><h2 class="wp-block-post-title"><a href="/comic-title/">Download Comic Title</a></h2></div>',
+        ok: true, status: 200, text: async () => url.endsWith('/comic-title/')
+          ? '<article><a href="/files/comic.cbz">Read comic</a></article>'
+          : '<div class="wp-block-post"><h2 class="wp-block-post-title"><a href="/comic-title/">Download Comic Title</a></h2></div>',
       } as Response;
       return json({ data: [] });
     }));
@@ -33,7 +36,7 @@ describe('Sanka comic reader & pagination flow', () => {
     render(<SankaExplorer />);
     fireEvent.click(screen.getByRole('tab', { name: 'OceanofPDF' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Open Comic Title' }));
-    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith('https://theoceanofpdf.com/comic-title/'));
+    await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith('https://theoceanofpdf.com/files/comic.cbz'));
 
     fireEvent.click(screen.getByRole('tab', { name: 'Anna’s Archive' }));
     expect(await screen.findByText('Open the site’s catalog')).toBeTruthy();
@@ -46,12 +49,13 @@ describe('Sanka comic reader & pagination flow', () => {
     ['ComicSnake', 'https://comicsnake.com', '/publisher/123-comic.html', '<a class="comics_th-in" href="/publisher/123-comic.html" title="Test Issue"><img alt="Cover"></a>', 'story'],
     ['GetComics', 'https://getcomics.org', '/publisher/test-issue/', '<article class="post"><h1 class="post-title"><a href="/publisher/test-issue/">Test Issue</a></h1></article>', 's'],
   ])('searches %s and opens the issue in the Android publication reader', async (label, origin, path, html, searchParam) => {
-    const openProtectedEmbed = vi.fn(() => true);
-    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+    const openReaderFile = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openReaderFile });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const { origin: requestOrigin, searchParams } = new URL(String(input));
+      const { origin: requestOrigin, searchParams, pathname } = new URL(String(input));
       if (requestOrigin === origin) return {
-        ok: true, status: 200, text: async () => searchParams.get(searchParam) === 'Test Issue' ? html : '<html></html>',
+        ok: true, status: 200, text: async () => pathname === path ? '<article><a href="/files/issue.cbr">Comic</a></article>'
+          : searchParams.get(searchParam) === 'Test Issue' ? html : '<html></html>',
       } as Response;
       return json({ data: [] });
     });
@@ -63,7 +67,7 @@ describe('Sanka comic reader & pagination flow', () => {
     fireEvent.change(field, { target: { value: 'Test Issue' } });
     fireEvent.submit(field.closest('form')!);
     fireEvent.click(await screen.findByRole('button', { name: 'Open Test Issue' }));
-    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(origin + path));
+    await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith(origin + '/files/issue.cbr'));
   });
 
   it('opens directly on comics, supports Load more pagination, and reads chapter pages', async () => {

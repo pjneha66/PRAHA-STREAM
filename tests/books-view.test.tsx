@@ -122,19 +122,22 @@ describe('Books search and scan resume', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('opens publication sites through the isolated Android WebView', async () => {
-    fetchMock.mockResolvedValue(json({ response: { docs: [] } }));
-    const openProtectedEmbed = vi.fn(() => true);
-    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+  it('opens OceanofPDF results directly in the Android file reader', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname !== 'theoceanofpdf.com') return json({ response: { docs: [] } });
+      return {
+        ok: true, status: 200, text: async () => url.pathname === '/test-book/'
+          ? '<main><a href="/files/test.epub">Read EPUB</a></main>'
+          : '<h2 class="wp-block-post-title"><a href="/test-book/">Test Book</a></h2>',
+      } as Response;
+    });
+    const openReaderFile = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openReaderFile });
     render(<BooksView />);
-    fireEvent.click(screen.getByRole('button', { name: 'Anna’s Archive' }));
-    fireEvent.click(screen.getByRole('button', { name: 'OceanofPDF' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Open Library' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Library site' }));
-    await waitFor(() => expect(openProtectedEmbed.mock.calls).toEqual([
-      ['https://annas-archive.gl/'],
-      ['https://theoceanofpdf.com/'],
-      ['https://openlibrary.org/'],
-    ]));
+    fireEvent.click(screen.getByRole('tab', { name: 'OceanofPDF' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Test Book' }));
+    fireEvent.click(await screen.findByRole('button', { name: /test.epub/i }));
+    await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith('https://theoceanofpdf.com/files/test.epub'));
   });
 });

@@ -23,10 +23,13 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import java.io.ByteArrayInputStream;
+import org.json.JSONObject;
 import java.util.Locale;
 
 /** A separate, unprivileged WebView: never attach Capacitor or any JavaScript bridge here. */
 public final class ProtectedEmbedActivity extends Activity {
+    static final String EXTRA_MOCTALE_METER = "moctale_meter";
+    public static final String EXTRA_DIRECT_BOOK = "direct_book";
     public static final String EXTRA_URL = "embed_url";
     public static final String EXTRA_ARCHIVE_LOAN = "archive_loan";
     private WebView web;
@@ -46,6 +49,8 @@ public final class ProtectedEmbedActivity extends Activity {
     private boolean bookSite;
     private boolean comicSite;
     private boolean directBook;
+    private boolean moctaleSite;
+    private boolean moctaleMeterReturned;
     private boolean pageFailed;
     /** Shown until the player's first page finishes loading, then removed. */
     private TextView loading;
@@ -56,10 +61,12 @@ public final class ProtectedEmbedActivity extends Activity {
         Uri target = initialUrl == null ? null : Uri.parse(initialUrl);
         if (!EmbedBlocklist.isPublicHttps(target) || initialUrl.length() > 4096) { finish(); return; }
         initialHost = target.getHost().toLowerCase(Locale.ROOT);
+        moctaleSite = MoctalePageMeter.isTitle(target);
         archiveLoan = getIntent().getBooleanExtra(EXTRA_ARCHIVE_LOAN, false);
-        directBook = initialHost.equals("archive.org") && target.getPath() != null
-                && target.getPath().startsWith("/download/")
-                && BookFileReader.isBookDownload(initialUrl, null, null);
+        directBook = getIntent().getBooleanExtra(EXTRA_DIRECT_BOOK, false)
+                || (initialHost.equals("archive.org") && target.getPath() != null
+                    && target.getPath().startsWith("/download/")
+                    && BookFileReader.isBookDownload(initialUrl, null, null));
         comicSite = hostMatches(initialHost, "comics-all.com", "comicsnake.com", "getcomics.org");
         bookSite = directBook || comicSite
                 || hostMatches(initialHost, "annas-archive.gl", "theoceanofpdf.com", "oceanofpdf.com", "openlibrary.org");
@@ -72,7 +79,7 @@ public final class ProtectedEmbedActivity extends Activity {
         closeButton.setText("Close");
         closeButton.setOnClickListener(v -> { if (reader != null && !directBook) closeBook(); else finish(); });
         Button browser = new Button(this);
-        browser.setText(isBookPage() ? "Open in browser" : "Browser (unfiltered)");
+        browser.setText(moctaleSite ? "Browser" : isBookPage() ? "Open in browser" : "Browser (unfiltered)");
         browser.setOnClickListener(v -> {
             String currentUrl = web == null ? null : web.getUrl();
             openBrowser(currentUrl != null ? currentUrl : initialUrl);
@@ -87,11 +94,21 @@ public final class ProtectedEmbedActivity extends Activity {
             reload.setOnClickListener(v -> { if (web != null) web.reload(); });
             siteActions.addView(reload);
         }
+        if (moctaleSite) {
+            Button title = new Button(this);
+            title.setText("Title");
+            title.setOnClickListener(v -> { if (web != null) web.loadUrl(initialUrl); });
+            siteActions.addView(title);
+            Button meter = new Button(this);
+            meter.setText("Use Meter");
+            meter.setOnClickListener(v -> readMoctaleMeter(0, true));
+            siteActions.addView(meter);
+        }
         layout.addView(bar);
         content = new FrameLayout(this);
         layout.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         loading = new TextView(this);
-        loading.setText(archiveLoan ? "Opening Internet Archive…" : bookSite ? "Opening book site…" : "Loading protected player…");
+        loading.setText(moctaleSite ? "Opening Moctale…" : archiveLoan ? "Opening Internet Archive…" : bookSite ? "Opening book site…" : "Loading protected player…");
         loading.setTextColor(Color.WHITE);
         loading.setBackgroundColor(Color.BLACK);
         content.addView(loading);
@@ -103,7 +120,7 @@ public final class ProtectedEmbedActivity extends Activity {
         });
         setContentView(layout);
         ViewCompat.requestApplyInsets(layout);
-        if (isBookPage()) {
+        if (isBookPage() || moctaleSite) {
             openPlayer();
             return;
         }
@@ -207,6 +224,10 @@ public final class ProtectedEmbedActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
+                if (moctaleSite) {
+                    if (!EmbedBlocklist.isPublicHttps(uri)) return true;
+                    return request.isForMainFrame() && !hostMatches(uri.getHost(), "moctale.in");
+                }
                 if (isBookPage()) {
                     if (!EmbedBlocklist.isPublicHttps(uri)) return true;
                     if (!request.isForMainFrame()) return false;
@@ -242,6 +263,7 @@ public final class ProtectedEmbedActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 if (!pageFailed && loading.getParent() != null) content.removeView(loading);
+                if (moctaleSite && MoctalePageMeter.isRequestedPage(url, initialUrl)) readMoctaleMeter(10, false);
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame() && isBookPage()) showPageError();
@@ -251,7 +273,7 @@ public final class ProtectedEmbedActivity extends Activity {
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (!EmbedBlocklist.isPublicHttps(uri) || (!isBookPage() && filter.blocks(uri.getHost()))) {
+                if (!EmbedBlocklist.isPublicHttps(uri) || (!isBookPage() && !moctaleSite && filter.blocks(uri.getHost()))) {
                     return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
                 }
                 return null;
@@ -305,6 +327,36 @@ public final class ProtectedEmbedActivity extends Activity {
         closeButton.setText("Close");
         siteActions.setVisibility(View.VISIBLE);
         if (web != null) web.setVisibility(View.VISIBLE);
+    }
+
+    private void readMoctaleMeter(int retries, boolean manual) {
+        if (web == null || destroyed || moctaleMeterReturned) return;
+        if (!MoctalePageMeter.isRequestedPage(web.getUrl(), initialUrl)) {
+            if (manual) notifyMoctale("Open the title after signing in.");
+            return;
+        }
+
+        String target = "https://www.moctale.in" + Uri.parse(initialUrl).getEncodedPath();
+        try {
+            web.evaluateJavascript(MoctalePageMeter.script(this, target), value -> {
+                try {
+                    JSONObject meter = MoctalePageMeter.validate(value, target);
+                    if (destroyed || moctaleMeterReturned) return;
+                    moctaleMeterReturned = true;
+                    setResult(RESULT_OK, new Intent().putExtra(EXTRA_MOCTALE_METER, meter.toString()));
+                    finish();
+                } catch (Exception ignored) {
+                    if (retries > 0 && web != null) web.postDelayed(() -> readMoctaleMeter(retries - 1, false), 650);
+                    else if (manual) notifyMoctale("Moctale hasn’t shown all four percentages on this page yet.");
+                }
+            });
+        } catch (Exception ignored) {
+            if (manual) notifyMoctale("Could not read the Moctale Meter.");
+        }
+    }
+
+    private void notifyMoctale(String message) {
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void showPageError() {
