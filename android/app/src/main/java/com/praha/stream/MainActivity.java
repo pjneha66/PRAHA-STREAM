@@ -176,7 +176,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
     }
 
     /** This device, its network, and the addresses that only exist inside one. */
-    private static boolean isPrivateAddress(InetAddress address) {
+    static boolean isPrivateAddress(InetAddress address) {
         if (address == null) return true;
         if (address.isAnyLocalAddress() || address.isLoopbackAddress()
                 || address.isLinkLocalAddress() || address.isSiteLocalAddress()
@@ -430,7 +430,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         };
 
         // Network-bound calls must not occupy the WebView bridge thread.
-        if ("httpRequest".equals(fMethod) || "pluginHttp".equals(fMethod) || fMethod.startsWith("cs")) {
+        if ("httpRequest".equals(fMethod) || "pluginHttp".equals(fMethod) || "checkAppDns".equals(fMethod) || fMethod.startsWith("cs")) {
             ExecutorService pool = fMethod.startsWith("cs") ? csExecutor : httpExecutor;
             try {
                 pool.execute(invoke);
@@ -533,6 +533,10 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return rpcBridge.setVpnEnabled(args.optBoolean(0, false), args.optString(1, "1.1.1.1"));
             case "getVpnStatus":
                 return rpcBridge.getVpnStatus();
+            case "configureAppDns":
+                return AppDns.configure(args.optString(0, "system"), args.optBoolean(1, true));
+            case "checkAppDns":
+                return AppDns.probe(args.optString(0, "system"));
             case "httpRequest":
                 return rpcBridge.executeHttpRequest(
                         args.optString(0, ""), args.optString(1, "GET"),
@@ -771,143 +775,75 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
             });
         }
 
+        @JavascriptInterface
+        public boolean configureAppDns(String provider, boolean fallback) {
+            return AppDns.configure(provider, fallback);
+        }
+
         JSONObject executeHttpRequest(String urlString, String method, String headersJson, String body, int timeoutMs) {
-            HttpURLConnection conn = null;
             JSONObject result = new JSONObject();
-            int redirects = 0;
-            String currentUrl = urlString;
-            int timeout = (timeoutMs > 0) ? timeoutMs : 15000;
-
-            // Gate the whole redirect chain entry point once; each hop is
-            // re-checked below before it is opened.
-            if (!isAllowedRemoteUrl(urlString, true)) {
-                try {
-                    result.put("ok", false);
-                    result.put("status", 0);
-                    result.put("error", "Blocked non-HTTP URL");
-                } catch (Exception ignored) {}
-                return result;
-            }
-
-            while (redirects < 5) {
-                // Re-gate every hop, not just the entry URL: an allowed host may
-                // 30x-redirect to loopback / link-local / non-HTTP targets.
-                if (!isAllowedRemoteUrl(currentUrl, true)) {
-                    try {
-                        result.put("ok", false);
-                        result.put("status", 0);
-                        result.put("error", "Blocked redirect target");
-                    } catch (Exception ignored) {}
-                    return result;
-                }
-                try {
-                    URL url = new URL(currentUrl);
-                    conn = (HttpURLConnection) url.openConnection();
-                    conn.setInstanceFollowRedirects(false);
-                    conn.setConnectTimeout(timeout);
-                    conn.setReadTimeout(timeout);
-                    String verb = (method == null || method.isEmpty()) ? "GET" : method.toUpperCase();
-                    conn.setRequestMethod(verb);
-
-                    boolean hasUa = false;
-                    boolean hasAcceptEncoding = false;
-                    if (headersJson != null && !headersJson.isEmpty()) {
-                        JSONObject headers = new JSONObject(headersJson);
-                        Iterator<String> keys = headers.keys();
-                        while (keys.hasNext()) {
-                            String key = keys.next();
-                            String value = headers.optString(key, "");
-                            if (!value.isEmpty()) {
-                                conn.setRequestProperty(key, value);
-                                if ("user-agent".equalsIgnoreCase(key)) hasUa = true;
-                                if ("accept-encoding".equalsIgnoreCase(key)) hasAcceptEncoding = true;
-                            }
-                        }
+            int timeout = timeoutMs > 0 ? timeoutMs : 15000;
+            okhttp3.OkHttpClient client = AppDns.client().newBuilder()
+                    .connectTimeout(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .readTimeout(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .build();
+            try {
+                String verb = method == null || method.isEmpty() ? "GET" : method.toUpperCase(java.util.Locale.ROOT);
+                okhttp3.RequestBody payload = ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))
+                        ? okhttp3.RequestBody.create((body == null ? "" : body).getBytes(StandardCharsets.UTF_8), null)
+                        : null;
+                okhttp3.HttpUrl original = okhttp3.HttpUrl.parse(urlString);
+                String currentUrl = urlString;
+                JSONObject headers = headersJson == null || headersJson.isEmpty() ? new JSONObject() : new JSONObject(headersJson);
+                for (int hop = 0; hop < 5; hop++) {
+                    if (!isAllowedRemoteUrl(currentUrl, true)) throw new java.io.IOException("Blocked HTTP target");
+                    okhttp3.HttpUrl url = okhttp3.HttpUrl.get(currentUrl);
+                    boolean sameOrigin = original != null && original.host().equals(url.host()) && original.scheme().equals(url.scheme()) && original.port() == url.port();
+                    var request = new okhttp3.Request.Builder().url(url).method(verb, payload)
+                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
+                    Iterator<String> keys = headers.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        String value = headers.optString(key, "");
+                        if (value.isEmpty() || key.equalsIgnoreCase("Host")) continue;
+                        if (!sameOrigin && (key.equalsIgnoreCase("Authorization") || key.equalsIgnoreCase("Cookie"))) continue;
+                        request.header(key, value);
                     }
-                    if (!hasUa) {
-                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
-                    }
-                    if (!hasAcceptEncoding) {
-                        conn.setRequestProperty("Accept-Encoding", "gzip, deflate");
-                    }
-
-                    if (body != null && !body.isEmpty() && ("POST".equals(verb) || "PUT".equals(verb) || "PATCH".equals(verb))) {
-                        conn.setDoOutput(true);
-                        byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-                        try (OutputStream os = conn.getOutputStream()) {
-                            os.write(payload);
-                        }
-                    }
-
-                    int status = conn.getResponseCode();
-                    if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
-                        String location = conn.getHeaderField("Location");
-                        conn.disconnect();
-                        if (location != null && !location.isEmpty()) {
-                            if (!location.startsWith("http://") && !location.startsWith("https://")) {
-                                location = new URL(url, location).toString();
-                            }
-                            currentUrl = location;
-                            redirects++;
+                    try (okhttp3.Response response = client.newCall(request.build()).execute()) {
+                        int status = response.code();
+                        String location = response.header("Location");
+                        if (response.isRedirect() && location != null && !location.isEmpty()) {
+                            okhttp3.HttpUrl redirect = url.resolve(location);
+                            if (redirect == null) throw new java.io.IOException("Invalid redirect target");
+                            currentUrl = redirect.toString();
                             continue;
                         }
-                    }
-
-                    InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
-                    String text = "";
-                    if (in != null) {
-                        String encoding = conn.getContentEncoding();
-                        if ("gzip".equalsIgnoreCase(encoding)) {
-                            in = new java.util.zip.GZIPInputStream(in);
-                        } else if ("deflate".equalsIgnoreCase(encoding)) {
-                            in = new java.util.zip.InflaterInputStream(in);
-                        }
-
-                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                        byte[] buf = new byte[8192];
-                        int n;
-                        long total = 0;
-                        // Cap the body: a runaway scraper response must not OOM
-                        // the WebView process (freeze / crash).
-                        final long MAX_BODY_BYTES = 8L * 1024 * 1024;
-                        while ((n = in.read(buf)) != -1) {
-                            total += n;
-                            if (total > MAX_BODY_BYTES) {
-                                bos.write(buf, 0, n);
-                                try {
-                                    result.put("ok", false);
-                                    result.put("status", 0);
-                                    result.put("error", "Native HTTP response exceeded 8 MB and was truncated.");
-                                } catch (Exception ignored) {}
-                                return result;
+                        okhttp3.ResponseBody responseBody = response.body();
+                        String text = "";
+                        if (responseBody != null) {
+                            InputStream stream = responseBody.byteStream();
+                            String encoding = response.header("Content-Encoding");
+                            if ("gzip".equalsIgnoreCase(encoding)) stream = new java.util.zip.GZIPInputStream(stream);
+                            else if ("deflate".equalsIgnoreCase(encoding)) stream = new java.util.zip.InflaterInputStream(stream);
+                            ByteArrayOutputStream out = new ByteArrayOutputStream();
+                            byte[] buffer = new byte[8192];
+                            int read;
+                            while ((read = stream.read(buffer)) != -1) {
+                                if (out.size() + read > 8 * 1024 * 1024) throw new java.io.IOException("Native HTTP response exceeded 8 MB.");
+                                out.write(buffer, 0, read);
                             }
-                            bos.write(buf, 0, n);
+                            text = new String(out.toByteArray(), StandardCharsets.UTF_8);
                         }
-                        text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                        return result.put("ok", response.isSuccessful()).put("status", status).put("body", text);
                     }
-
-                    result.put("ok", status >= 200 && status < 300);
-                    result.put("status", status);
-                    result.put("body", text);
-                    return result;
-                } catch (Exception e) {
-                    try {
-                        result.put("ok", false);
-                        result.put("status", 0);
-                        result.put("error", e.getMessage() != null ? e.getMessage() : "Native HTTP error");
-                    } catch (Exception ignored) {}
-                    return result;
-                } finally {
-                    if (conn != null) conn.disconnect();
                 }
+                return result.put("ok", false).put("status", 310).put("error", "Too many redirects");
+            } catch (Exception error) {
+                try {
+                    return result.put("ok", false).put("status", 0)
+                            .put("error", error.getMessage() != null ? error.getMessage() : "Native HTTP error");
+                } catch (Exception ignored) { return result; }
             }
-
-            try {
-                result.put("ok", false);
-                result.put("status", 310);
-                result.put("error", "Too many redirects");
-            } catch (Exception ignored) {}
-            return result;
         }
 
         /**

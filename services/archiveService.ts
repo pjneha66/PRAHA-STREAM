@@ -6,9 +6,7 @@ import { evictOldest } from './cacheCaps';
  *
  * folkscanomy is an archive.org community collection family (hundreds of
  * thousands of freely-shared texts, incl. comics and manga), reached through
- * the public advancedsearch API. Anna's Archive is deliberately NOT a data
- * source here — it is a shadow-library aggregator; PRAHA links to it from the
- * Books tab as an external site instead of integrating search or downloads.
+ * the public advancedsearch API.
  */
 
 export interface BookItem {
@@ -68,6 +66,13 @@ export const FOLKSCANOMY_COMIC_SUBJECTS = [
 export const FOLKSCANOMY_COMICS_QUERY =
   `(collection:folkscanomy*) AND mediatype:texts AND subject:(${FOLKSCANOMY_COMIC_SUBJECTS.join(' OR ')})`;
 
+export const ALL_ARCHIVE_TEXTS: ArchiveCollection = { id: 'all-texts', name: 'All texts', query: 'mediatype:texts' };
+
+export function bookIsbn(query: string): string | undefined {
+  const isbn = query.replace(/^isbn(?:-1[03])?:?\s*/i, '').replace(/[\s-]/g, '').toUpperCase();
+  return /^(?:\d{9}[\dX]|97[89]\d{10})$/.test(isbn) ? isbn : undefined;
+}
+
 export const ARCHIVE_COLLECTIONS: ArchiveCollection[] = [
   { id: 'folkscanomy', name: 'folkscanomy — everything', query: 'collection:folkscanomy*' },
   {
@@ -113,15 +118,22 @@ export class BooksService {
     const cached = this.searchCache.get(cacheKey);
     if (cached) return cached;
 
-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(trimmed)}&limit=24&page=${page}` +
-      `&fields=key,title,author_name,first_publish_year,cover_i,ia,ebook_access`;
+    const isbn = bookIsbn(trimmed);
+    const url = `https://openlibrary.org/search.json?${isbn ? 'isbn' : 'q'}=${encodeURIComponent(isbn ?? trimmed)}&limit=24&page=${page}` +
+      `&fields=key,title,author_name,first_publish_year,cover_i,ia,ebook_access` +
+      (isbn ? ',editions,editions.key,editions.ia,editions.ebook_access' : '');
     const res = await nativeFetchText(url, { timeoutMs: 12000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('Open Library did not answer.');
-    const data = JSON.parse(res.data) as { docs?: Array<Record<string, unknown>> };
-    const docs = Array.isArray(data.docs) ? data.docs : [];
+    const data = JSON.parse(res.data) as { docs?: Array<Record<string, unknown> & {
+      editions?: { docs?: Array<{ key?: string; ia?: string[]; ebook_access?: string }> };
+    }> };
+    if (!Array.isArray(data.docs)) throw new Error('Open Library search did not answer.');
+    const docs = data.docs;
     const items: BookItem[] = docs.map((doc) => {
       const iaList = Array.isArray(doc.ia) ? (doc.ia as string[]) : [];
-      const identifier = iaList[0];
+      const edition = isbn ? doc.editions?.docs?.[0] : undefined;
+      const identifier = edition ? edition.ia?.[0] : iaList[0];
+      const access = edition ? edition.ebook_access : doc.ebook_access;
       const olCover = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : undefined;
       return {
         id: String(doc.key || identifier || doc.title),
@@ -133,10 +145,10 @@ export class BooksService {
         // copy exists.
         coverUrl: olCover || (identifier ? `https://archive.org/services/img/${identifier}` : undefined),
         identifier,
-        openLibraryKey: String(doc.key || ''),
+        openLibraryKey: edition?.key || String(doc.key || ''),
         source: 'openlibrary' as const,
         note: identifier ? 'Full text on archive.org' : undefined,
-        restricted: doc.ebook_access === 'borrowable' || doc.ebook_access === 'printdisabled',
+        restricted: access === 'borrowable' || access === 'printdisabled',
       };
     });
     // Items that can actually be read on archive.org surface first.
@@ -153,16 +165,18 @@ export class BooksService {
     const cached = this.searchCache.get(cacheKey);
     if (cached) return cached;
 
-    const q = trimmed
-      ? `(${collection.query}) AND mediatype:texts AND title:(${trimmed})`
-      : `(${collection.query}) AND mediatype:texts`;
+    const isbn = bookIsbn(trimmed);
+    const words = trimmed.split(/\s+/).map((word) => JSON.stringify(word)).join(' AND ');
+    const terms = isbn ? `isbn:"${isbn}"` : `(title:(${words}) OR creator:(${words}))`;
+    const q = `(${collection.query}) AND mediatype:texts${trimmed ? ` AND ${terms}` : ''}`;
     const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}` +
       `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&fl%5B%5D=language&fl%5B%5D=access-restricted-item` +
       `&rows=${rows}&page=${page}&output=json`;
     const res = await nativeFetchText(url, { timeoutMs: 15000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('archive.org did not answer.');
     const data = JSON.parse(res.data) as { response?: { docs?: Array<ArchiveDoc & { 'access-restricted-item'?: string | boolean }> } };
-    const docs = data.response?.docs || [];
+    if (!Array.isArray(data.response?.docs)) throw new Error('Internet Archive search did not answer.');
+    const docs = data.response.docs;
     const items: BookItem[] = docs
       .filter((doc) => doc.identifier)
       .map((doc) => ({
@@ -189,9 +203,9 @@ export class BooksService {
     if (cached) return cached;
     const res = await nativeFetchText(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { timeoutMs: 12000 });
     if (!res.ok || !res.data.trim().startsWith('{')) throw new Error('Could not load the archive.org item metadata.');
-    const data = JSON.parse(res.data) as { files?: Array<{ name?: string; size?: string; format?: string }> };
+    const data = JSON.parse(res.data) as { files?: Array<{ name?: string; size?: string; format?: string; private?: string | boolean }> };
     const files: BookFile[] = (data.files || [])
-      .filter((file) => file.name && TEXT_FORMAT_RE.test(file.name))
+      .filter((file) => file.name && file.private !== true && file.private !== 'true' && TEXT_FORMAT_RE.test(file.name))
       .map((file) => ({
         name: String(file.name),
         format: (String(file.name).split('.').pop() || 'file').toUpperCase(),

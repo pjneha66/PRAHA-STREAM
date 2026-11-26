@@ -18,6 +18,29 @@ describe('Sanka comic reader & pagination flow', () => {
     vi.unstubAllGlobals();
   });
 
+  it('shows OceanofPDF titles and opens filtered Anna’s Archive search when its catalog asks for a browser', async () => {
+    const openProtectedEmbed = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('annas-archive.gl')) return json({}, 403);
+      if (url.includes('theoceanofpdf.com')) return {
+        ok: true, status: 200, text: async () => '<div class="wp-block-post"><h2 class="wp-block-post-title"><a href="/comic-title/">Download Comic Title</a></h2></div>',
+      } as Response;
+      return json({ data: [] });
+    }));
+
+    render(<SankaExplorer />);
+    fireEvent.click(screen.getByRole('tab', { name: 'OceanofPDF' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Comic Title' }));
+    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith('https://theoceanofpdf.com/comic-title/'));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Anna’s Archive' }));
+    expect(await screen.findByText('Open the site’s catalog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Browse Anna’s Archive' }));
+    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith('https://annas-archive.gl/search?content=book_comic'));
+  });
+
   it('opens directly on comics, supports Load more pagination, and reads chapter pages', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

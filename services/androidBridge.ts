@@ -34,6 +34,7 @@ export interface PrahaNativeInterface {
   openProtectedEmbed?(url: string): boolean;
   openArchiveLoan?(url: string): boolean;
   openPrivateDnsSettings?(): boolean;
+  configureAppDns?(provider: string, fallback: boolean): boolean;
   setVpnEnabled?(enabled: boolean, dnsServer: string): boolean;
   getVpnStatus?(): boolean;
   getProxyPort(): number;
@@ -250,6 +251,23 @@ export async function openPrivateDnsSettings(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+let nativeEncryptedDns = false;
+
+export async function configureAppDns(provider: string, fallback: boolean): Promise<boolean> {
+  if (!isAndroidApp()) return false;
+  try {
+    const applied = bridgeRpcAvailable()
+      ? await prahaRpc<boolean>('configureAppDns', [provider, fallback], 8000)
+      : Boolean(window.PrahaNative?.configureAppDns?.(provider, fallback));
+    if (applied) nativeEncryptedDns = provider !== 'system';
+    return applied;
+  } catch { return false; }
+}
+
+export async function checkAppDns(provider: string): Promise<boolean> {
+  return await prahaRpc<boolean>('checkAppDns', [provider], 10000);
 }
 
 /**
@@ -633,7 +651,7 @@ export async function nativeFetchText(
   }
 
   // 2. CapacitorHttp (older WebViews without WebMessageListener): bypasses CORS, handles gzip/redirects/forbidden headers off the main thread.
-  if (Capacitor.isNativePlatform() && nativeUrl) {
+  if (!nativeEncryptedDns && Capacitor.isNativePlatform() && nativeUrl) {
     try {
       const response = await CapacitorHttp.request({
         url: nativeUrl,
@@ -699,6 +717,7 @@ export async function nativeFetchText(
   }
 
   // 4. Browser / standard web fetch
+  if (nativeEncryptedDns) throw new Error('The native encrypted DNS connection did not answer.');
   const controller = new AbortController();
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {

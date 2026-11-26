@@ -3,6 +3,25 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
+import type { StreamResult } from '../types';
+
+vi.mock('../components/PlayerModal', () => ({
+  default: ({ episode, stream, initialTime, onProgress, onNextEpisode, onClose }: {
+    episode?: number;
+    stream: StreamResult;
+    initialTime: number;
+    onProgress: (time: number, duration: number) => void;
+    onNextEpisode?: () => void;
+    onClose: () => void;
+  }) => (
+    <section aria-label="Test video player">
+      <p>{`Episode ${episode} · ${stream.sourceName} · ${initialTime}s`}</p>
+      <button onClick={() => { onProgress(60, 1440); onProgress(episode === 1 ? 120 : 240, 1440); }}>Watch video</button>
+      <button onClick={onNextEpisode}>Next episode</button>
+      <button onClick={onClose}>Close video</button>
+    </section>
+  ),
+}));
 
 const TITLE = {
   id: 46474,
@@ -123,6 +142,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -261,6 +281,78 @@ describe('Netflix-style Who is watching gate & Anime/Comics in the app shell', (
     fireEvent.click(episodeDiscussionButtons[1]);
     expect(await within(dialog).findByText('Comment for episode 2', {}, { timeout: 8000 })).toBeTruthy();
   }, 30000);
+
+  it('restores each episode after reload and uses the last source for the show', async () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+    const fetchMock = installFetchMock();
+    const fetchFixture = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('https://streams.example/stream/series/')) {
+        const episode = decodeURIComponent(url).match(/:(\d+)\.json$/)?.[1];
+        return json({ streams: [{ title: `Primary E${episode}`, url: `https://video.example/primary-${episode}.mp4` }] });
+      }
+      if (url.startsWith('https://backup.example/stream/series/')) {
+        const episode = decodeURIComponent(url).match(/:(\d+)\.json$/)?.[1];
+        return json({ streams: [{ title: `Backup E${episode}`, url: `https://video.example/backup-${episode}.mp4` }] });
+      }
+      return fetchFixture(input);
+    });
+    window.localStorage.setItem('praha.v2.addons', JSON.stringify([
+      { name: 'Primary', host: 'streams' },
+      { name: 'Backup', host: 'backup' },
+    ].map(({ name, host }) => ({
+      manifestUrl: `https://${host}.example/manifest.json`,
+      enabled: true,
+      manifest: { id: host, name, version: '1.0.0', resources: [{ name: 'stream', types: ['series'] }], types: ['series'], catalogs: [] },
+    }))));
+    window.localStorage.setItem('praha.v2.profile.default.preferred-source', JSON.stringify('["stremio","Primary"]'));
+
+    const openEpisode = async (episode: number) => {
+      const card = await waitFor(() => {
+        const button = document.querySelector('.media-card .poster-button');
+        expect(button).toBeTruthy();
+        return button!;
+      });
+      fireEvent.click(card);
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`Play S1 E${episode} `) }));
+      return screen.getByRole('dialog', { name: /Sources for/ });
+    };
+
+    const play = async (source: 'Primary' | 'Backup', episode: number) => {
+      const row = (await screen.findByText(`${source} E${episode}`)).closest('article')!;
+      fireEvent.click(within(row).getByRole('button', { name: 'Play' }));
+    };
+    const closePlayback = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close video' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Close source finder' }));
+    };
+
+    const first = render(<App />);
+    await openEpisode(1);
+    await play('Primary', 1);
+    expect(await screen.findByText('Episode 1 · Primary · 0s')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Watch video' }));
+    closePlayback();
+
+    await openEpisode(2);
+    await play('Backup', 2);
+    expect(await screen.findByText('Episode 2 · Backup · 0s')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Watch video' }));
+    closePlayback();
+    first.unmount();
+
+    render(<App />);
+    const sources = await openEpisode(1);
+    await within(sources).findByText('Primary E1');
+    const preferred = (await within(sources).findByText('Backup E1')).closest('article');
+    expect(within(sources).getAllByRole('button', { name: 'Play' })[0].closest('article')).toBe(preferred);
+
+    await play('Backup', 1);
+    expect(await screen.findByText('Episode 1 · Backup · 120s')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next episode' }));
+    expect(await screen.findByText('Episode 2 · Backup · 240s')).toBeTruthy();
+  }, 15000);
 
   it('searches AniCore from the top bar while the Anime tab is open', async () => {
     render(<App />);

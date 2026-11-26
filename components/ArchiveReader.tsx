@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, RotateCcw, X } from 'lucide-react';
 import { openSafeExternalUrl } from '../services/androidBridge';
 import { BooksService } from '../services/archiveService';
+import { readScanPage, saveScanPage } from '../services/continueStore';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 
 /**
@@ -11,27 +12,15 @@ import ArchiveBorrowButton from './ArchiveBorrowButton';
  * the archive.org BookReader — the sandboxed iframe embed breaks inside the
  * Capacitor WebView (blank cream leaves, dead page counter).
  *
- * Performance model (the v2.10.0/2.10.1 freeze): scans can have hundreds of
- * pages, so nothing here may scale with leafCount per frame. Pages are laid
- * out linearly — every leaf has the same height (uniform aspect, fixed width)
- * — which means:
- *   - scroll position ↔ page index is pure arithmetic (no refs, no layout reads),
- *   - only a small window of pages mounts a real <img>, the rest are
- *     aspect-ratio placeholders, and the list itself is rendered in chunks
- *     that extend as you approach the end (DOM stays bounded),
- *   - paged mode mounts exactly one page.
- * If the metadata or the image service fails (e.g. access-restricted scans),
- * the old iframe embed (now unsandboxed) stays as an explicit fallback.
+ * Scroll mode mounts a small window of images with spacers for the other
+ * pages. A uniform page height keeps scroll offsets stable as images load.
+ * The official Internet Archive item is available if the scan cannot load.
  */
 
 const LEAF_WIDTHS = [760, 500, 1200] as const;
 /** Real <img> pages mounted around the current position (scroll mode). */
 const WINDOW_BEFORE = 2;
 const WINDOW_AFTER = 6;
-/** DOM chunking: how many leaf nodes exist at once and how much they grow. */
-const CHUNK_INITIAL = 60;
-const CHUNK_GROW = 80;
-const CHUNK_NEAR_END = 30;
 /** Default placeholder aspect until the first page reveals the real one. */
 const DEFAULT_ASPECT: LeafDims = { w: 3, h: 4 };
 /** Max leaf width — mirrors the CSS `min(100%, 820px)` on leaf images. */
@@ -100,39 +89,41 @@ const ArchiveReader: React.FC<{
   identifier: string;
   title?: string;
   onClose: () => void;
-}> = ({ identifier, title, onClose }) => {
+  onPageRead?: (page: number) => void;
+}> = ({ identifier, title, onClose, onPageRead }) => {
   const [leafCount, setLeafCount] = useState<number | null>(null);
   const [restricted, setRestricted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [useEmbed, setUseEmbed] = useState(false);
-  const [embedLoaded, setEmbedLoaded] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [mode, setMode] = useState<'scroll' | 'paged'>('scroll');
   const [chromeVisible, setChromeVisible] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
   /** Real aspect (w/h) taken from the first loaded page. */
   const [pageAspect, setPageAspect] = useState<LeafDims | null>(null);
-  /** How many leaf nodes currently exist in the DOM (grows near the end). */
-  const [renderedCount, setRenderedCount] = useState(CHUNK_INITIAL);
   /** Height of one leaf in px inside the scroll container (linear layout). */
   const [leafHeight, setLeafHeight] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const lastScrollTsRef = useRef(0);
+  const scrollTarget = useRef<number | null>(null);
+  const lastLayout = useRef<{ height: number | null; mode: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLeafCount(null);
     setRestricted(false);
     setError(null);
-    setUseEmbed(false);
+    scrollTarget.current = null;
+    lastLayout.current = null;
     setCurrentPage(0);
     setFailedCount(0);
     setPageAspect(null);
-    setRenderedCount(CHUNK_INITIAL);
     setLeafHeight(null);
     BooksService.itemLeaves(identifier)
       .then((info) => {
         if (!alive) return;
+        const page = Math.min(readScanPage(identifier) ?? 0, Math.max(0, info.leafCount - 1));
+        scrollTarget.current = page;
+        setCurrentPage(page);
         setLeafCount(info.leafCount);
         setRestricted(info.restricted);
       })
@@ -142,7 +133,23 @@ const ArchiveReader: React.FC<{
     return () => {
       alive = false;
     };
-  }, [identifier]);
+  }, [identifier, retry]);
+
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    if (mode !== 'scroll' || !root || !leafHeight) return;
+    if (scrollTarget.current !== null || lastLayout.current?.height !== leafHeight || lastLayout.current?.mode !== mode) {
+      root.scrollTop = (scrollTarget.current ?? currentPage) * leafHeight;
+      scrollTarget.current = null;
+    }
+    lastLayout.current = { height: leafHeight, mode };
+  }, [currentPage, mode, leafHeight]);
+
+  useEffect(() => {
+    if (!leafCount || restricted || error) return;
+    saveScanPage(identifier, currentPage);
+    onPageRead?.(currentPage);
+  }, [identifier, currentPage, leafCount, restricted, error, onPageRead]);
 
   const handleLeafFail = useCallback(() => setFailedCount((v) => v + 1), []);
 
@@ -165,63 +172,31 @@ const ArchiveReader: React.FC<{
     return () => window.removeEventListener('resize', measure);
   }, [aspect.w, aspect.h, mode, leafCount, error]);
 
-  // Scroll events are already coalesced per frame by the browser — throttle by
-  // timestamp instead of requestAnimationFrame, which is throttled or paused
-  // entirely in unfocused/backgrounded WebViews (label froze without updates).
   const handleScroll = useCallback(() => {
-    const now = Date.now();
-    if (now - lastScrollTsRef.current < 80) return;
-    lastScrollTsRef.current = now;
+    if (scrollTarget.current !== null) return;
     const root = scrollRef.current;
     if (!root || !leafHeight || !leafCount) return;
-    const index = Math.floor((root.scrollTop + 40) / leafHeight);
-    const clamped = Math.min(Math.max(0, index), leafCount - 1);
-    setCurrentPage(clamped);
-    // Grow the DOM chunk as the reader approaches the rendered tail.
-    setRenderedCount((rendered) => {
-      if (clamped + CHUNK_NEAR_END <= rendered || rendered >= leafCount) return rendered;
-      return Math.min(leafCount, Math.max(rendered + CHUNK_GROW, clamped + CHUNK_NEAR_END + WINDOW_AFTER));
-    });
+    const index = Math.floor((root.scrollTop + Math.min(40, leafHeight / 2)) / leafHeight);
+    setCurrentPage(Math.min(Math.max(0, index), leafCount - 1));
   }, [leafCount, leafHeight]);
 
   const scrollToLeaf = useCallback((leaf: number) => {
     if (!leafCount) return;
     const clamped = Math.min(Math.max(0, leaf), leafCount - 1);
+    if (mode === 'scroll' && scrollRef.current && leafHeight) {
+      scrollRef.current.scrollTop = clamped * leafHeight;
+    }
     setCurrentPage(clamped);
-    setRenderedCount((rendered) => {
-      if (clamped + CHUNK_NEAR_END <= rendered || rendered >= leafCount) return rendered;
-      return Math.min(leafCount, clamped + CHUNK_NEAR_END + WINDOW_AFTER);
-    });
-    const root = scrollRef.current;
-    if (root && leafHeight) root.scrollTop = clamped * leafHeight;
-  }, [leafCount, leafHeight]);
+  }, [leafCount, leafHeight, mode]);
 
-  const switchMode = useCallback((next: 'scroll' | 'paged') => {
+  const switchMode = (next: 'scroll' | 'paged') => {
+    if (next === mode) return;
+    scrollTarget.current = next === 'scroll' ? currentPage : null;
     setMode(next);
-    setCurrentPage(0);
-    const root = scrollRef.current;
-    if (root) root.scrollTop = 0;
-  }, []);
+  };
 
   const displayTitle = title || identifier;
-  const showFailedBanner = failedCount >= 3 && !error;
-
-  const embedFallback = useEmbed && (
-    <>
-      <iframe
-        src={`https://archive.org/embed/${encodeURIComponent(identifier)}`}
-        title={`Read ${displayTitle} online`}
-        style={{ width: '100%', height: '100%', border: 'none', background: '#000', opacity: embedLoaded ? 1 : 0 }}
-        allowFullScreen
-        onLoad={() => setEmbedLoaded(true)}
-      />
-      {!embedLoaded && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 13, gap: 10 }}>
-          <LoaderCircle size={24} className="spin" /> Loading the archive.org embed…
-        </div>
-      )}
-    </>
-  );
+  const showFailedBanner = !error && failedCount >= (mode === 'paged' ? 1 : 3);
 
   const renderLeafContent = (leaf: number, eager: boolean) => (
     <ReaderLeaf
@@ -233,7 +208,8 @@ const ArchiveReader: React.FC<{
     />
   );
 
-  const placeholderStyle: React.CSSProperties = { aspectRatio: `${aspect.w} / ${aspect.h}` };
+  const firstLeaf = Math.max(0, currentPage - WINDOW_BEFORE);
+  const lastLeaf = Math.min((leafCount ?? 0) - 1, currentPage + WINDOW_AFTER);
 
   // Portal to document.body: a fixed shell rendered inside a page that carries
   // any ancestor transform/filter gets trapped in that container (the reader
@@ -241,6 +217,9 @@ const ArchiveReader: React.FC<{
   return createPortal(
     <div
       className="modal-backdrop archive-reader-shell"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Read ${displayTitle}`}
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
       style={{ position: 'fixed', inset: 0, background: 'var(--bg)', zIndex: 100, display: 'flex', flexDirection: 'column' }}
     >
@@ -267,15 +246,15 @@ const ArchiveReader: React.FC<{
         {/* Lending-locked items: page images are 403 without an archive.org loan
             (verified live — the embed is also blank for these), so be honest
             instead of showing an empty reader. */}
-        {!useEmbed && restricted && leafCount !== null && !error && (
+        {restricted && leafCount !== null && !error && (
           <div className="archive-reader-error">
-            <p>Sign in to Internet Archive to borrow this title for free when a copy is available.</p>
+            <p>Check Internet Archive for a free loan or waitlist. Sign in to read an available copy.</p>
             <ArchiveBorrowButton identifier={identifier} />
           </div>
         )}
 
         {/* Native leaf rendering (unrestricted scans only) */}
-        {!useEmbed && !restricted && leafCount !== null && !error && (
+        {!restricted && leafCount !== null && !error && (
           <div
             ref={scrollRef}
             className={mode === 'scroll' ? 'archive-scroll-body' : 'archive-paged-body'}
@@ -310,16 +289,21 @@ const ArchiveReader: React.FC<{
                 <div className="archive-leaf">{renderLeafContent(currentPage, true)}</div>
               </>
             ) : (
-              Array.from({ length: Math.min(leafCount, renderedCount) }, (_, leaf) => {
-                const inWindow = leaf >= currentPage - WINDOW_BEFORE && leaf <= currentPage + WINDOW_AFTER;
-                return (
-                  <div key={leaf} className="archive-leaf">
-                    {inWindow
-                      ? renderLeafContent(leaf, Math.abs(leaf - currentPage) <= 1)
-                      : <div className="archive-leaf-ph" style={placeholderStyle} />}
-                  </div>
-                );
-              })
+              <>
+                {leafHeight !== null && <div aria-hidden="true" style={{ height: firstLeaf * leafHeight }} />}
+                {Array.from({ length: lastLeaf - firstLeaf + 1 }, (_, offset) => {
+                  const leaf = firstLeaf + offset;
+                  return (
+                    <div key={leaf} className="archive-leaf" style={{ height: leafHeight ?? undefined }}>
+                      {renderLeafContent(leaf, Math.abs(leaf - currentPage) <= 1)}
+                    </div>
+                  );
+                })}
+                {leafHeight !== null && <>
+                  <div aria-hidden="true" style={{ height: (leafCount - lastLeaf - 1) * leafHeight }} />
+                  <div aria-hidden="true" style={{ height: `max(0px, calc(100% - ${leafHeight}px))` }} />
+                </>}
+              </>
             )}
           </div>
         )}
@@ -327,48 +311,29 @@ const ArchiveReader: React.FC<{
         {showFailedBanner && (
           <div className="archive-fallback-banner">
             <span>Scanned pages are not loading — this scan may be access-restricted.</span>
-            <button type="button" className="button button-secondary button-small" onClick={() => setUseEmbed(true)}>
-              Try archive.org embed
-            </button>
-            <button
-              type="button"
-              className="button button-secondary button-small"
-              onClick={() => openSafeExternalUrl(BooksService.detailsUrl(identifier))}
-            >
-              Open on archive.org
-            </button>
+            <ArchiveBorrowButton identifier={identifier} label="Open Internet Archive" />
           </div>
         )}
 
         {/* Explicit fallback after a metadata failure */}
-        {!useEmbed && error && (
+        {error && (
           <div className="archive-reader-error">
             <p>{error}</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 type="button"
                 className="button button-secondary button-small"
-                onClick={() => {
-                  setError(null);
-                  BooksService.itemLeaves(identifier).then((info) => setLeafCount(info.leafCount)).catch((err: unknown) => setError(err instanceof Error ? err.message : 'The reader could not start.'));
-                }}
+                onClick={() => setRetry((count) => count + 1)}
               >
                 <RotateCcw size={12} /> Retry
               </button>
-              <button type="button" className="button button-secondary button-small" onClick={() => setUseEmbed(true)}>
-                Try archive.org embed
-              </button>
-              <button type="button" className="button button-secondary button-small" onClick={() => openSafeExternalUrl(BooksService.detailsUrl(identifier))}>
-                <ExternalLink size={12} /> Open on archive.org
-              </button>
+              <ArchiveBorrowButton identifier={identifier} label="Open Internet Archive" />
             </div>
           </div>
         )}
 
-        {embedFallback}
-
         {/* Loading spinner (native path) */}
-        {!useEmbed && !restricted && leafCount === null && !error && (
+        {!restricted && leafCount === null && !error && (
           <div className="archive-reader-error">
             <LoaderCircle size={26} className="spin" />
             <span>Loading the scan…</span>
@@ -376,7 +341,7 @@ const ArchiveReader: React.FC<{
         )}
 
         {/* Bottom scrubber */}
-        {!useEmbed && !restricted && leafCount !== null && !error && chromeVisible && (
+        {!restricted && leafCount !== null && !error && chromeVisible && (
           <div className="archive-reader-scrub">
             <span className="archive-page-label">Page {currentPage + 1} / {leafCount}</span>
             <input

@@ -10,12 +10,14 @@ import { EMBED_PRESETS, applyEmbedOverrides, buildEmbedUrl, validateEmbedTemplat
 import { tmdbService } from '../services/tmdbService';
 import { DEFAULT_EMBED_UPDATE_URL, EMBED_UPDATE_INTERVAL, fetchEmbedUpdate, validateUpdateUrl, type TemplateOverrides } from '../services/embedUpdates';
 import { filmQueryFromMedia, scrapeFilmSources } from '../services/sourceOrchestrator';
+import { sourceKey } from '../services/sourcePreferences';
 import { FILM_SOURCES } from '../services/filmSources';
 
 interface EmbedModalProps {
   media: MediaItem;
   initialSeason?: number;
   initialEpisode?: number;
+  lastSource?: string;
   onClose: () => void;
   /** Hands a VyseTV scraper result to the real player instead of an iframe. */
   onPlay?: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
@@ -50,7 +52,7 @@ function clampPositiveInt(raw: string, current: number): number {
  * direct results come first (they are real streams, not iframes), and the embed
  * sites sit below them as a clearly-labelled fallback — never mixed in.
  */
-const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, onClose, onPlay }) => {
+const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initialEpisode = 1, lastSource, onClose, onPlay }) => {
   const [custom, setCustom] = usePersistentState<EmbedProvider[]>('praha.v2.embed-providers', []);
   const [overrides, setOverrides] = usePersistentState<Record<string, { movie: string; series: string }>>('praha.v2.embed-overrides', {});
   const [updateConfig, setUpdateConfig] = usePersistentState<{ enabled: boolean; url: string }>('praha.v2.embed-update-config', { enabled: true, url: DEFAULT_EMBED_UPDATE_URL });
@@ -147,11 +149,15 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
   const remotePresets = applyEmbedOverrides(EMBED_PRESETS, remote);
   const providers = [...applyEmbedOverrides(remotePresets, overrides), ...(Array.isArray(custom) ? custom.filter((p) => p && typeof p.name === 'string' && typeof p.id === 'string') : [])].filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
 
-  /** Results grouped by source, keeping the order `scrapeFilmSources` returned. */
+  const rankedStreams = useMemo(() => lastSource
+    ? [...vyseStreams].sort((a, b) => Number(sourceKey(b) === lastSource) - Number(sourceKey(a) === lastSource))
+    : vyseStreams, [vyseStreams, lastSource]);
+
+  /** Groups follow the ranked stream order. */
   const groups = useMemo<SourceGroup[]>(() => {
     const out: SourceGroup[] = [];
     const index = new Map<string, number>();
-    for (const stream of vyseStreams) {
+    for (const stream of rankedStreams) {
       const key = stream.provider || stream.sourceName;
       const at = index.get(key);
       if (at === undefined) {
@@ -162,7 +168,7 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
       }
     }
     return out;
-  }, [vyseStreams]);
+  }, [rankedStreams]);
 
   const torrentCount = vyseStreams.filter((stream) => Boolean(stream.infoHash)).length;
 
@@ -288,7 +294,7 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
                 <span className="embed-block-icon direct"><Sparkles size={16} /></span>
                 <div>
                   <h3>Direct sources <span className={`embed-block-count ${hasDirect ? 'ok' : ''}`}>{vyseStreams.length}</span></h3>
-                  <p>Played by PRAHA's own player. Movy and Knaben first, then the ported scrapers.</p>
+                  <p>These streams play in PRAHA’s video player.</p>
                 </div>
               </div>
               <button type="button" className="button button-secondary button-small" onClick={() => setVyseKey((key) => key + 1)} disabled={vyseLoading} aria-label="Search the sources again">
@@ -315,7 +321,7 @@ const EmbedModal: React.FC<EmbedModalProps> = ({ media, initialSeason = 1, initi
                           {[stream.quality, stream.language, stream.size, stream.seeders !== undefined ? `${stream.seeders} seeders` : undefined, torrent ? 'torrent' : stream.format].filter(Boolean).join(' · ') || 'Stream'}
                         </small>
                       </div>
-                      <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, vyseStreams.slice(vyseStreams.indexOf(stream) + 1))}>
+                      <button type="button" className="button button-primary button-small" onClick={() => playStream(stream, rankedStreams.filter((candidate) => candidate !== stream))}>
                         <Play size={14} /> Play
                       </button>
                     </div>;

@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -17,6 +18,10 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import java.io.ByteArrayInputStream;
 import java.util.Locale;
 
@@ -25,6 +30,11 @@ public final class ProtectedEmbedActivity extends Activity {
     public static final String EXTRA_URL = "embed_url";
     public static final String EXTRA_ARCHIVE_LOAN = "archive_loan";
     private WebView web;
+    private WebView popup;
+    private View bookView;
+    private BookFileReader reader;
+    private Button closeButton;
+    private LinearLayout siteActions;
     private FrameLayout content;
     private View fullScreen;
     private WebChromeClient.CustomViewCallback fullScreenCallback;
@@ -33,6 +43,8 @@ public final class ProtectedEmbedActivity extends Activity {
     private String initialUrl;
     private boolean destroyed;
     private boolean archiveLoan;
+    private boolean bookSite;
+    private boolean pageFailed;
     /** Shown until the player's first page finishes loading, then removed. */
     private TextView loading;
 
@@ -43,21 +55,48 @@ public final class ProtectedEmbedActivity extends Activity {
         if (!EmbedBlocklist.isPublicHttps(target) || initialUrl.length() > 4096) { finish(); return; }
         initialHost = target.getHost().toLowerCase(Locale.ROOT);
         archiveLoan = getIntent().getBooleanExtra(EXTRA_ARCHIVE_LOAN, false);
+        bookSite = initialHost.equals("annas-archive.gl") || initialHost.equals("theoceanofpdf.com");
         if (archiveLoan && !isArchiveItem(target)) { finish(); return; }
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.BLACK);
         LinearLayout bar = new LinearLayout(this);
-        Button close = new Button(this); close.setText("Close"); close.setOnClickListener(v -> finish());
-        Button browser = new Button(this); browser.setText(archiveLoan ? "Open in browser" : "Browser (unfiltered)");
-        browser.setOnClickListener(v -> { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(initialUrl)).addCategory(Intent.CATEGORY_BROWSABLE)); } catch (Exception ignored) { } });
-        bar.addView(close); bar.addView(browser);
+        closeButton = new Button(this);
+        closeButton.setText("Close");
+        closeButton.setOnClickListener(v -> { if (reader != null) closeBook(); else finish(); });
+        Button browser = new Button(this);
+        browser.setText(isBookPage() ? "Open in browser" : "Browser (unfiltered)");
+        browser.setOnClickListener(v -> {
+            String currentUrl = web == null ? null : web.getUrl();
+            openBrowser(currentUrl != null ? currentUrl : initialUrl);
+        });
+        siteActions = new LinearLayout(this);
+        siteActions.addView(browser);
+        bar.addView(closeButton);
+        bar.addView(siteActions);
+        if (isBookPage()) {
+            Button reload = new Button(this);
+            reload.setText("Reload");
+            reload.setOnClickListener(v -> { if (web != null) web.reload(); });
+            siteActions.addView(reload);
+        }
         layout.addView(bar);
         content = new FrameLayout(this);
         layout.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        loading = new TextView(this); loading.setText(archiveLoan ? "Opening Internet Archive…" : "Loading protected player…"); loading.setTextColor(Color.WHITE); content.addView(loading);
+        loading = new TextView(this);
+        loading.setText(archiveLoan ? "Opening Internet Archive…" : bookSite ? "Opening book site…" : "Loading protected player…");
+        loading.setTextColor(Color.WHITE);
+        loading.setBackgroundColor(Color.BLACK);
+        content.addView(loading);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        ViewCompat.setOnApplyWindowInsetsListener(layout, (view, insets) -> {
+            Insets safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            return insets;
+        });
         setContentView(layout);
-        if (archiveLoan) {
+        ViewCompat.requestApplyInsets(layout);
+        if (isBookPage()) {
             openPlayer();
             return;
         }
@@ -78,6 +117,18 @@ public final class ProtectedEmbedActivity extends Activity {
         }, "embed-blocklist").start();
     }
 
+    private boolean isBookPage() {
+        return archiveLoan || bookSite;
+    }
+
+    private void openBrowser(String url) {
+        Uri uri = Uri.parse(url);
+        if (!EmbedBlocklist.isPublicHttps(uri)) return;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE));
+        } catch (Exception ignored) { }
+    }
+
     static boolean isArchiveItem(Uri uri) {
         return uri != null && "https".equals(uri.getScheme()) && "archive.org".equalsIgnoreCase(uri.getHost())
                 && uri.getUserInfo() == null && (uri.getPort() == -1 || uri.getPort() == 443)
@@ -95,9 +146,35 @@ public final class ProtectedEmbedActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(true);
-        web.setDownloadListener((url, userAgent, disposition, mimetype, length) -> { });
+        web.setDownloadListener((url, userAgent, disposition, mimetype, length) -> {
+            if (!bookSite) return;
+            if (BookFileReader.isBookDownload(url, disposition, mimetype)) openBook(url, userAgent);
+            else android.widget.Toast.makeText(this, "Choose a PDF, EPUB, or CBZ to read in PRAHA.", android.widget.Toast.LENGTH_SHORT).show();
+        });
         web.setWebChromeClient(new WebChromeClient() {
-            @Override public boolean onCreateWindow(WebView view, boolean dialog, boolean gesture, android.os.Message resultMsg) { return false; }
+            @Override public boolean onCreateWindow(WebView view, boolean dialog, boolean gesture, android.os.Message resultMsg) {
+                if (!bookSite || !gesture) return false;
+                if (popup != null) popup.destroy();
+                WebView child = new WebView(ProtectedEmbedActivity.this);
+                popup = child;
+                child.getSettings().setAllowFileAccess(false);
+                child.getSettings().setAllowContentAccess(false);
+                child.setWebViewClient(new WebViewClient() {
+                    @Override public boolean shouldOverrideUrlLoading(WebView source, WebResourceRequest request) {
+                        if (request.isForMainFrame()) acceptBookLink(child, request.getUrl());
+                        return true;
+                    }
+                    @Override public void onPageStarted(WebView source, String url, android.graphics.Bitmap favicon) {
+                        if (!"about:blank".equals(url)) acceptBookLink(child, Uri.parse(url));
+                    }
+                    @Override public WebResourceResponse shouldInterceptRequest(WebView source, WebResourceRequest request) {
+                        return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+                    }
+                });
+                ((WebView.WebViewTransport) resultMsg.obj).setWebView(child);
+                resultMsg.sendToTarget();
+                return true;
+            }
             @Override public void onPermissionRequest(android.webkit.PermissionRequest request) { request.deny(); }
             @Override public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (fullScreen != null) { callback.onCustomViewHidden(); return; }
@@ -110,11 +187,20 @@ public final class ProtectedEmbedActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (archiveLoan) {
+                if (isBookPage()) {
                     if (!EmbedBlocklist.isPublicHttps(uri)) return true;
                     if (!request.isForMainFrame()) return false;
                     String host = uri.getHost().toLowerCase(Locale.ROOT);
-                    return !host.equals("archive.org") && !host.endsWith(".archive.org");
+                    boolean sameSite = host.equals(initialHost) || host.endsWith("." + initialHost);
+                    if (bookSite && "GET".equals(request.getMethod())
+                            && (sameSite || request.hasGesture() || request.isRedirect())) {
+                        if (BookFileReader.isBookDownload(uri.toString(), null, null)) {
+                            openBook(uri.toString(), web.getSettings().getUserAgentString());
+                            return true;
+                        }
+                        return false;
+                    }
+                    return !sameSite;
                 }
                 if (!EmbedBlocklist.isPublicHttps(uri) || filter.blocks(uri.getHost())) return true;
                 // Prevent same-tab ad redirects from taking over the player, but
@@ -130,20 +216,81 @@ public final class ProtectedEmbedActivity extends Activity {
                 }
                 return false;
             }
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                pageFailed = false;
+            }
             @Override public void onPageFinished(WebView view, String url) {
-                if (loading.getParent() != null) content.removeView(loading);
+                if (!pageFailed && loading.getParent() != null) content.removeView(loading);
+            }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame() && isBookPage()) showPageError();
+            }
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse error) {
+                if (request.isForMainFrame() && isBookPage()) showPageError();
             }
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (!EmbedBlocklist.isPublicHttps(uri) || (!archiveLoan && filter.blocks(uri.getHost()))) {
+                if (!EmbedBlocklist.isPublicHttps(uri) || (!isBookPage() && filter.blocks(uri.getHost()))) {
                     return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
                 }
                 return null;
             }
         });
-        content.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        content.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
         web.loadUrl(initialUrl);
     }
+    private void acceptBookLink(WebView child, Uri uri) {
+        if (popup != child) return;
+        popup = null;
+        child.stopLoading();
+        web.post(child::destroy);
+        if (!EmbedBlocklist.isPublicHttps(uri)) return;
+        if (BookFileReader.isBookDownload(uri.toString(), null, null)) {
+            openBook(uri.toString(), web.getSettings().getUserAgentString());
+        } else {
+            web.loadUrl(uri.toString());
+        }
+    }
+
+    private void openBook(String url, String userAgent) {
+        if (reader != null || url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return;
+        reader = new BookFileReader(this);
+        TextView status = new TextView(this);
+        status.setText("Opening book…");
+        status.setTextColor(Color.WHITE);
+        status.setGravity(android.view.Gravity.CENTER);
+        status.setPadding(24, 24, 24, 24);
+        status.setBackgroundColor(Color.BLACK);
+        closeButton.setText("Back to site");
+        siteActions.setVisibility(View.GONE);
+        String referer = web.getUrl();
+        web.setVisibility(View.GONE);
+        bookView = status;
+        content.addView(status, new FrameLayout.LayoutParams(-1, -1));
+        reader.open(url, userAgent, referer, view -> {
+            content.removeView(status);
+            bookView = view;
+            content.addView(view, new FrameLayout.LayoutParams(-1, -1));
+        }, status::setText);
+    }
+
+    private void closeBook() {
+        if (reader == null) return;
+        if (bookView != null) content.removeView(bookView);
+        reader.close();
+        reader = null;
+        bookView = null;
+        closeButton.setText("Close");
+        siteActions.setVisibility(View.VISIBLE);
+        if (web != null) web.setVisibility(View.VISIBLE);
+    }
+
+    private void showPageError() {
+        pageFailed = true;
+        loading.setText("The site could not load. Tap Reload or Open in browser.");
+        if (loading.getParent() == null) content.addView(loading);
+    }
+
     private void hideFullScreen() {
         if (fullScreen == null) return;
         content.removeView(fullScreen); fullScreen = null;
@@ -151,12 +298,15 @@ public final class ProtectedEmbedActivity extends Activity {
         if (fullScreenCallback != null) { fullScreenCallback.onCustomViewHidden(); fullScreenCallback = null; }
     }
     @Override public void onBackPressed() {
+        if (reader != null) { closeBook(); return; }
         if (fullScreen != null) { hideFullScreen(); return; }
         if (web != null && web.canGoBack()) { web.goBack(); return; }
         super.onBackPressed();
     }
     @Override protected void onDestroy() {
         destroyed = true; hideFullScreen();
+        closeBook();
+        if (popup != null) { popup.destroy(); popup = null; }
         if (web != null) { content.removeView(web); web.stopLoading(); web.destroy(); web = null; }
         super.onDestroy();
     }

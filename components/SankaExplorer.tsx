@@ -13,6 +13,7 @@ import { resolveComickPoster } from '../services/sankaService';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '../services/comicLanguages';
+import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, loadComicBookSite, openComicBookSite } from '../services/comicBookSites';
 import { comicEditionKey, groupComicTitles } from '../services/comicGroups';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
@@ -162,6 +163,7 @@ const COMIC_SOURCE_OPTIONS = [
   { id: 'archive', label: 'Internet Archive (folkscanomy)' },
   { id: 'vintage', label: 'Vintage Western Comics' },
   { id: 'international', label: 'International Comic Scans' },
+  ...Object.entries(COMIC_BOOK_SITES).map(([id, site]) => ({ id, label: site.label })),
 ];
 
 // Compact labels for the source rail chips (full labels stay in tooltips).
@@ -201,7 +203,7 @@ function LanguageSelect({ language, onChange, label, showAll = true }: {
   );
 }
 
-const ALL_COMIC_SOURCES = COMIC_SOURCE_OPTIONS.map(({ id }) => id).filter((id) => id !== 'all' && id !== 'webtoon');
+const ALL_COMIC_SOURCES = COMIC_SOURCE_OPTIONS.map(({ id }) => id).filter((id) => id !== 'all' && id !== 'webtoon' && !isComicBookSite(id));
 
 function sourceLabel(id: string): string {
   return COMIC_SOURCE_SHORT[id] || COMIC_SOURCE_OPTIONS.find((option) => option.id === id)?.label || id;
@@ -211,6 +213,7 @@ async function loadComicPage(
   source: string, query: string, feed: ComicFeed, page: number, signal: AbortSignal,
   language: ComicLanguageFilter, bypassCache = false, onTitles?: (items: SankaTitle[]) => void,
 ): Promise<SankaTitlesPage> {
+  if (isComicBookSite(source)) return loadComicBookSite(source, query, language, page);
   if (!isArchiveSource(source)) {
     const knownLanguage = source === 'weebcentral' ? 'en'
       : SANKA_COMIC_SOURCES.some((option) => option.id === source) ? 'id' : undefined;
@@ -365,7 +368,17 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     }
   };
 
+  const [bookSiteError, setBookSiteError] = useState('');
+  const browseBookSite = async (url: string) => {
+    setBookSiteError('');
+    if (!await openComicBookSite(url)) setBookSiteError('Could not open the comic site.');
+  };
+
   const handleSelectTitle = (item: SankaTitle, variants = [item]) => {
+    if (isComicBookSite(item.source) && item.sourceUrl) {
+      void browseBookSite(item.sourceUrl);
+      return;
+    }
     chapterAbortRef.current?.abort();
     setReaderLoading(false);
     setReaderImages(null);
@@ -408,8 +421,11 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       if (activeSource === 'all') {
         setItems([]);
         setLoadingMore(true);
+        const sources = submittedQuery && language === 'all'
+          ? [...ALL_COMIC_SOURCES, 'oceanofpdf']
+          : ALL_COMIC_SOURCES;
         const { nextSources: remaining, failures } = await loadAllComicSources(
-          ALL_COMIC_SOURCES, submittedQuery, feed, 1, controller.signal, language, bypassCache,
+          sources, submittedQuery, feed, 1, controller.signal, language, bypassCache,
           (titles) => {
             if (!current || !titles.length) return;
             setItems((previous) => mergeUniqueTitles(previous, titles).merged);
@@ -420,12 +436,12 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         nextSources.current = remaining;
         setHasMore(remaining.length > 0);
         setLoadingMore(false);
-        if (failures === ALL_COMIC_SOURCES.length) setError('The comic sources did not respond.');
+        if (failures === sources.length) setError('The comic sources did not respond.');
         else if (failures) setFallbackNotice('Some comic sources did not respond.');
         return;
       }
 
-      if (isArchiveSource(activeSource) || ['mangadex', 'peppercarrot'].includes(activeSource) || language !== 'all') {
+      if (isArchiveSource(activeSource) || isComicBookSite(activeSource) || ['mangadex', 'peppercarrot'].includes(activeSource) || language !== 'all') {
         try {
           const result = await loadComicPage(activeSource, submittedQuery, feed, 1, controller.signal, language, bypassCache);
           if (!current) return;
@@ -744,6 +760,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
     </div>
   );
 
+  const selectedBookSite = isComicBookSite(source) ? source : null;
   const activeSourceLabel = COMIC_SOURCE_OPTIONS.find((item) => item.id === source)?.label || source;
 
   return (
@@ -841,6 +858,13 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
         </form>
       </div>
 
+      {selectedBookSite && (
+        <button className="button button-secondary button-small" onClick={() => void browseBookSite(comicBookSiteUrl(selectedBookSite, query.trim(), language))}>
+          <ExternalLink size={14} /> Browse {COMIC_BOOK_SITES[selectedBookSite].label}
+        </button>
+      )}
+      {bookSiteError && <p role="alert">{bookSiteError}</p>}
+
       {fallbackNotice && !loading && !error && (
         <p className="sanka-fallback-note" role="status">{fallbackNotice}</p>
       )}
@@ -866,8 +890,8 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
       ) : error ? (
         <div className="empty-state sanka-state sanka-error" role="alert">
           <span><CircleAlert size={25} /></span>
-          <h2>Couldn’t reach {activeSourceLabel}</h2>
-          <p>{error} Try switching to another comic source or retrying.</p>
+          <h2>{selectedBookSite ? 'Open the site’s catalog' : `Couldn’t reach ${activeSourceLabel}`}</h2>
+          <p>{error}{!selectedBookSite && ' Try switching to another comic source or retrying.'}</p>
           <div className="comic-source-rail comic-source-rail-center">
             {COMIC_SOURCE_OPTIONS.map((option) => (
               <button
@@ -916,7 +940,7 @@ const SankaExplorer: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) =>
                     className="comic-card-open"
                     type="button"
                     onClick={() => handleSelectTitle(item, [item, ...alternates])}
-                    aria-label={`Open ${item.title} chapters`}
+                    aria-label={`Open ${item.title}${isComicBookSite(item.source) ? '' : ' chapters'}`}
                   >
                     <div className="comic-poster">
                       <SafeComicImg

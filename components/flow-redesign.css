@@ -1,0 +1,78 @@
+.flow-page.yt-app {
+  --yt-surface: #0d0d10;
+  --yt-surface-2: #18181d;
+  --yt-surface-3: #23232c;
+  --yt-line: #27272f;
+  --yt-text: #f4f4f7;
+  --yt-muted: #a0a0ae;
+}
+.flow-page .yt-topbar { background: var(--yt-surface); }
+.flow-page .yt-brand { min-width: 0; }
+.flow-page .yt-brand strong { font-size: 15px; white-space: nowrap; }
+.flow-page .yt-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--yt-surface-2);
+  color: var(--yt-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.flow-page .yt-connection > span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.flow-page .yt-connection.connected { color: #86efac; }
+.flow-page .yt-mode-switch { padding: 3px; border-radius: 12px; background: var(--yt-surface-2); }
+.flow-page .yt-mode-switch > button { border-radius: 8px; height: 34px; }
+.flow-page .yt-mode-switch > button.active { background: var(--yt-text); color: var(--yt-surface); }
+.flow-page .yt-settings-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.flow-page .yt-card-art { border-radius: 13px; }
+.flow-page .yt-mobile-sections { display: none; }
+.flow-page .yt-explore-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
+.flow-page .yt-explore-grid .yt-chip { min-height: 56px; text-align: left; }
+
+@media (max-width: 760px) {
+  .flow-page.yt-app.page-enter { margin: 0 -14px -44px; }
+  .flow-page .yt-topbar { top: 66px; padding: 8px 12px 0; gap: 9px; }
+  .flow-page .yt-brand { flex: 1; gap: 6px; }
+  .flow-page .yt-brand > div { min-width: 0; }
+  .flow-page .yt-brand strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
+  .flow-page .yt-logo { width: 25px; height: 20px; }
+  .flow-page .yt-logo.music { width: 24px; height: 24px; }
+  .flow-page .yt-mode-switch { gap: 2px; margin-left: 0; }
+  .flow-page .yt-mode-switch > button { padding-inline: 8px; min-height: 38px; }
+  .flow-page .yt-mode-switch > button:not(.yt-icon-btn) svg { display: none; }
+  .flow-page .yt-connection { min-height: 36px; padding-inline: 6px; }
+  .flow-page .yt-search { height: 42px; order: 2; margin: 0; border-radius: 10px; background: var(--yt-surface-2); }
+  .flow-page .yt-search input { font-size: 13px; }
+  .flow-page .yt-mobile-sections { display: flex; order: 3; flex: 0 0 100%; overflow-x: auto; scrollbar-width: none; }
+  .flow-page .yt-mobile-sections .yt-rail-item { justify-content: center; flex: 1 0 auto; padding: 0 11px; height: 43px; gap: 0; border-radius: 0; color: var(--yt-muted); border-bottom: 2px solid transparent; }
+  .flow-page .yt-mobile-sections .yt-rail-item svg, .flow-page .yt-mobile-sections .yt-rail-item b { display: none; }
+  .flow-page .yt-mobile-sections .yt-rail-item span { flex: initial; }
+  .flow-page .yt-mobile-sections .yt-rail-item.active { color: var(--yt-text); background: transparent; border-color: var(--yt-red); }
+  .flow-page .yt-rail { display: none; }
+  .flow-page .yt-settings-sheet {
+    position: fixed;
+    inset: auto 10px calc(84px + env(safe-area-inset-bottom, 0px));
+    z-index: 27;
+    max-height: 62dvh;
+    overflow-y: auto;
+    margin: 0;
+    border: 1px solid var(--yt-line);
+    border-radius: 18px;
+    box-shadow: 0 8px 40px #000a;
+  }
+  .flow-page .yt-chipbar { scrollbar-width: none; }
+  .flow-page .yt-chip { min-height: 36px; }
+  .flow-page .yt-row { grid-auto-columns: minmax(178px, 68%); }
+  .flow-page:not(.music-mode) .yt-main > .yt-shelf:first-of-type .yt-row { grid-auto-columns: minmax(235px, 87%); }
+}
+
+@media (max-width: 760px) {
+  .flow-page.yt-watch-page { padding: 10px 14px 30px; }
+  .flow-page.yt-watch-page .yt-player-shell { border-radius: 16px; }
+  .flow-page.yt-watch-page .yt-player-bar { flex-wrap: wrap; gap: 8px; }
+  .flow-page.yt-watch-page .yt-watch-head h1 { font-size: 19px; line-height: 1.25; }
+  .flow-page.yt-watch-page .yt-side-card { gap: 12px; }
+  .flow-page.yt-watch-page.music-mode .yt-player-shell { box-shadow: 0 18px 38px #1f1018; }
+}

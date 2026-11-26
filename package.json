@@ -1,7 +1,7 @@
 {
   "name": "praha-stream",
   "private": true,
-  "version": "2.11.28",
+  "version": "2.11.29",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -26,11 +26,14 @@
     "cheerio": "^1.2.0",
     "crypto-js": "^4.2.0",
     "dashjs": "^5.1.1",
+    "epubjs": "^0.3.93",
     "hls.js": "^1.7.4",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.65.0",
     "mpegts.js": "^1.8.0",
     "p2p-media-loader-core": "^4.0.0",
     "p2p-media-loader-hlsjs": "^4.0.0",
+    "pdfjs-dist": "^6.5.438",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "webtorrent": "^2.8.5"
@@ -46,5 +49,10 @@
     "vite": "^6.2.0",
     "vitest": "^5.0.5"
   },
-  "description": "A local-first Android & web streaming interface for Stremio addons and Nuvio plugins."
+  "description": "A local-first Android & web streaming interface for Stremio addons and Nuvio plugins.",
+  "overrides": {
+    "epubjs": {
+      "@xmldom/xmldom": "0.9.12"
+    }
+  }
 }

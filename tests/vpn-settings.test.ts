@@ -2,10 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SETTINGS, normalizeSettings } from '../data/defaults';
 
 /**
- * The VPN toggle persists a flag *and* drives the native tunnel. A flag that
- * nothing reads is the state `dnsProvider` is in today, so pin the defaults
- * here: a missing resolver or a defaulted-on tunnel would silently change what
- * every user's DNS does on upgrade.
+ * Persist the app resolver and the device DNS tunnel independently.
  */
 describe('VPN settings', () => {
   it('starts off with a concrete resolver', () => {
@@ -23,5 +20,17 @@ describe('VPN settings', () => {
     const restored = normalizeSettings({ nsfw: 'off' });
     expect(restored.vpnEnabled).toBe(false);
     expect(restored.vpnDnsServer).toBe('1.1.1.1');
+  });
+});
+
+describe('App DNS settings', () => {
+  it('defaults to system DNS and preserves a supported encrypted resolver', () => {
+    expect(DEFAULT_SETTINGS.dnsProvider).toBe('system');
+    expect(normalizeSettings({ dnsProvider: 'cloudflare', dnsFallback: false }))
+      .toMatchObject({ dnsProvider: 'cloudflare', dnsFallback: false });
+  });
+
+  it('restores the system resolver for settings written before the provider was wired', () => {
+    expect(normalizeSettings({ dnsProvider: 'dnswatch' }).dnsProvider).toBe('system');
   });
 });

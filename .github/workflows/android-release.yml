@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'android-phone-v*'
   workflow_dispatch:
 
 permissions:
@@ -72,14 +73,25 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+          if [[ "$GITHUB_REF" == refs/tags/android-phone-v* ]]; then
+            ./gradlew assembleRelease --stacktrace -PphoneOnly
+          else
+            ./gradlew assembleRelease --stacktrace
+          fi
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/praha-signing/release.keystore
 
       - name: Verify Generated APK
         run: |
           ls -lh dist-apk/
-          test -n "$(ls dist-apk/praha-stream-v*.apk 2>/dev/null)"
+          shopt -s nullglob
+          apks=(dist-apk/praha-stream-v*.apk)
+          test "${#apks[@]}" -gt 0
+          if [[ "$GITHUB_REF" == refs/tags/android-phone-v* ]]; then
+            version="${GITHUB_REF_NAME#android-phone-}"
+            test "${#apks[@]}" -eq 1
+            test "${apks[0]}" = "dist-apk/praha-stream-${version}-arm64-v8a.apk"
+          fi
 
       # Proves the release APKs carry the real release key. A debug key would
       # still install, so this is the only thing standing between a missing
@@ -107,9 +119,8 @@ jobs:
           path: dist-apk/*.apk
           retention-days: 30
 
-      # Tag pushes only. A manual dispatch builds and uploads the artifact for
-      # inspection but must not publish, or `github.ref_name` would be a branch
-      # name and the old v2.11.13 fallback could rewrite a shipped release.
+      # General release tags publish automatically. Phone tags and manual
+      # dispatches produce signed artifacts for separate publication.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')

@@ -53,3 +53,23 @@ export function removeContinue(domain: ContinueDomain, id: string): void {
     // Ignore
   }
 }
+
+const scanPageKey = (identifier: string) => `praha.scan-page.${identifier}`;
+
+export function readScanPage(identifier: string): number | undefined {
+  try {
+    const saved = localStorage.getItem(scanPageKey(identifier));
+    const page = saved === null ? NaN : Number(saved);
+    return Number.isSafeInteger(page) && page >= 0 ? page : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveScanPage(identifier: string, page: number): void {
+  try {
+    localStorage.setItem(scanPageKey(identifier), String(page));
+  } catch {
+    // Reader state still works with storage disabled.
+  }
+}

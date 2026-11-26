@@ -9,6 +9,9 @@ def ksAlias = System.getenv("ANDROID_KEY_ALIAS")
 def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD")
 def hasReleaseSigning = ksPass && ksAlias && ksKeyPass && file(ksPath).exists()
 
+def phoneOnly = project.hasProperty('phoneOnly')
+def releaseAbis = phoneOnly ? ['arm64-v8a'] : ['arm64-v8a', 'armeabi-v7a', 'x86_64']
+
 android {
     namespace = "com.praha.stream"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,27 +19,29 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 53
-        versionName "2.11.28"
+        versionCode 54
+        versionName "2.11.29"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
         // Only the ABIs we ship. x86 (32-bit) is dropped: no device we support
         // uses it and it would add ~30 MB of libmpv for nothing.
-        ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        if (!phoneOnly) {
+            ndk {
+                abiFilters(*releaseAbis)
+            }
         }
     }
 
-    // Two APKs: a lean arm64 one and a universal one. `universalApk` builds the
-    // second without ABI filtering.
+    // Full releases include ABI splits and a universal APK. Phone releases
+    // build only the ARM64 split.
     splits {
         abi {
             enable true
             reset()
-            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
-            universalApk true
+            include(*releaseAbis)
+            universalApk(!phoneOnly)
         }
     }
 

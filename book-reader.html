@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; frame-src 'self' blob:; connect-src 'self' blob: data:; form-action 'none'; base-uri 'self'">
+    <title>Book reader</title>
+  </head>
+  <body>
+    <main id="pages" aria-label="Book pages"></main>
+    <nav aria-label="Reading controls">
+      <button id="previous" disabled>Previous</button>
+      <span id="position" role="status">Opening book…</span>
+      <button id="next" disabled>Next</button>
+    </nav>
+    <script type="module" src="/src/book-reader/reader.ts"></script>
+  </body>
+</html>

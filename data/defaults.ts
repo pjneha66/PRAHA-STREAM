@@ -156,7 +156,7 @@ export function normalizeSettings(raw: Partial<AppSettings> | null | undefined):
       // settings file must mean "mpv", and an explicit media3/web must survive.
       playerEngine: normalizePlayerEngine((base.player || {}).playerEngine),
     },
-    dnsProvider: typeof base.dnsProvider === 'string' ? base.dnsProvider : DEFAULT_SETTINGS.dnsProvider,
+    dnsProvider: base.dnsProvider && ['system', 'cloudflare', 'google', 'adguard', 'quad9'].includes(base.dnsProvider) ? base.dnsProvider : DEFAULT_SETTINGS.dnsProvider,
     dnsFallback: typeof base.dnsFallback === 'boolean' ? base.dnsFallback : DEFAULT_SETTINGS.dnsFallback,
     nsfw: base.nsfw === 'on' || base.nsfw === 'only' || base.nsfw === 'off'
       ? base.nsfw

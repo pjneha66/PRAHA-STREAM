@@ -3,18 +3,33 @@ import {
   BookOpen, CircleAlert, ExternalLink, FileDown, Library, LoaderCircle, RefreshCw, Search, X,
 } from 'lucide-react';
 import {
-  ARCHIVE_COLLECTIONS, BooksService, type BookFile, type BookItem,
+  ALL_ARCHIVE_TEXTS, ARCHIVE_COLLECTIONS, BooksService, type BookFile, type BookItem,
 } from '../services/archiveService';
-import { openSafeExternalUrl } from '../services/androidBridge';
+import { isAndroidApp, openProtectedEmbed, openSafeExternalUrl } from '../services/androidBridge';
 import ArchiveReader from './ArchiveReader';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { BookracyService } from '../services/bookracyService';
-import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
+import { readContinue, readScanPage, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import './books-view.css';
 
-type SourceMode = 'openlibrary' | 'archive' | 'bookracy';
+type Catalog = 'openlibrary' | 'archive' | 'bookracy';
+type SourceMode = Catalog | 'all';
+const CATALOGS: Catalog[] = ['archive', 'openlibrary', 'bookracy'];
+const SITE_URLS: Record<Catalog, string> = { archive: 'https://archive.org', openlibrary: 'https://openlibrary.org', bookracy: 'https://bookracy.com' };
+
+function mergeBooks(current: BookItem[], incoming: BookItem[]): BookItem[] {
+  const byEdition = new Map(current.map((book) => [book.identifier || book.id, book]));
+  for (const book of incoming) {
+    const key = book.identifier || book.id;
+    const existing = byEdition.get(key);
+    byEdition.set(key, existing
+      ? { ...existing, openLibraryKey: existing.openLibraryKey || book.openLibraryKey, restricted: existing.restricted || book.restricted }
+      : book);
+  }
+  return [...byEdition.values()];
+}
 
 /** Open Library quick subjects (openlibrary.org/subjects/...). */
 const OPEN_LIBRARY_SUBJECTS = [
@@ -24,6 +39,7 @@ const OPEN_LIBRARY_SUBJECTS = [
 
 /** Compact chip label per source mode (full names stay next to the search bar). */
 const SOURCE_LABEL: Record<SourceMode, string> = {
+  all: 'All catalogs',
   archive: 'Archive.org',
   openlibrary: 'Open Library',
   bookracy: 'Bookracy',
@@ -112,22 +128,18 @@ const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> =
   );
 };
 
-/**
- * Books tab: Open Library + Internet Archive search, folkscanomy collections,
- * Bookracy catalog with curated shelves, downloadable pdf/epub/cbz files.
- * Anna's Archive / OceanofPDF are offered as external site links only —
- * PRAHA does not integrate shadow-library search or downloads.
- */
 const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery }) => {
-  const [mode, setMode] = useState<SourceMode>('archive');
+  const [mode, setMode] = useState<SourceMode>('all');
   const [collectionId, setCollectionId] = useState<string>(ARCHIVE_COLLECTIONS[1].id);
   const [input, setInput] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [items, setItems] = useState<BookItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [page, setPage] = useState(1);
+  const pages = useRef<Partial<Record<Catalog, number>>>({});
   const [hasMore, setHasMore] = useState(false);
+  const [unavailable, setUnavailable] = useState<Catalog[]>([]);
+  const [siteError, setSiteError] = useState('');
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<BookItem | null>(null);
   const [files, setFiles] = useState<BookFile[] | null>(null);
@@ -135,67 +147,73 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
   const [filesError, setFilesError] = useState('');
   const [readerItem, setReaderItem] = useState<BookItem | null>(null);
   const requestSeq = useRef(0);
+  const fileSeq = useRef(0);
   const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('book'));
 
   // Bookracy curated shelves (home rails before a search narrows things down).
   const [shelves, setShelves] = useState<Array<{ label: string; items: BookItem[] }>>([]);
   const [shelvesLoading, setShelvesLoading] = useState(false);
-  const loadShelves = useCallback(async () => {
-    if (mode !== 'bookracy') return;
-    setShelvesLoading(true);
-    try {
-      const rows = await BookracyService.featuredCategories();
-      // Empty rows mean the API answered but everything failed — still fine,
-      // the shelves just don't render.
-      setShelves(rows.filter((row) => row.items.length > 0));
-    } catch {
-      setShelves([]);
-    } finally {
-      setShelvesLoading(false);
-    }
-  }, [mode]);
-
   useEffect(() => {
-    if (mode === 'bookracy' && !submitted) void loadShelves();
-    else setShelves([]);
-  }, [mode, submitted, loadShelves]);
+    if (mode !== 'bookracy' || submitted || loading || !items.length || unavailable.length) {
+      setShelves([]);
+      setShelvesLoading(false);
+      return;
+    }
+    let active = true;
+    setShelvesLoading(true);
+    void BookracyService.featuredCategories().then((rows) => {
+      if (active) setShelves(rows);
+    }).finally(() => { if (active) setShelvesLoading(false); });
+    return () => { active = false; };
+  }, [mode, submitted, loading, items.length > 0, unavailable.length]);
 
-  const load = useCallback(async (nextPage: number, append: boolean) => {
+  const load = useCallback(async (append = false) => {
     const seq = ++requestSeq.current;
     if (append) setLoadingMore(true);
-    else setLoading(true);
-    if (!append) setError('');
-    const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === collectionId) || ARCHIVE_COLLECTIONS[0];
-    try {
-      const result = mode === 'archive'
-        ? await BooksService.searchArchive(submitted, collection, nextPage)
-        : mode === 'bookracy'
-          ? await BookracyService.search(submitted || 'fantasy', nextPage, 24)
-          : await BooksService.searchOpenLibrary(submitted || 'classics', nextPage);
-      if (seq !== requestSeq.current) return;
-      setItems((current) => (append ? [...current, ...result] : result));
-      setPage(nextPage);
-      setHasMore(result.length >= 24);
-      if (!append && !result.length) setError(submitted ? 'No books matched that search.' : 'Nothing found — try a search.');
-    } catch (err) {
-      if (seq !== requestSeq.current) return;
-      if (!append) {
-        setItems([]);
-        setHasMore(false);
-        setError(err instanceof Error ? err.message : 'The book source did not answer.');
-      }
-    } finally {
-      if (seq === requestSeq.current) {
-        setLoading(false);
-        setLoadingMore(false);
-      }
+    else {
+      setLoading(true);
+      setError('');
+      setUnavailable([]);
+      setHasMore(false);
+      setItems([]);
+      pages.current = mode === 'all'
+        ? submitted ? { archive: 1, openlibrary: 1, bookracy: 1 } : { archive: 1 }
+        : { [mode]: 1 };
     }
+    const collection = mode === 'all' && submitted
+      ? ALL_ARCHIVE_TEXTS
+      : ARCHIVE_COLLECTIONS.find((entry) => entry.id === collectionId) || ARCHIVE_COLLECTIONS[0];
+    const activeCatalogs = CATALOGS.filter((catalog) => pages.current[catalog] !== undefined);
+    const results = await Promise.allSettled(activeCatalogs.map(async (catalog) => {
+      const page = pages.current[catalog]!;
+      const books = await (catalog === 'archive'
+        ? BooksService.searchArchive(submitted, collection, page)
+        : catalog === 'openlibrary'
+          ? BooksService.searchOpenLibrary(submitted || 'classics', page)
+          : BookracyService.search(submitted || 'fantasy', page));
+      if (seq === requestSeq.current) {
+        setItems((current) => mergeBooks(current, books));
+        if (books.length) setLoading(false);
+        if (books.length < 24) delete pages.current[catalog];
+        else pages.current[catalog] = page + 1;
+      }
+      return books;
+    }));
+    if (seq !== requestSeq.current) return;
+
+    const failed = activeCatalogs.filter((_, index) => results[index].status === 'rejected');
+    const hasResults = results.some((result) => result.status === 'fulfilled' && result.value.length > 0);
+    setUnavailable(failed);
+    setHasMore(CATALOGS.some((catalog) => !failed.includes(catalog) && pages.current[catalog] !== undefined));
+    if (!append && !hasResults && !failed.length) setError(submitted ? 'No books matched that search.' : 'Nothing found. Try a search.');
+    setLoading(false);
+    setLoadingMore(false);
   }, [mode, collectionId, submitted]);
 
   useEffect(() => {
-    void load(1, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, collectionId, submitted]);
+    void load();
+    return () => { requestSeq.current += 1; };
+  }, [load]);
 
   // Universal-search deep link: a query issued in Discover lands here pre-filled.
   const appliedPrefillRef = useRef<string | null>(null);
@@ -203,18 +221,18 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
     const term = (prefillQuery || '').trim();
     if (!term || appliedPrefillRef.current === term) return;
     appliedPrefillRef.current = term;
+    setMode('all');
     setInput(term);
     setSubmitted(term);
   }, [prefillQuery]);
 
-  const openItem = async (item: BookItem) => {
-    setSelected(item);
+  const rememberBook = useCallback((item: BookItem, page?: number) => {
     recordContinue({
       domain: 'book',
       id: item.identifier || item.id,
       title: item.title,
       cover: item.coverUrl,
-      detail: item.authors?.[0],
+      detail: page === undefined ? item.authors[0] : `Page ${page + 1}`,
       payload: {
         identifier: item.identifier,
         openLibraryKey: item.openLibraryKey,
@@ -226,24 +244,31 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       },
     });
     setContinueEntries(readContinue('book'));
+  }, []);
+
+  const openItem = async (item: BookItem) => {
+    const seq = ++fileSeq.current;
+    setSelected(item);
     setFiles(null);
     setFilesError('');
-    if (!item.identifier) return;
-    setFilesLoading(true);
+    setFilesLoading(Boolean(item.identifier && !item.restricted));
+    if (!item.identifier || item.restricted) {
+      rememberBook(item);
+      return;
+    }
     try {
       const list = await BooksService.itemFiles(item.identifier);
-      setFiles(list);
-      if (!list.length) setFilesError('No downloadable pdf/epub/cbz found in this item.');
+      if (seq === fileSeq.current) setFiles(list);
     } catch (err) {
-      setFilesError(err instanceof Error ? err.message : 'Could not load the file list.');
+      if (seq === fileSeq.current) setFilesError(err instanceof Error ? err.message : 'Could not load the file list.');
     } finally {
-      setFilesLoading(false);
+      if (seq === fileSeq.current) setFilesLoading(false);
     }
   };
 
   const resumeBook = (entry: ContinueEntry) => {
-    const payload = (entry.payload || {}) as { identifier?: string; openLibraryKey?: string; source?: 'openlibrary' | 'archive'; authors?: string[]; year?: string; restricted?: boolean };
-    void openItem({
+    const payload = (entry.payload || {}) as Partial<BookItem>;
+    const item: BookItem = {
       id: entry.id,
       title: entry.title,
       authors: payload.authors || [],
@@ -252,12 +277,33 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       coverUrl: entry.cover,
       identifier: payload.identifier,
       openLibraryKey: payload.openLibraryKey,
+      downloadUrl: payload.downloadUrl,
       source: payload.source || 'archive',
-    });
+    };
+    if (item.identifier && !item.restricted) setReaderItem(item);
+    else void openItem(item);
   };
 
-  const collection = ARCHIVE_COLLECTIONS.find((c) => c.id === collectionId) || ARCHIVE_COLLECTIONS[0];
-  const showShelves = mode === 'bookracy' && !submitted && shelves.length > 0;
+  const recordPage = useCallback((page: number) => {
+    if (readerItem) rememberBook(readerItem, page);
+  }, [readerItem, rememberBook]);
+
+  const openSite = async (url: string) => {
+    setSiteError('');
+    const opened = await (isAndroidApp() ? openProtectedEmbed(url) : openSafeExternalUrl(url));
+    if (!opened) setSiteError('Could not open this site. Try again.');
+  };
+
+  const findOtherCopies = (book: BookItem) => {
+    setSelected(null);
+    setMode('all');
+    setInput(book.title);
+    if (submitted !== book.title) setSubmitted(book.title);
+    else if (mode === 'all') void load();
+  };
+
+  const showShelves = mode === 'bookracy' && !submitted && (shelvesLoading || shelves.length > 0);
+  const savedPage = selected?.identifier ? readScanPage(selected.identifier) : undefined;
 
   return (
     <div className="standard-page page-enter books-page">
@@ -266,7 +312,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         <div>
           <span className="page-kicker">EBOOKS · COMICS · PAPERBACKS</span>
           <h1>Books</h1>
-          <p>Millions of free texts from archive.org &amp; Open Library, plus Bookracy downloads — read online or save pdf / epub / cbz.</p>
+          <p>Search by title, author, or ISBN.</p>
         </div>
       </div>
 
@@ -307,13 +353,13 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
             </select>
           </label>
         )}
-        <button
+        {mode !== 'all' && <button
           type="button"
           className="text-button books-external-link"
-          onClick={() => openSafeExternalUrl(mode === 'archive' ? 'https://archive.org' : mode === 'openlibrary' ? 'https://openlibrary.org' : 'https://bookracy.com')}
+          onClick={() => openSafeExternalUrl(SITE_URLS[mode])}
         >
           <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
-        </button>
+        </button>}
       </div>
 
       {mode === 'openlibrary' && (
@@ -331,14 +377,20 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
         </div>
       )}
 
-      <form className="books-search" onSubmit={(e) => { e.preventDefault(); setSubmitted(input.trim()); }}>
+      <form className="books-search" onSubmit={(e) => {
+        e.preventDefault();
+        const term = input.trim();
+        if (term === submitted) void load();
+        else setSubmitted(term);
+      }}>
         <div className="books-search-field">
           <Search size={15} />
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === 'archive' ? `Search ${collection.name}…` : mode === 'bookracy' ? 'Search Bookracy (title, author)…' : 'Search Open Library (title, author)…'}
+            placeholder="Title, author, or ISBN"
             aria-label="Search books"
+            maxLength={200}
           />
           {input && (
             <button type="button" className="search-clear" aria-label="Clear book search" onClick={() => { setInput(''); setSubmitted(''); }}>
@@ -346,31 +398,32 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
             </button>
           )}
         </div>
-        <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+        <button className="button button-primary button-small" type="submit">Search</button>
       </form>
 
-      {error && (
-        <div className="books-error" role="alert">
-          <CircleAlert size={15} /> {error}
-          <button onClick={() => void load(1, false)}>
-            <RefreshCw size={13} /> Retry
-          </button>
+      {(error || unavailable.length > 0) && (
+        <div className="books-error" role="status">
+          <CircleAlert size={15} />
+          {error || `${unavailable.map((catalog) => SOURCE_LABEL[catalog]).join(', ')} unavailable.`}
+          {unavailable.length > 0 && (
+            <button type="button" onClick={() => void load(items.length > 0)} disabled={loadingMore}>
+              <RefreshCw size={13} /> Retry
+            </button>
+          )}
+          {mode === 'bookracy' && unavailable.length > 0 && (
+            <button type="button" onClick={() => setMode('all')}>Search all catalogs</button>
+          )}
         </div>
       )}
 
-      {/* Shadow-library notice: external sites only, never integrated */}
       <div className="books-notice">
-        <BookOpen size={14} />
-        <span>
-          <strong>Anna's Archive</strong> is a shadow-library aggregator and <strong>OceanofPDF</strong> distributes
-          unauthorized ebook copies — both are linked as external sites only.
-        </span>
-        <button type="button" className="button button-secondary button-small" onClick={() => openSafeExternalUrl('https://annas-archive.org')}>
-          Anna's Archive
+        <button type="button" className="button button-secondary button-small" onClick={() => void openSite('https://annas-archive.gl/')}>
+          Anna’s Archive
         </button>
-        <button type="button" className="button button-secondary button-small" onClick={() => openSafeExternalUrl('https://theoceanofpdf.com/')}>
+        <button type="button" className="button button-secondary button-small" onClick={() => void openSite('https://theoceanofpdf.com/')}>
           OceanofPDF
         </button>
+        {siteError && <span role="status">{siteError}</span>}
       </div>
 
       {showShelves && (
@@ -404,7 +457,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
           <button
             type="button"
             className="button button-secondary"
-            onClick={() => void load(page + 1, true)}
+            onClick={() => void load(true)}
             disabled={loadingMore}
           >
             {loadingMore ? <LoaderCircle size={15} className="spin" /> : 'Load more'}
@@ -429,7 +482,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 <h2>{selected.title}</h2>
                 {selected.authors.length > 0 && <p className="books-sheet-authors">{selected.authors.join(', ')}</p>}
                 {selected.year && <span className="books-sheet-year">First published {selected.year}</span>}
-                {selected.restricted && <span className="books-sheet-year">Free loan when available. Sign in to your Internet Archive account to borrow.</span>}
+                {selected.restricted && <span className="books-sheet-year">Sign in to Internet Archive to borrow an available copy or join a waitlist if offered.</span>}
               </div>
             </div>
 
@@ -440,7 +493,7 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                 <>
                   {!selected.restricted && (
                     <button type="button" className="button button-primary" onClick={() => setReaderItem(selected)}>
-                      <BookOpen size={14} /> Read online
+                      <BookOpen size={14} /> {savedPage === undefined ? 'Read online' : `Resume page ${savedPage + 1}`}
                     </button>
                   )}
                   {selected.restricted ? <ArchiveBorrowButton key={selected.identifier} identifier={selected.identifier} /> : (
@@ -449,6 +502,11 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
                     </button>
                   )}
                 </>
+              )}
+              {selected.restricted && (
+                <button type="button" className="button button-secondary" onClick={() => findOtherCopies(selected)}>
+                  <Search size={13} /> Find another copy
+                </button>
               )}
               {selected.openLibraryKey && (
                 <button type="button" className="button button-secondary" onClick={() => openSafeExternalUrl(BooksService.workUrl(selected.openLibraryKey!))}>
@@ -487,8 +545,10 @@ const BooksView: React.FC<{ compact?: boolean; prefillQuery?: string }> = ({ com
       {/* In-app Read Online — native archive.org leaf reader */}
       {readerItem?.identifier && (
         <ArchiveReader
+          key={readerItem.identifier}
           identifier={readerItem.identifier}
           title={readerItem.title}
+          onPageRead={recordPage}
           onClose={() => setReaderItem(null)}
         />
       )}

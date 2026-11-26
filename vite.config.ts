@@ -1,4 +1,5 @@
 import path from 'path';
+import { readFileSync, readdirSync } from 'node:fs';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
@@ -302,6 +303,27 @@ function sankaImageRelayPlugin(): Plugin {
   };
 }
 
+/** PDF.js loads decoders, fonts and character maps by their packaged filenames. */
+function pdfReaderAssets(): Plugin {
+  return {
+    name: 'praha-pdf-reader-assets',
+    apply: 'build',
+    generateBundle() {
+      for (const directory of ['cmaps', 'standard_fonts', 'iccs', 'wasm']) {
+        const source = path.resolve(__dirname, 'node_modules/pdfjs-dist', directory);
+        for (const filename of readdirSync(source)) {
+          if (filename.startsWith('quickjs-')) continue;
+          this.emitFile({
+            type: 'asset',
+            fileName: `assets/pdfjs/${directory}/${filename}`,
+            source: readFileSync(path.join(source, filename)),
+          });
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig({
   server: {
     port: 3000,
@@ -315,7 +337,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: apiProxy,
   },
-  plugins: [react(), sankaImageRelayPlugin(), comickRelayPlugin()],
+  plugins: [react(), sankaImageRelayPlugin(), comickRelayPlugin(), pdfReaderAssets()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
@@ -325,6 +347,7 @@ export default defineConfig({
     },
   },
   build: {
+    rollupOptions: { input: { app: path.resolve(__dirname, 'index.html'), bookReader: path.resolve(__dirname, 'book-reader.html') } },
     chunkSizeWarningLimit: 900,
   },
   test: {

@@ -162,7 +162,6 @@ export function useMpvEngine({
   const frameTimesRef = useRef<number[]>([]);
   const rafRef = useRef<number | null>(null);
   const initialSeekDoneRef = useRef(false);
-  const lastProgressSentRef = useRef(0);
   const engineNameRef = useRef('HTML5');
   // Mirrored as state so the player chrome can show the active engine chip
   // (refs do not re-render).
@@ -658,11 +657,8 @@ export function useMpvEngine({
     const video = videoRef.current;
     if (!video) return;
 
-    const emitProgress = (force = false) => {
-      const now = Date.now();
-      if (!force && now - lastProgressSentRef.current < 3000) return;
-      if (video.currentTime > 1 && Number.isFinite(video.duration) && video.duration > 0) {
-        lastProgressSentRef.current = now;
+    const emitProgress = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0) {
         onProgressRef.current?.(video.currentTime, video.duration);
       }
     };
@@ -679,7 +675,7 @@ export function useMpvEngine({
     };
     const syncTime = () => {
       setCurrentTime(video.currentTime);
-      emitProgress(false);
+      emitProgress();
     };
     const syncDuration = () => {
       const dur = Number.isFinite(video.duration) ? video.duration : 0;
@@ -799,12 +795,12 @@ export function useMpvEngine({
     const syncRate = () => setRate(video.playbackRate);
     const handlePlay = () => setPlaying(true);
     const handlePlaying = () => { setPlaying(true); setWaiting(false); setRecoveryStatus(''); };
-    const handlePause = () => { setPlaying(false); emitProgress(true); };
+    const handlePause = () => { setPlaying(false); emitProgress(); };
     const handleWaiting = () => setWaiting(true);
     const handleCanPlay = () => { setReady(true); setWaiting(false); };
     const handleEnded = () => {
       setPlaying(false);
-      emitProgress(true);
+      emitProgress();
       onEndedRef.current?.();
     };
 

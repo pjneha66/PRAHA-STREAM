@@ -33,6 +33,7 @@ const SourceModal: React.FC<{
   media: MediaItem;
   initialSeason?: number;
   initialEpisode?: number;
+  initialEpisodeTitle?: string;
   addons: InstalledAddon[];
   repositories: NuvioRepository[];
   /** Installed JavaScript plugin repositories (VyseTV's plugin engine). */
@@ -41,10 +42,11 @@ const SourceModal: React.FC<{
   tmdbApiKey?: string;
   preferredLanguage: string;
   preferredSource: string;
+  lastSource?: string;
   onPreferredSourceChange: (key: string) => void;
   onClose: () => void;
   /** Last resort only — opens the iframe aggregator when every source failed. */
-  onOpenEmbedded?: () => void;
+  onOpenEmbedded?: (season?: number, episode?: number) => void;
   onOpenExtensions: () => void;
   onPlay: (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives?: StreamResult[]) => void;
   /**
@@ -57,6 +59,7 @@ const SourceModal: React.FC<{
   media,
   initialSeason = 1,
   initialEpisode = 1,
+  initialEpisodeTitle,
   addons,
   repositories,
   pluginRepositories = NO_PLUGIN_REPOSITORIES,
@@ -64,6 +67,7 @@ const SourceModal: React.FC<{
   tmdbApiKey,
   preferredLanguage,
   preferredSource,
+  lastSource,
   onPreferredSourceChange,
   onClose,
   onOpenEmbedded,
@@ -476,7 +480,8 @@ const SourceModal: React.FC<{
     ? 1
     : activeStreamAddons + activeScrapers + 2;
 
-  const currentEpTitle = episodes.find((e) => e.episode === episode)?.title;
+  const currentEpTitle = episodes.find((e) => e.episode === episode)?.title
+    ?? (season === initialSeason && episode === initialEpisode ? initialEpisodeTitle : undefined);
 
   return (
     <div
@@ -493,6 +498,7 @@ const SourceModal: React.FC<{
           errors={errors}
           health={health}
           preferredSource={preferredSource}
+          lastSource={lastSource}
           onPreferredSourceChange={onPreferredSourceChange}
           season={season}
           episode={episode}
@@ -520,7 +526,7 @@ const SourceModal: React.FC<{
         {onOpenEmbedded && !extensionOnly && (
           <div className="source-embed-fallback">
             <span className="source-embed-note">Nothing above plays?</span>
-            <button type="button" className="button button-secondary button-small" onClick={onOpenEmbedded}>
+            <button type="button" className="button button-secondary button-small" onClick={() => onOpenEmbedded(season, episode)}>
               <MonitorPlay size={14} /> Embedded players
             </button>
           </div>

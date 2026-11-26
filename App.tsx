@@ -42,7 +42,7 @@ import { animeService } from './services/animeService';
 import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
 import type { HomeRowSettings } from './services/homeCache';
-import { exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } from './services/androidBridge';
+import { configureAppDns, exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import { OctaveMusicService, type MusicTrack } from './services/musicService';
@@ -51,6 +51,7 @@ import { hashPin, verifyPin, isPbkdf2Hash } from './services/profilePin';
 import { ARCHIVE_COLLECTIONS, BooksService, type BookItem } from './services/archiveService';
 import { buildIptvPlayback, IptvZapStore, type IptvPlayback } from './services/iptvService';
 import { loadTitle } from './services/cloudstreamService';
+import { sourceKey } from './services/sourcePreferences';
 import {
   APP_VERSION,
   AppSettings, AppView, CloudStreamSearchItem, DiscoverFilters, HomeCatalog, InstalledAddon,
@@ -90,6 +91,11 @@ interface SourceRequest {
   season?: number;
   episode?: number;
   episodeTitle?: string;
+}
+
+function matchesPlayback(entry: WatchProgress, { media, season, episode }: SourceRequest) {
+  return entry.media.id === media.id &&
+    (media.type !== 'series' || (entry.season === season && entry.episode === episode));
 }
 
 interface ActivePlayerState {
@@ -310,6 +316,10 @@ const App: React.FC = () => {
   const settings = useMemo(() => normalizeSettings(rawSettings), [rawSettings]);
 
   useEffect(() => {
+    void configureAppDns(settings.dnsProvider || 'system', settings.dnsFallback !== false);
+  }, [settings.dnsProvider, settings.dnsFallback]);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.accent || 'gold');
   }, [settings.accent]);
 
@@ -350,6 +360,19 @@ const App: React.FC = () => {
 
   const [watchlist, setWatchlist] = usePersistentState<MediaItem[]>(watchlistKey, []);
   const [history, setHistory] = usePersistentState<WatchProgress[]>(historyKey, []);
+  const recentTitles = useMemo(() => {
+    const latest = new Map<string, WatchProgress>();
+    for (const entry of history) {
+      if (!latest.has(entry.media.id)) latest.set(entry.media.id, entry);
+    }
+    return [...latest.values()].slice(0, 50);
+  }, [history]);
+  const lastSourceFor = (media: MediaItem) => {
+    const stream = media.type === 'series'
+      ? history.find((entry) => entry.media.id === media.id && entry.lastStream)?.lastStream
+      : undefined;
+    return stream ? sourceKey(stream) : '';
+  };
   const [homeRowsRaw, setHomeRows] = usePersistentState<HomeRowSettings>(`praha.v2.profile.${activeProfile.id}.home-rows`, DEFAULT_HOME_ROWS);
   const homeRows = useMemo(() => normalizeHomeRows(homeRowsRaw), [homeRowsRaw]);
   const [preferredSource, setPreferredSource] = usePersistentState<string>(`praha.v2.profile.${activeProfile.id}.preferred-source`, '');
@@ -451,6 +474,12 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  const flushPlaybackProgress = useCallback(() => {
+    const active = playerRef.current;
+    const pending = latestProgressRef.current;
+    if (active && pending) upsertHistoryRef.current?.({ ...active, ...pending });
+  }, []);
+
   const closePlayer = useCallback(() => {
     // The player exposes two close paths (its ✕ button and the Android back
     // button) and the app may already be handling the same press, so make this
@@ -461,7 +490,6 @@ const App: React.FC = () => {
     closingRef.current = true;
     lastPlayerCloseRef.current = Date.now();
 
-    const active = playerRef.current;
     try {
       nativeVlcStop();
       document.documentElement.classList.remove('player-vlc-active');
@@ -470,20 +498,7 @@ const App: React.FC = () => {
       document.exitFullscreen?.().catch(() => undefined);
     } catch {}
 
-    // Persist the last known position before the player unmounts, then put the
-    // user back on the page they actually pressed play from.
-    const pending = latestProgressRef.current;
-    if (pending && active) {
-      upsertHistoryRef.current?.({
-        media: active.media,
-        stream: active.stream,
-        season: active.season,
-        episode: active.episode,
-        episodeTitle: active.episodeTitle,
-        currentTime: pending.currentTime,
-        duration: pending.duration,
-      });
-    }
+    flushPlaybackProgress();
     latestProgressRef.current = null;
     lastProgressFlushRef.current = 0;
 
@@ -497,7 +512,7 @@ const App: React.FC = () => {
     setSourceState(origin.source);
     const y = origin.scrollY;
     window.requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'auto' }));
-  }, []);
+  }, [flushPlaybackProgress]);
 
   // Re-arm the close guard whenever a player is actually on screen again.
   useEffect(() => {
@@ -983,11 +998,14 @@ const App: React.FC = () => {
     }
     const existing = history.find((h) => h.media.id === item.id);
     setSelected(null);
-    setSourceState({
+    const request = {
       media: item,
       season: season ?? existing?.season ?? (item.type === 'series' ? 1 : undefined),
       episode: episode ?? existing?.episode ?? (item.type === 'series' ? 1 : undefined),
-      episodeTitle: episodeTitle ?? existing?.episodeTitle,
+    };
+    setSourceState({
+      ...request,
+      episodeTitle: episodeTitle ?? history.find((entry) => matchesPlayback(entry, request))?.episodeTitle,
     });
   };
 
@@ -1001,17 +1019,16 @@ const App: React.FC = () => {
     duration?: number;
   }) => {
     setHistory((current) => {
-      const prev = current.find((entry) => entry.media.id === patch.media.id);
-      const sameEpisode = !patch.season || (prev?.season === patch.season && prev?.episode === patch.episode);
-      const duration = patch.duration ?? (sameEpisode ? prev?.duration : undefined);
-      const currentTime = patch.currentTime ?? (sameEpisode ? prev?.currentTime : 0);
+      const prev = current.find((entry) => matchesPlayback(entry, patch));
+      const duration = patch.duration ?? prev?.duration;
+      const currentTime = patch.currentTime ?? prev?.currentTime ?? 0;
       // Placeholder-clip guard (port of Nuvio's WatchingPolicies): debrid and
       // scrape sources sometimes resolve to tiny sample/placeholder files —
       // never record meaningful progress for sub-2-minute "durations".
       const isPlaceholderClip = Boolean(duration && duration < 121);
       const progress = duration && duration > 0 && typeof currentTime === 'number' && !isPlaceholderClip
         ? Math.max(1, Math.min(100, Math.round((currentTime / duration) * 100)))
-        : (sameEpisode ? prev?.progress || 1 : 1);
+        : (prev?.progress || 1);
 
       const nextEntry: WatchProgress = {
         media: patch.media,
@@ -1021,7 +1038,7 @@ const App: React.FC = () => {
         watchedAt: Date.now(),
         season: patch.season ?? prev?.season,
         episode: patch.episode ?? prev?.episode,
-        episodeTitle: patch.episodeTitle ?? (sameEpisode ? prev?.episodeTitle : undefined),
+        episodeTitle: patch.episodeTitle ?? prev?.episodeTitle,
         lastStream: patch.stream ?? prev?.lastStream,
       };
 
@@ -1033,7 +1050,7 @@ const App: React.FC = () => {
         });
       }
 
-      return [nextEntry, ...current.filter((entry) => entry.media.id !== patch.media.id)].slice(0, 50);
+      return [nextEntry, ...current.filter((entry) => !matchesPlayback(entry, patch))];
     });
   }, [setHistory, settings.sync]);
 
@@ -1050,20 +1067,26 @@ const App: React.FC = () => {
     playbackOriginRef.current = { view, source: keepSource, scrollY: window.scrollY || 0 };
   }, [view]);
 
+  const startVideo = useCallback((next: ActivePlayerState, resumeLimit = 95) => {
+    const existing = history.find((entry) => matchesPlayback(entry, next));
+    const initialTime = existing && existing.progress < resumeLimit ? existing.currentTime || 0 : 0;
+    upsertHistory(next);
+    playbackPositionRef.current = initialTime;
+    latestProgressRef.current = null;
+    lastProgressFlushRef.current = 0;
+    setPlayer({ ...next, initialTime });
+  }, [history, upsertHistory]);
+
   const resumeWatchEntry = (entry: WatchProgress) => {
     if (entry.lastStream && entry.progress < 96) {
-      playbackPositionRef.current = entry.currentTime || 0;
       rememberPlaybackOrigin(null);
-      latestProgressRef.current = null;
-      lastProgressFlushRef.current = 0;
-      setPlayer({
+      startVideo({
         media: entry.media,
         stream: entry.lastStream,
         season: entry.season,
         episode: entry.episode,
         episodeTitle: entry.episodeTitle,
-        initialTime: entry.currentTime || 0,
-      });
+      }, 96);
       return;
     }
     openSources(entry.media, entry.season, entry.episode, entry.episodeTitle);
@@ -1071,34 +1094,11 @@ const App: React.FC = () => {
 
   const playStream = (stream: StreamResult, season?: number, episode?: number, episodeTitle?: string, alternatives: StreamResult[] = []) => {
     if (!sourceState) return;
-    const { media } = sourceState;
-    const existing = history.find((entry) =>
-      entry.media.id === media.id &&
-      (media.type === 'movie' || (entry.season === season && entry.episode === episode)),
-    );
-    const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
-
-    upsertHistory({ media, stream, season, episode, episodeTitle });
+    // Keep the source list mounted so closing the player restores its results.
     rememberPlaybackOrigin(sourceState);
-    // The source list stays mounted underneath (suspended) so closing the
-    // player returns instantly to the same results instead of refetching every
-    // provider. It is cleared when the player closes without a resume target.
-    playbackPositionRef.current = resumeTime;
-    latestProgressRef.current = null;
-    lastProgressFlushRef.current = 0;
-    setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
+    startVideo({ media: sourceState.media, stream, season, episode, episodeTitle, alternatives });
   };
 
-  /**
-   * Play from the embed screen.
-   *
-   * That screen is opened straight from the details page (and from the source
-   * list's "Try embedded players" button), and both paths leave `sourceState`
-   * null. `playStream` reads its media from `sourceState`, so pressing Play on a
-   * direct stream there returned on its first line and did nothing at all, with
-   * no message. The media comes from `embedState` instead, and closing the player
-   * lands back on the page the embed screen was opened from.
-   */
   const playStreamFromEmbed = (
     stream: StreamResult,
     season?: number,
@@ -1108,32 +1108,14 @@ const App: React.FC = () => {
   ) => {
     const media = embedStateRef.current?.media;
     if (!media) return;
-    const existing = history.find((entry) =>
-      entry.media.id === media.id &&
-      (media.type === 'movie' || (entry.season === season && entry.episode === episode)),
-    );
-    const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
-
-    upsertHistory({ media, stream, season, episode, episodeTitle });
-    // There is no source list mounted under this screen, so the origin records
-    // only the page behind it — closing the player must not try to restore one.
     rememberPlaybackOrigin(null);
-    playbackPositionRef.current = resumeTime;
-    latestProgressRef.current = null;
-    lastProgressFlushRef.current = 0;
     setEmbedState(null);
-    setPlayer({ media, stream, season, episode, episodeTitle, initialTime: resumeTime, alternatives });
+    startVideo({ media, stream, season, episode, episodeTitle, alternatives });
   };
 
   const playExplorerStream = (media: MediaItem, stream: StreamResult) => {
-    const existing = history.find((entry) => entry.media.id === media.id);
-    const resumeTime = existing && existing.progress < 95 ? (existing.currentTime || 0) : 0;
-    upsertHistory({ media, stream });
     rememberPlaybackOrigin(null);
-    playbackPositionRef.current = resumeTime;
-    latestProgressRef.current = null;
-    lastProgressFlushRef.current = 0;
-    setPlayer({ media, stream, initialTime: resumeTime });
+    startVideo({ media, stream });
   };
 
   const zapIptvChannel = useCallback((direction: 1 | -1) => {
@@ -1156,7 +1138,10 @@ const App: React.FC = () => {
   }, [view]);
 
   const handlePlayerProgress = useCallback((currentTime: number, duration: number) => {
-    if (!player || (playerIdentityRef.current !== null && playerIdentityRef.current !== playerIdentity)) return;
+    if (!player || closingRef.current || playerIdentityRef.current !== playerIdentity) return;
+    if (!Number.isFinite(currentTime) || currentTime < 0 || !Number.isFinite(duration) || duration <= 0) return;
+    // The native engine can report zero before applying its initial seek.
+    if (currentTime === 0 && !latestProgressRef.current && (player.initialTime ?? 0) > 1) return;
     playbackPositionRef.current = currentTime;
     latestProgressRef.current = { currentTime, duration };
     // Coalesce the ~4 Hz native tick into one write every 5s. The ref keeps the
@@ -1178,28 +1163,14 @@ const App: React.FC = () => {
   // Flush the pending position when the app is backgrounded (Android home /
   // recents) — the player may never get a chance to emit another tick.
   useEffect(() => {
-    const flush = () => {
-      const pending = latestProgressRef.current;
-      const active = playerRef.current;
-      if (!pending || !active) return;
-      upsertHistoryRef.current?.({
-        media: active.media,
-        stream: active.stream,
-        season: active.season,
-        episode: active.episode,
-        episodeTitle: active.episodeTitle,
-        currentTime: pending.currentTime,
-        duration: pending.duration,
-      });
-    };
-    const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+    const onHide = () => { if (document.visibilityState === 'hidden') flushPlaybackProgress(); };
     document.addEventListener('visibilitychange', onHide);
-    window.addEventListener('pagehide', flush);
+    window.addEventListener('pagehide', flushPlaybackProgress);
     return () => {
       document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('pagehide', flushPlaybackProgress);
     };
-  }, []);
+  }, [flushPlaybackProgress]);
 
   // Next-episode preload cache (port of Nuvio's PlayerNextEpisodeAutoPlay):
   // sources for the next episode are fetched before the card is tapped so the
@@ -1268,110 +1239,36 @@ const App: React.FC = () => {
     }).catch(() => undefined);
   }, [player, prepareNextEpisode]);
 
-  const handleNextEpisode = useCallback(async () => {
+  const handleNextEpisode = async () => {
     if (!player || player.media.type !== 'series' || !player.season || !player.episode) return;
     setNextEpisodeLoading(true);
     try {
       const preloadKey = `${player.media.id}:${player.season}:${player.episode}`;
-      const preloaded = nextEpisodePreloadRef.current?.key === preloadKey ? nextEpisodePreloadRef.current : null;
-      if (preloaded) {
-        const preferred = preloaded.streams.find((s) => s.sourceName === player.stream.sourceName && !s.url.startsWith('magnet:'))
-          || preloaded.streams.find((s) => !s.url.startsWith('magnet:'))
-          || preloaded.streams[0];
-        if (preferred) {
-          nextEpisodePreloadRef.current = null;
-          upsertHistory({ media: player.media, stream: preferred, season: preloaded.nextSeason, episode: preloaded.nextEp, episodeTitle: preloaded.nextTitle, currentTime: 0 });
-          playbackPositionRef.current = 0;
-          latestProgressRef.current = null;
-          lastProgressFlushRef.current = 0;
-          setPlayer({
-            media: player.media,
-            stream: preferred,
-            season: preloaded.nextSeason,
-            episode: preloaded.nextEp,
-            episodeTitle: preloaded.nextTitle,
-            initialTime: 0,
-          });
-          notify(`Playing S${preloaded.nextSeason} E${preloaded.nextEp}${preloaded.nextTitle ? ` — ${preloaded.nextTitle}` : ''}`, 'success');
-          setNextEpisodeLoading(false);
-          return;
-        }
-      }
+      const preloaded = nextEpisodePreloadRef.current;
+      const next = preloaded?.key === preloadKey ? preloaded : await prepareNextEpisode();
+      if (!next || playerRef.current !== player || closingRef.current) return;
+      const { nextSeason: season, nextEp: episode, nextTitle: episodeTitle, streams } = next;
+      const lastSource = sourceKey(player.stream);
+      const preferred = streams.find((stream) => sourceKey(stream) === lastSource && !stream.url.startsWith('magnet:'))
+        ?? streams.find((stream) => sourceKey(stream) === lastSource)
+        ?? streams.find((stream) => !stream.url.startsWith('magnet:'))
+        ?? streams[0];
 
-      let nextSeason = player.season;
-      let nextEp = player.episode + 1;
-      let nextTitle: string | undefined;
-
-      const animeSlug = player.media.anime?.slug
-        || (player.media.source === 'anicore' ? player.media.id.slice('anicore:'.length) : '');
-
-      if (tmdbReady && player.media.tmdbId) {
-        const seasonEps = await tmdbService.getSeason(player.media.tmdbId, player.season).catch(() => []);
-        if (seasonEps.length && nextEp > seasonEps.length) {
-          nextSeason = player.season + 1;
-          nextEp = 1;
-        }
-        const targetList = nextSeason === player.season
-          ? seasonEps
-          : await tmdbService.getSeason(player.media.tmdbId, nextSeason).catch(() => []);
-        nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
-      } else if (animeSlug) {
-        // Anime episode guides live in AniCore, so Up Next works without a TMDB key.
-        const animeEpisodes = await animeService.getEpisodes(animeSlug).catch(() => []);
-        const seasonEps = animeEpisodes.filter((entry) => entry.season === player.season);
-        if (seasonEps.length && nextEp > seasonEps.length) {
-          nextSeason = player.season + 1;
-          nextEp = 1;
-        }
-        const targetList = nextSeason === player.season
-          ? seasonEps
-          : animeEpisodes.filter((entry) => entry.season === nextSeason);
-        nextTitle = targetList.find((e) => e.episode === nextEp)?.title;
-      }
-
-      const ids = await tmdbService.resolveIds(player.media).catch(() => ({
-        tmdbId: player.media.tmdbId ? String(player.media.tmdbId) : undefined,
-        imdbId: player.media.imdbId,
-      }));
-      const resolved = { ...player.media, imdbId: ids.imdbId || player.media.imdbId };
-
-      const [stremio, nuvio] = await Promise.all([
-        findStremioStreams(addons, resolved, nextSeason, nextEp),
-        ids.tmdbId
-          ? findNuvioStreams(repositories, ids.tmdbId, 'series', nextSeason, nextEp, nuvioSettings)
-          : Promise.resolve({ streams: [], errors: [] }),
-      ]);
-
-      const allStreams = [...stremio.streams, ...nuvio.streams];
-      const preferred = allStreams.find((s) => s.sourceName === player.stream.sourceName && !s.url.startsWith('magnet:'))
-        || allStreams.find((s) => !s.url.startsWith('magnet:'))
-        || allStreams[0];
-
+      nextEpisodePreloadRef.current = null;
       if (preferred) {
-        upsertHistory({ media: player.media, stream: preferred, season: nextSeason, episode: nextEp, episodeTitle: nextTitle, currentTime: 0 });
-        playbackPositionRef.current = 0;
-        latestProgressRef.current = null;
-        lastProgressFlushRef.current = 0;
-        setPlayer({
-          media: player.media,
-          stream: preferred,
-          season: nextSeason,
-          episode: nextEp,
-          episodeTitle: nextTitle,
-          initialTime: 0,
-        });
-        notify(`Playing S${nextSeason} E${nextEp}${nextTitle ? ` — ${nextTitle}` : ''}`, 'success');
+        flushPlaybackProgress();
+        startVideo({ media: player.media, stream: preferred, season, episode, episodeTitle, alternatives: streams.filter((stream) => stream !== preferred) });
+        notify(`Playing S${season} E${episode}${episodeTitle ? ` — ${episodeTitle}` : ''}`, 'success');
       } else {
-        const media = player.media;
-        setPlayer(null);
-        openSources(media, nextSeason, nextEp, nextTitle);
+        closePlayer();
+        openSources(player.media, season, episode, episodeTitle);
       }
     } catch {
       notify('Could not automatically load next episode.', 'error');
     } finally {
       setNextEpisodeLoading(false);
     }
-  }, [player, tmdbReady, addons, repositories, nuvioSettings, settings.tmdbApiKey, upsertHistory, notify]);
+  };
 
   // Profile management
   const createProfile = (
@@ -1491,7 +1388,7 @@ const App: React.FC = () => {
         loading={catalogState === 'loading'}
         error={catalogError}
         tmdbReady={tmdbReady}
-        history={history}
+        history={recentTitles}
         watchlist={watchlist}
         addons={allAddons}
         repositories={repositories}
@@ -1622,7 +1519,7 @@ const App: React.FC = () => {
     page = (
       <LibraryView
         watchlist={watchlist}
-        history={history}
+        history={recentTitles}
         profileName={activeProfile.name}
         onSelect={openDetails}
         onPlay={(item) => openSources(item)}
@@ -1757,13 +1654,15 @@ const App: React.FC = () => {
         />
       )}
 
-      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} onClose={() => setEmbedState(null)} onPlay={playStreamFromEmbed} />}
+      {embedState && !player && <EmbedModal media={embedState.media} initialSeason={embedState.season} initialEpisode={embedState.episode} lastSource={lastSourceFor(embedState.media)} onClose={() => setEmbedState(null)} onPlay={playStreamFromEmbed} />}
 
       {sourceState && (
         <SourceModal
+          key={JSON.stringify([sourceState.media.id, sourceState.season, sourceState.episode])}
           media={sourceState.media}
           initialSeason={sourceState.season}
           initialEpisode={sourceState.episode}
+          initialEpisodeTitle={sourceState.episodeTitle}
           addons={allAddons}
           repositories={repositories}
           pluginRepositories={pluginRepositories}
@@ -1771,11 +1670,11 @@ const App: React.FC = () => {
           tmdbApiKey={settings.tmdbApiKey}
           preferredLanguage={settings.preferredLanguage}
           preferredSource={preferredSource}
+          lastSource={lastSourceFor(sourceState.media)}
           onPreferredSourceChange={setPreferredSource}
           onClose={() => setSourceState(null)}
-          onOpenEmbedded={() => {
-            if (!sourceState) return;
-            setEmbedState({ media: sourceState.media, season: sourceState.season, episode: sourceState.episode });
+          onOpenEmbedded={(season, episode) => {
+            setEmbedState({ media: sourceState.media, season, episode });
             setSourceState(null);
           }}
           onOpenExtensions={() => { setSourceState(null); navigate('extensions'); }}
@@ -1816,10 +1715,11 @@ const App: React.FC = () => {
             onZapChannel={zapIptvChannel}
             onTryAnother={player.alternatives?.length ? () => {
               const [next, ...remaining] = player.alternatives!;
+              const initialTime = playbackPositionRef.current;
+              upsertHistory({ ...player, ...latestProgressRef.current, stream: next, currentTime: initialTime });
               latestProgressRef.current = null;
               lastProgressFlushRef.current = 0;
-              setPlayer({ ...player, stream: next, alternatives: remaining, initialTime: playbackPositionRef.current });
-              upsertHistory({ media: player.media, stream: next, season: player.season, episode: player.episode, episodeTitle: player.episodeTitle, currentTime: playbackPositionRef.current });
+              setPlayer({ ...player, stream: next, alternatives: remaining, initialTime });
               notify(`Trying ${next.sourceName}…`);
             } : undefined}
             onFindSources={() => {

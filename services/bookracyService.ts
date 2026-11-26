@@ -1,4 +1,4 @@
-import type { BookItem } from './archiveService';
+import { bookIsbn, type BookItem } from './archiveService';
 import { nativeFetchText } from './androidBridge';
 import { evictOldest } from './cacheCaps';
 
@@ -43,7 +43,7 @@ export class BookracyService {
   }
 
   static async search(query: string, page = 1, limit = 24, lang = 'en'): Promise<BookItem[]> {
-    const cleanQuery = query.trim() || 'fantasy';
+    const cleanQuery = bookIsbn(query.trim()) ?? (query.trim() || 'fantasy');
     const cacheKey = `${cleanQuery}|${lang}|${page}|${limit}`;
     const cached = resultCache.get(cacheKey);
     if (cached) return cached;
@@ -61,17 +61,17 @@ export class BookracyService {
       // that as an honest offline error instead of a quiet "no books".
       response = await nativeFetchText(`${BASE_URL}?${params.toString()}`, {
         headers: HEADERS,
-        timeoutMs: 15000,
+        timeoutMs: 6000,
       });
     } catch {
-      throw new Error('Bookracy is offline right now — the API did not answer.');
+      throw new Error('Bookracy is unavailable. Search the other catalogs or retry.');
     }
     try {
       if (!response.ok || !response.data) {
-        throw new Error('Bookracy is offline right now — the API did not answer.');
+        throw new Error('Bookracy is unavailable. Search the other catalogs or retry.');
       }
       const decoded = JSON.parse(response.data) as { results?: BookracyResult[] };
-      if (!Array.isArray(decoded.results)) return [];
+      if (!Array.isArray(decoded.results)) throw new Error('Unexpected Bookracy response.');
 
       const items: BookItem[] = [];
       const seenMd5 = new Set<string>();
@@ -103,10 +103,8 @@ export class BookracyService {
       resultCache.set(cacheKey, items);
       evictOldest(resultCache, 40);
       return items;
-    } catch (err) {
-      // Surface the offline error to the UI; parse hiccups stay a quiet empty.
-      if (err instanceof Error && err.message.includes('offline')) throw err;
-      return [];
+    } catch {
+      throw new Error('Bookracy is unavailable. Search the other catalogs or retry.');
     }
   }
 

@@ -5,6 +5,7 @@ import {
   RefreshCw, Search, Settings, Share2, SkipBack, SkipForward, Sparkles, ThumbsDown, ThumbsUp,
   Trash2, TrendingUp, UserCircle2, Video, X,
 } from 'lucide-react';
+import './flow-redesign.css';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { isAndroidApp, openSafeExternalUrl } from '../services/androidBridge';
 import {
@@ -27,7 +28,7 @@ import {
  */
 
 type FlowMode = 'youtube' | 'music';
-type FlowSection = 'home' | 'subscriptions' | 'search' | 'channel';
+type FlowSection = 'home' | 'subscriptions' | 'search' | 'channel' | 'recent' | 'samples' | 'explore';
 type FlowVideo = FlowVideoRef;
 
 interface FlowSubscription {
@@ -282,7 +283,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   /* ---------------- loaders ---------------- */
   useEffect(() => {
-    if (section !== 'home') return;
+    if (section !== 'home' && section !== 'samples') return;
     let active = true;
     setHomeState((state) => (state === 'ready' ? state : 'loading'));
     setHomeError('');
@@ -562,11 +563,44 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
   const nextUp = detail?.related.slice(0, 14) ?? [];
 
-  const navItems: Array<{ id: FlowSection; label: string; icon: typeof Video }> = [
-    { id: 'home', label: 'Home', icon: mode === 'music' ? Sparkles : Video },
-    { id: 'search', label: 'Search', icon: Search },
-    { id: 'subscriptions', label: mode === 'music' ? 'Music channels' : 'Channels', icon: ListMusic },
-  ];
+  const musicMode = mode === 'music';
+  const recentItems = musicMode ? recent.filter(isMusicVideo) : recent;
+  const navItems: Array<{ id: FlowSection; label: string; icon: typeof Video }> = musicMode
+    ? [
+      { id: 'home', label: 'Home', icon: Music },
+      { id: 'samples', label: 'Samples', icon: Play },
+      { id: 'explore', label: 'Explore', icon: Sparkles },
+      { id: 'recent', label: 'Library', icon: ListMusic },
+    ]
+    : [
+      { id: 'home', label: 'Home', icon: Video },
+      { id: 'subscriptions', label: 'Channels', icon: Bell },
+      { id: 'recent', label: 'You', icon: UserCircle2 },
+    ];
+  const openMirrorSettings = () => {
+    setSettingsOpen(true);
+    setShowMirrors(true);
+  };
+  const changeSection = (next: FlowSection) => {
+    setSection(next);
+    setResults(null);
+    setSubmitted('');
+  };
+  const sectionButtons = navItems.map((item) => {
+    const Icon = item.icon;
+    return <button
+      key={item.id}
+      type="button"
+      className={`yt-rail-item ${section === item.id ? 'active' : ''}`}
+      aria-current={section === item.id ? 'page' : undefined}
+      onClick={() => changeSection(item.id)}
+    >
+      <Icon size={17} />
+      <span>{item.label}</span>
+      {item.id === 'subscriptions' && subs.length > 0 && <b>{subs.length}</b>}
+    </button>;
+  });
+  const showMirrorsButton = <button key="mirrors" type="button" className="yt-rail-item" onClick={openMirrorSettings}><Radio size={16} /><span>Mirrors</span></button>;
 
   /* ------------------------------------------------------------------ *
    * Watch page
@@ -958,8 +992,11 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
           </span>
           <div>
             <strong>{mode === 'music' ? 'YouTube Music' : 'YouTube'}</strong>
-            <small>{backend === 'youtube' ? 'direct' : backend === 'mirror' ? 'via mirror' : 'flow'}</small>
+
           </div>
+          <button type="button" className={`yt-connection ${backend ? 'connected' : ''}`} onClick={openMirrorSettings} aria-label="Choose a mirror">
+            <span /> {backend === 'youtube' ? 'Direct' : backend === 'mirror' ? 'Mirror' : 'Sources'}
+          </button>
         </div>
 
         <form className="yt-search" onSubmit={submitSearch}>
@@ -976,7 +1013,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
 
         <div className="yt-mode-switch" role="tablist" aria-label="Flow mode">
           <button role="tab" aria-selected={mode === 'youtube'} className={mode === 'youtube' ? 'active' : ''} onClick={() => { setMode('youtube'); setSection('home'); setResults(null); setSubmitted(''); }}>
-            <Video size={13} /> YouTube
+            <Video size={13} /> Video
           </button>
           <button role="tab" aria-selected={mode === 'music'} className={mode === 'music' ? 'active' : ''} onClick={() => { setMode('music'); setSection('home'); setResults(null); setSubmitted(''); }}>
             <Music size={13} /> Music
@@ -990,12 +1027,18 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             <Settings size={15} />
           </button>
         </div>
+        <nav className="yt-mobile-sections" aria-label="Flow sections">
+          {musicMode ? sectionButtons : [...sectionButtons.slice(0, 2), showMirrorsButton, sectionButtons[2]]}
+        </nav>
       </header>
 
       {/* mini settings drawer for the browse screen */}
       {settingsOpen && !detailId && (
-        <div className="yt-settings-sheet">
-          <p className="yt-menu-title">Flow settings</p>
+        <div className="yt-settings-sheet" role="region" aria-label="Flow settings">
+          <div className="yt-settings-head">
+            <p className="yt-menu-title">Flow settings</p>
+            <button type="button" className="yt-btn" onClick={() => setSettingsOpen(false)} aria-label="Close Flow settings"><X size={16} /></button>
+          </div>
           <div className="yt-settings-grid">
             <label className="yt-menu-field">
               <span><Globe size={12} /> Player language</span>
@@ -1094,20 +1137,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
       <div className="yt-body">
         {/* left rail */}
         <nav className="yt-rail" aria-label="Flow sections">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                className={`yt-rail-item ${section === item.id ? 'active' : ''}`}
-                onClick={() => { setSection(item.id); if (item.id !== 'search') { setResults(null); } }}
-              >
-                <Icon size={17} />
-                <span>{item.label}</span>
-                {item.id === 'subscriptions' && subs.length > 0 && <b>{subs.length}</b>}
-              </button>
-            );
-          })}
+          {sectionButtons}
           {subs.length > 0 && (
             <>
               <p className="yt-rail-label">Subscriptions</p>
@@ -1120,7 +1150,7 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
             </>
           )}
           <p className="yt-rail-label">More from Flow</p>
-          <button className="yt-rail-item" onClick={() => setShowMirrors((open) => !open)}><Radio size={16} /><span>Mirrors</span></button>
+          {showMirrorsButton}
         </nav>
 
         {/* main column */}
@@ -1155,6 +1185,32 @@ const FlowView: React.FC<FlowViewProps> = ({ onPlay, onEmbed }) => {
               {musicState === 'ready' && musicHome?.shelves.map((shelf) => (
                 <Shelf key={shelf.id} title={shelf.title} videos={shelf.videos} onOpen={openVideo} note="songs only" />
               ))}
+            </>
+          )}
+
+          {section === 'recent' && (
+            <>
+              {musicMode && <button type="button" className="yt-btn" onClick={() => changeSection('subscriptions')}>Music channels</button>}
+              {recentItems.length > 0
+                ? <Shelf title={musicMode ? 'Recently played' : 'Recently watched'} videos={recentItems as YtVideo[]} onOpen={openVideo} layout="grid" />
+                : <section className="yt-empty"><Clock size={22} /><h2>{musicMode ? 'Recently played' : 'Recently watched'}</h2><p>{musicMode ? 'Played music will appear here.' : 'Watched videos will appear here.'}</p></section>}
+            </>
+          )}
+
+          {section === 'explore' && (
+            <section className="yt-shelf">
+              <div className="yt-shelf-head"><h2>Explore music</h2></div>
+              <div className="yt-explore-grid">
+                {MUSIC_MOODS.map((mood) => <button type="button" className="yt-chip" key={mood} onClick={() => submitSearch(undefined, mood)}>{mood}</button>)}
+              </div>
+            </section>
+          )}
+
+          {section === 'samples' && (
+            <>
+              {musicState === 'loading' && <div className="yt-loading"><LoaderCircle size={18} className="spin" /> Loading music…</div>}
+              {musicState === 'error' && errorCard(musicError, retryFetch)}
+              {musicState === 'ready' && <Shelf title="Music samples" videos={musicHome?.shelves.flatMap((shelf) => shelf.videos.slice(0, 4)) || []} onOpen={openVideo} layout="grid" />}
             </>
           )}
 

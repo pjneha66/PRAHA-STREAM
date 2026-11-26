@@ -87,7 +87,7 @@ export function streamPriority(stream: StreamResult): number {
   return base;
 }
 
-export function filterAndSortStreams(streams: StreamResult[], filters: SourceFilters, preferredSource: string, preferredLanguage: string): StreamResult[] {
+export function filterAndSortStreams(streams: StreamResult[], filters: SourceFilters, preferredSource: string, preferredLanguage: string, lastSource = ''): StreamResult[] {
   return streams.filter((stream) =>
     (filters.quality === 'all' || streamQuality(stream) === filters.quality) &&
     (filters.provider === 'all' || sourceKey(stream) === filters.provider) &&
@@ -95,6 +95,8 @@ export function filterAndSortStreams(streams: StreamResult[], filters: SourceFil
     (filters.codec === 'all' || streamCodec(stream) === filters.codec) &&
     (filters.subtitles === 'all' || (filters.subtitles === 'available' ? Boolean(stream.subtitles?.length) : !stream.subtitles?.length)),
   ).sort((a, b) => {
+    const recent = Number(sourceKey(b) === lastSource) - Number(sourceKey(a) === lastSource);
+    if (recent !== 0) return recent;
     const preferred = Number(sourceKey(b) === preferredSource) - Number(sourceKey(a) === preferredSource);
     if (preferred !== 0) return preferred;
     const priority = streamPriority(b) - streamPriority(a);

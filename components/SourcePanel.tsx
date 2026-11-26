@@ -67,6 +67,7 @@ interface SourcePanelProps {
   errors: SourceError[];
   health?: ProviderHealth[];
   preferredSource?: string;
+  lastSource?: string;
   onPreferredSourceChange?: (key: string) => void;
   season?: number;
   episode?: number;
@@ -93,7 +94,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   media, streams, loading, errors, season, episode, seasons, episodes,
   onSeasonChange, onEpisodeChange, onRefresh, providerCount, preferredLanguage,
   onPlay, onOpenExtensions, showClose, onClose, health = [], preferredSource = '', onPreferredSourceChange,
-  sourceSummary,
+  sourceSummary, lastSource,
 }) => {
   const [quality, setQuality] = useState('all');
   const [downloadHint, setDownloadHint] = useState('');
@@ -103,9 +104,9 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
   const [subtitles, setSubtitles] = useState('all');
   const [copied, setCopied] = useState('');
   const filters = { quality, provider, language, codec, subtitles };
-  const filtered = useMemo(() => filterAndSortStreams(streams, filters, preferredSource, preferredLanguage),
-    [streams, quality, provider, language, codec, subtitles, preferredSource, preferredLanguage]);
-  const allRanked = useMemo(() => filterAndSortStreams(streams, { quality: 'all', provider: 'all', language: 'all', codec: 'all', subtitles: 'all' }, preferredSource, preferredLanguage), [streams, preferredSource, preferredLanguage]);
+  const filtered = useMemo(() => filterAndSortStreams(streams, filters, preferredSource, preferredLanguage, lastSource),
+    [streams, quality, provider, language, codec, subtitles, preferredSource, preferredLanguage, lastSource]);
+  const allRanked = useMemo(() => filterAndSortStreams(streams, { quality: 'all', provider: 'all', language: 'all', codec: 'all', subtitles: 'all' }, preferredSource, preferredLanguage, lastSource), [streams, preferredSource, preferredLanguage, lastSource]);
   const providers = useMemo(() => Array.from(new Map(streams.map((stream) => [sourceKey(stream), stream.sourceName])).entries()), [streams]);
   const languages = useMemo(() => Array.from(new Set(streams.map((stream) => stream.language?.toLowerCase()).filter((value): value is string => Boolean(value)))).sort(), [streams]);
   const advancedCount = [provider, language, codec, subtitles].filter((value) => value !== 'all').length;
@@ -208,7 +209,7 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
             <label>Subtitles <select value={subtitles} onChange={(event) => setSubtitles(event.target.value)}><option value="all">Any</option><option value="available">Reported</option><option value="unknown">Not reported</option></select></label>
             {hasFilters && <button className="button button-secondary button-small" onClick={() => { setQuality('all'); setProvider('all'); setLanguage('all'); setCodec('all'); setSubtitles('all'); }}>Clear filters</button>}
           </div>
-          {onPreferredSourceChange && <p className="source-preference-hint">Star a provider to rank it first for this profile. Subtitle filters use only metadata reported by the stream.</p>}
+          {onPreferredSourceChange && <p className="source-preference-hint">Star a provider to give it priority across titles. Subtitle filters use only metadata reported by the stream.</p>}
         </details>
         <button className="icon-button source-refresh" onClick={onRefresh} disabled={loading} aria-label="Refresh streams" title="Refresh streams"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button>
       </div>

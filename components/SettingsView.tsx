@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { tmdbService } from '../services/tmdbService';
 import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
-import { isAndroidApp, isAndroidTv, openPrivateDnsSettings, setVpnEnabled, getVpnStatus } from '../services/androidBridge';
+import { checkAppDns, isAndroidApp, isAndroidTv, openPrivateDnsSettings, setVpnEnabled, getVpnStatus } from '../services/androidBridge';
 import { NETWORK_CONDITION_COPY, probeNetworkCondition, type NetworkCondition } from '../services/networkCondition';
 import { NSFW_COPY } from '../services/nsfwGate';
 import { TorrentStreamingEngine } from '../services/torrentStreamingService';
@@ -215,6 +215,13 @@ const SettingsView: React.FC<{
   const [imdxMessage, setImdxMessage] = useState('');
   const [dnsOpenError, setDnsOpenError] = useState(false);
   const [dnsCopied, setDnsCopied] = useState(false);
+  const [dnsTest, setDnsTest] = useState<{ provider: string; result: 'checking' | 'ok' | 'error' } | null>(null);
+  const testDns = async () => {
+    const provider = settings.dnsProvider || 'system';
+    setDnsTest({ provider, result: 'checking' });
+    const ok = await checkAppDns(provider).catch(() => false);
+    setDnsTest({ provider, result: ok ? 'ok' : 'error' });
+  };
   const [vpnBusy, setVpnBusy] = useState(false);
   const [vpnRunning, setVpnRunning] = useState(false);
   const [vpnError, setVpnError] = useState('');
@@ -833,7 +840,7 @@ const SettingsView: React.FC<{
               <span><Globe size={19} /></span>
               <div>
                 <h2>DNS over HTTPS <SourceKindBadge kind="free" /></h2>
-                <p>Choose an encrypted DNS resolver for app network requests. Helps when your network blocks some sites.</p>
+                <p>Choose a resolver for PRAHA’s Android catalog and API requests.</p>
               </div>
             </div>
             <div className="setting-row">
@@ -856,9 +863,10 @@ const SettingsView: React.FC<{
               </div>
             </div>
             <div className="setting-row">
-              <div><strong>DNS provider</strong><p>System default uses your device's configured DNS. Encrypted providers may improve privacy and bypass DNS blocks.</p></div>
+              <div><strong>DNS provider</strong><p>Encrypted providers resolve public hostnames over HTTPS.</p></div>
               <select
                 className="settings-select"
+                aria-label="DNS provider"
                 value={settings.dnsProvider || 'system'}
                 onChange={(e) => update('dnsProvider', e.target.value)}
               >
@@ -867,9 +875,6 @@ const SettingsView: React.FC<{
                 <option value="google">Google (8.8.8.8)</option>
                 <option value="adguard">AdGuard</option>
                 <option value="quad9">Quad9</option>
-                <option value="dnssb">DNS.SB</option>
-                <option value="dnswatch">DNS.Watch</option>
-                <option value="canadianshield">Canadian Shield</option>
               </select>
             </div>
             <div className="setting-row">
@@ -877,7 +882,17 @@ const SettingsView: React.FC<{
               <Toggle checked={settings.dnsFallback !== false} onChange={(val) => update('dnsFallback', val)} label="Fall back to system DNS" />
             </div>
             <p className="settings-tv-help">Android TV / remote: press <kbd>Tab</kbd> to move between controls, <kbd>Enter</kbd> to select, then scroll down with the D-pad.</p>
-            <p className="api-privacy"><ShieldCheck size={14} /><span>Applies when the app restarts. Encrypted DNS sends queries over HTTPS to the selected provider instead of your network's default resolver. Some Android WebView requests may still use system DNS.</span></p>
+            {isAndroidApp() && <div className="setting-row">
+              <div>
+                <strong>Test resolver</strong>
+                <p>Resolve example.com through the selected provider. This test runs with fallback disabled.</p>
+                {dnsTest?.provider === (settings.dnsProvider || 'system') && <p role="status">
+                  {dnsTest.result === 'checking' ? 'Checking resolver…' : dnsTest.result === 'ok' ? 'Resolver responded.' : 'Resolver test failed.'}
+                </p>}
+              </div>
+              <button type="button" className="button button-secondary" onClick={() => void testDns()} disabled={dnsTest?.result === 'checking'}>Test DNS</button>
+            </div>}
+            <p className="api-privacy"><ShieldCheck size={14} /><span>Changes apply immediately in the Android app. WebView browsing and playback engines use the device connection.</span></p>
           </section>
 
           {/* VPN — some sources only resolve through an unfiltered DNS server */}

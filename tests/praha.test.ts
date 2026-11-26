@@ -321,7 +321,7 @@ it('ships a valid update feed covering every built-in provider', async () => {
   for (const preset of EMBED_PRESETS) expect(feed[preset.id]).toBeDefined();
 });
 
-it('bundles the Android protected-player host list and denies popup windows', async () => {
+it('bundles the Android protected-player host list and allows book-site popups only after a tap', async () => {
   const { readFileSync } = await import('node:fs');
   const hosts = readFileSync('android/app/src/main/assets/embed-block-hosts.txt', 'utf8');
   expect(hosts).toContain('0.0.0.0 doubleclick.net');
@@ -330,7 +330,7 @@ it('bundles the Android protected-player host list and denies popup windows', as
   expect(readFileSync('android/app/src/main/assets/embed-block-hosts-LICENSE.txt', 'utf8')).toContain('MIT License');
   const activity = readFileSync('android/app/src/main/java/com/praha/stream/ProtectedEmbedActivity.java', 'utf8');
   expect(activity).toContain('setSupportMultipleWindows(true)');
-  expect(activity).toMatch(/onCreateWindow\([^)]*\)\s*\{\s*return false;/);
+  expect(activity).toMatch(/onCreateWindow\([^)]*\)\s*\{\s*if \(!bookSite \|\| !gesture\) return false;/);
   expect(activity).toContain('setAllowFileAccess(false)');
   expect(activity).toContain('filter.blocks(uri.getHost())');
 });
