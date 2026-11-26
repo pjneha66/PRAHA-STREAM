@@ -745,12 +745,6 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
     if (source === 'all' && term === submittedQuery) setAttempt((value) => value + 1);
   };
 
-  useEffect(() => {
-    if (selected?.source !== 'comicsnake') return;
-    window.addEventListener('praha:comic-find-source', findAnotherSource);
-    return () => window.removeEventListener('praha:comic-find-source', findAnotherSource);
-  }, [selected, source, submittedQuery]);
-
   const resumeComic = (entry: ContinueEntry) => {
     const payload = (entry.payload || {}) as { language?: ComicLanguageFilter; source?: string; detailPath?: string; poster?: string; kind?: SankaTitle['kind'] };
     if (!payload.source) return;

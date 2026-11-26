@@ -81,7 +81,6 @@ const readingPages = {
   annasarchive: ['https://annas-archive.gl', /^\/(?:search|md5\/[a-f\d]+)\/?$/i],
   oceanofpdf: ['https://theoceanofpdf.com', /^\/(?:[\w-]+\/)?$/],
   comicsall: ['https://comics-all.com', /^\/(?:index\.php|page\/\d+\/|\d+-[\w-]+\.html)?$/],
-  comicsnake: ['https://comicsnake.com', /^\/(?:index\.php|page\/\d+\/|[\w-]+\/\d+-[\w-]+\.html)?$/],
   getcomics: ['https://getcomics.org', /^\/(?:page\/\d+\/|(?:dc|marvel|other-comics)\/[\w-]+\/)?$/],
   readnovelfull: ['https://readnovelfull.com', /^\/(?:novel-list\/search|ajax\/chapter-archive|[\w-]+(?:\/[\w-]+)?\.html)?$/],
   novgo: ['https://novgo.net', /^\/(?:search|[\w-]+(?:\/[\w-]+)?\.html)?$/],

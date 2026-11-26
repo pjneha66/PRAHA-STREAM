@@ -30,7 +30,6 @@ import java.util.Locale;
 
 /** A separate, unprivileged WebView: never attach Capacitor or any JavaScript bridge here. */
 public final class ProtectedEmbedActivity extends Activity {
-    static final String EXTRA_FIND_COMIC_SOURCE = "find_comic_source";
     static final String EXTRA_MOCTALE_METER = "moctale_meter";
     public static final String EXTRA_DIRECT_BOOK = "direct_book";
     public static final String EXTRA_URL = "embed_url";
@@ -56,7 +55,6 @@ public final class ProtectedEmbedActivity extends Activity {
     private boolean archiveLoan;
     private boolean bookSite;
     private boolean comicSite;
-    private boolean comicDownloadHost;
     private boolean directBook;
     private boolean moctaleSite;
     private boolean moctaleMeterReturned;
@@ -76,8 +74,7 @@ public final class ProtectedEmbedActivity extends Activity {
                 || (initialHost.equals("archive.org") && target.getPath() != null
                     && target.getPath().startsWith("/download/")
                     && BookFileReader.isBookDownload(initialUrl, null, null));
-        comicDownloadHost = isComicDownloadHost(target) && !directBook;
-        comicSite = comicDownloadHost || hostMatches(initialHost, "comics-all.com", "comicsnake.com", "getcomics.org");
+        comicSite = hostMatches(initialHost, "comics-all.com", "getcomics.org");
         bookSite = directBook || comicSite
                 || hostMatches(initialHost, "annas-archive.gl", "theoceanofpdf.com", "oceanofpdf.com", "openlibrary.org");
         if (archiveLoan && !isArchiveItem(target)) { finish(); return; }
@@ -97,31 +94,10 @@ public final class ProtectedEmbedActivity extends Activity {
             openBrowser(currentUrl != null ? currentUrl : initialUrl);
         });
         siteActions = new LinearLayout(this);
-        if (comicDownloadHost) {
-            Button clear = actionButton();
-            clear.setText("Clear cache");
-            clear.setOnClickListener(v -> {
-                boolean cleared = BookFileReader.clearComicCache(this);
-                android.widget.Toast.makeText(this, cleared ? "Comic cache cleared." : "Could not clear the comic cache.",
-                        android.widget.Toast.LENGTH_SHORT).show();
-                closeBook();
-                if (web != null) web.loadUrl(initialUrl);
-                else openPlayer();
-            });
-            siteActions.addView(clear);
-            Button other = actionButton();
-            other.setText("Find another source");
-            other.setOnClickListener(v -> {
-                setResult(RESULT_OK, new Intent().putExtra(EXTRA_FIND_COMIC_SOURCE, true));
-                finish();
-            });
-            siteActions.addView(other);
-        } else {
-            siteActions.addView(browser);
-        }
+        siteActions.addView(browser);
         toolbar.addView(closeButton);
         toolbar.addView(siteActions);
-        if (!directBook && !moctaleSite && !comicDownloadHost) {
+        if (!directBook && !moctaleSite) {
             Button reload = actionButton();
             reload.setText("Reload");
             reload.setOnClickListener(v -> {
@@ -200,14 +176,6 @@ public final class ProtectedEmbedActivity extends Activity {
         return false;
     }
 
-    static boolean isComicDownloadHost(Uri uri) {
-        if (!EmbedBlocklist.isPublicHttps(uri) || (uri.getPort() != -1 && uri.getPort() != 443)) return false;
-        String host = uri.getHost();
-        String path = uri.getPath();
-        return ("florenfile.com".equalsIgnoreCase(host) || "www.florenfile.com".equalsIgnoreCase(host))
-                && path != null && path.matches("(?i)/[a-z0-9]+/[^/]+\\.(?:cbz|cbr|zip|rar|pdf)\\.html");
-    }
-
     private boolean isBookPage() {
         return archiveLoan || bookSite;
     }
@@ -243,12 +211,9 @@ public final class ProtectedEmbedActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(true);
-        if (comicDownloadHost) settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         web.setDownloadListener((url, userAgent, disposition, mimetype, length) -> {
             if (!bookSite) return;
-            boolean attachment = comicDownloadHost && disposition != null
-                    && disposition.toLowerCase(Locale.ROOT).startsWith("attachment");
-            if (isReaderFile(url, disposition, mimetype) || attachment) openBook(url, userAgent);
+            if (isReaderFile(url, disposition, mimetype)) openBook(url, userAgent);
             else android.widget.Toast.makeText(this, comicSite ? "Choose a CBZ, CBR, ZIP, RAR, or PDF to read in PRAHA."
                     : "Choose a PDF, EPUB, or CBZ to read in PRAHA.", android.widget.Toast.LENGTH_SHORT).show();
         });
@@ -297,8 +262,7 @@ public final class ProtectedEmbedActivity extends Activity {
                     if (!EmbedBlocklist.isPublicHttps(uri)) return true;
                     if (!request.isForMainFrame()) return false;
                     String host = uri.getHost().toLowerCase(Locale.ROOT);
-                    boolean sameSite = comicDownloadHost ? hostMatches(host, "florenfile.com")
-                            : host.equals(initialHost) || host.endsWith("." + initialHost);
+                    boolean sameSite = host.equals(initialHost) || host.endsWith("." + initialHost);
                     if (archiveLoan && (host.equals("openlibrary.org") || host.endsWith(".archive.org"))) return false;
                     if (bookSite && "GET".equals(request.getMethod())
                             && (sameSite || request.hasGesture() || request.isRedirect())) {
@@ -344,7 +308,7 @@ public final class ProtectedEmbedActivity extends Activity {
                 if (request.isForMainFrame()) { view.removeCallbacks(pageTimeout); showPageError(); }
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse error) {
-                if (request.isForMainFrame() && (!comicDownloadHost || error.getStatusCode() != 403)) {
+                if (request.isForMainFrame()) {
                     view.removeCallbacks(pageTimeout);
                     showPageError();
                 }
@@ -385,7 +349,7 @@ public final class ProtectedEmbedActivity extends Activity {
 
     private void openBook(String url, String userAgent) {
         if (reader != null || url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url))) return;
-        reader = new BookFileReader(this, comicDownloadHost);
+        reader = new BookFileReader(this);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(android.view.Gravity.CENTER);
@@ -425,7 +389,6 @@ public final class ProtectedEmbedActivity extends Activity {
             status.setText(message);
             spinner.setVisibility(View.GONE);
             retry.setVisibility(View.VISIBLE);
-            if (comicDownloadHost) siteActions.setVisibility(View.VISIBLE);
         }, status::setText);
     }
 
@@ -473,7 +436,6 @@ public final class ProtectedEmbedActivity extends Activity {
     private void showPageError() {
         pageFailed = true;
         loading.setText(moctaleSite ? "Moctale could not load. Tap Title to retry or open it in Browser."
-                : comicDownloadHost ? "The comic download page is unavailable. Try another source."
                 : isBookPage() ? "The listing could not load. Tap Reload to retry or open it in Browser."
                 : "The player could not load. Tap Reload, or close it and choose another provider.");
         if (loading.getParent() == null) content.addView(loading, new FrameLayout.LayoutParams(-1, -1));

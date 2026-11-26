@@ -47,7 +47,6 @@ describe('Sanka comic reader & pagination flow', () => {
 
   it.each([
     ['Comics-All', 'https://comics-all.com', '/123-comic.html', '<a class="preview-title" href="/123-comic.html">Test Issue</a>', 'story'],
-    ['ComicSnake', 'https://comicsnake.com', '/publisher/123-comic.html', '<a class="comics_th-in" href="/publisher/123-comic.html" title="Test Issue"><img alt="Cover"></a>', 'story'],
     ['GetComics', 'https://getcomics.org', '/publisher/test-issue/', '<article class="post"><h1 class="post-title"><a href="/publisher/test-issue/">Test Issue</a></h1></article>', 's'],
   ])('searches %s and opens the issue in the Android publication reader', async (label, origin, path, html, searchParam) => {
     const openReaderFile = vi.fn(() => true);
@@ -71,50 +70,22 @@ describe('Sanka comic reader & pagination flow', () => {
     await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith(origin + '/files/issue.cbr'));
   });
 
-  it('opens the ComicSnake download host and searches other sources if it is unavailable', async () => {
-    const host = 'https://florenfile.com/abc123/Test_Issue.cbz.html';
-    const openProtectedEmbed = vi.fn(() => true);
-    const openReaderFile = vi.fn(() => true);
-    vi.stubGlobal('PrahaNative', { openProtectedEmbed, openReaderFile });
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith('/publisher/123-issue.html')) return {
-        ok: true, status: 200, text: async () => `<a href="${host}" class="dsgnmoo">CBZ</a>`,
-      };
-      if (url.startsWith('https://comicsnake.com/')) return {
-        ok: true, status: 200, text: async () => '<a class="comics_th-in" href="/publisher/123-issue.html" title="Test Issue (Test Issue #24)"></a>',
-      };
-      return json({ data: [] });
-    }));
-
-    render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: 'ComicSnake' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Test Issue (Test Issue #24)' }));
-    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(host));
-    expect(openReaderFile).not.toHaveBeenCalled();
-
-    fireEvent(window, new Event('praha:comic-find-source'));
-    expect(screen.getByRole('tab', { name: 'All Sources' }).getAttribute('aria-selected')).toBe('true');
-    expect((screen.getByRole('textbox', { name: 'Search manga and comics' }) as HTMLInputElement).value).toBe('Test Issue #24');
-    expect(screen.queryByRole('dialog', { name: 'Test Issue (Test Issue #24)' })).toBeNull();
-  });
-
-  it('keeps a missing direct file actionable and lets the issue be saved', async () => {
-    const listing = 'https://comicsnake.com/publisher/123-test-issue.html';
+  it('finds another source for a Comics-All issue without losing its saved title', async () => {
+    const listing = 'https://comics-all.com/123-test-issue.html';
     const openProtectedEmbed = vi.fn(() => true);
     const toggle = vi.fn();
     vi.stubGlobal('PrahaNative', { openProtectedEmbed });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === listing) return { ok: true, status: 200, text: async () => '<article><a href="https://files.example/download">Download host</a></article>' };
-      if (url.startsWith('https://comicsnake.com/')) return {
-        ok: true, status: 200, text: async () => '<a class="comics_th-in" href="/publisher/123-test-issue.html" title="Test Issue"><img alt="Cover"></a>',
+      if (url.startsWith('https://comics-all.com/')) return {
+        ok: true, status: 200, text: async () => '<a class="preview-title" href="/123-test-issue.html">Test Issue</a>',
       };
       return json({ data: [] });
     }));
 
     render(<SankaExplorer onToggleReading={toggle} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'ComicSnake' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Comics-All' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Open Test Issue' }));
     const detail = within(screen.getByRole('dialog', { name: 'Test Issue' }));
     expect((await detail.findByRole('alert')).textContent).toMatch(/no direct reader file/i);
@@ -122,6 +93,9 @@ describe('Sanka comic reader & pagination flow', () => {
     expect(toggle).toHaveBeenCalledWith(expect.objectContaining({ kind: 'sanka', item: expect.objectContaining({ title: 'Test Issue', sourceUrl: listing }) }));
     fireEvent.click(detail.getByRole('button', { name: 'Open listing' }));
     await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(listing));
+    fireEvent.click(detail.getByRole('button', { name: 'Find another source' }));
+    expect(screen.getByRole('tab', { name: 'All Sources' }).getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByRole('textbox', { name: 'Search manga and comics' }) as HTMLInputElement).value).toBe('Test Issue');
   });
 
   it('opens directly on comics, supports Load more pagination, and reads chapter pages', async () => {

@@ -1,5 +1,5 @@
 import { load } from 'cheerio';
-import { isAndroidApp, openPublicationUrl, openReaderFile } from './androidBridge';
+import { openPublicationUrl, openReaderFile } from './androidBridge';
 import { fetchReadingPage } from './readingRelay';
 import type { BookFile } from './archiveService';
 import type { ComicLanguageFilter } from './comicLanguages';
@@ -9,21 +9,19 @@ export const COMIC_BOOK_SITES = {
   annasarchive: { label: 'Anna’s Archive', origin: 'https://annas-archive.gl' },
   oceanofpdf: { label: 'OceanofPDF', origin: 'https://theoceanofpdf.com' },
   comicsall: { label: 'Comics-All', origin: 'https://comics-all.com' },
-  comicsnake: { label: 'ComicSnake', origin: 'https://comicsnake.com' },
   getcomics: { label: 'GetComics', origin: 'https://getcomics.org' },
 };
 
 export type ComicBookSite = keyof typeof COMIC_BOOK_SITES;
 
 export function isComicDownloadSite(source: ComicBookSite): boolean {
-  return source === 'comicsall' || source === 'comicsnake' || source === 'getcomics';
+  return source === 'comicsall' || source === 'getcomics';
 }
 
 const CATALOG_MARKUP = {
   annasarchive: { link: 'a[href^="/md5/"]', card: '', image: '', next: '' },
   oceanofpdf: { link: '.wp-block-post-title a[href]', card: '.wp-block-post', image: '.wp-block-post-featured-image img', next: '.wp-block-query-pagination-next' },
   comicsall: { link: '.preview-title[href]', card: '.preview-in', image: 'img', next: '.pagi-nav' },
-  comicsnake: { link: '.comics_th-in[href][title]', card: '.comics_th-item', image: 'img', next: '.pagi-nav' },
   getcomics: { link: 'article.post:not(.category-news, .category-sponsored) .post-title a[href]', card: 'article.post', image: '.post-header-image img', next: '.page-contents .page-numbers' },
 };
 
@@ -55,7 +53,6 @@ export function comicBookSiteUrl(source: ComicBookSite, query: string, language:
       url.searchParams.set('search_start', String(page));
       url.searchParams.set('result_from', String((page - 1) * 150 + 1));
     }
-    if (page > 1 && source === 'comicsnake') url.searchParams.set('from_page', String(page));
   }
   return url.href;
 }
@@ -75,7 +72,7 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
   const markup = CATALOG_MARKUP[source];
   $(markup.link).each((_, link) => {
     const href = $(link).attr('href');
-    const title = (source === 'comicsnake' ? $(link).attr('title') || '' : $(link).text()).trim().replace(/^Download\s+/i, '');
+    const title = $(link).text().trim().replace(/^Download\s+/i, '');
     if (!href || !title) return;
     let detail: URL;
     try { detail = new URL(href, origin); } catch { return; }
@@ -111,12 +108,8 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
 const fileExtension = /\.(pdf|epub|cbz|cbr|zip|rar)$/i;
 
 export async function loadPublicationFiles(source: ComicBookSite, location: string): Promise<BookFile[]> {
-  return (await publicationLinks(source, location)).files;
-}
-
-async function publicationLinks(source: ComicBookSite, location: string) {
   const page = new URL(location);
-  if (page.origin !== COMIC_BOOK_SITES[source].origin || page.username || page.password) return { files: [] };
+  if (page.origin !== COMIC_BOOK_SITES[source].origin || page.username || page.password) return [];
   const $ = load(await fetchReadingPage(source, page.href));
   const files = new Map<string, BookFile>();
   const add = (href: string | undefined, mayRedirect = false) => {
@@ -138,24 +131,13 @@ async function publicationLinks(source: ComicBookSite, location: string) {
   (content.length ? content : $('body')).find('a[href]').each((_, link) => {
     add($(link).attr('href'), source === 'getcomics' && $(link).is('a.aio-red[title="DOWNLOAD NOW"]'));
   });
-  const host = source === 'comicsnake'
-    ? $('a[href]').toArray().map((link) => $(link).attr('href') || '').find((href) => {
-        try {
-          const url = new URL(href, page);
-          return url.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443')
-            && (url.hostname === 'florenfile.com' || url.hostname === 'www.florenfile.com')
-            && /^\/[a-z0-9]+\/[^/]+\.(?:cbz|cbr|zip|rar|pdf)\.html$/i.test(url.pathname);
-        } catch { return false; }
-      })
-    : undefined;
-  return { files: [...files.values()], host: host ? new URL(host, page).href : undefined };
+  return [...files.values()];
 }
 
 export async function readPublicationIssue(source: ComicBookSite, url: string, isCurrent = () => true): Promise<boolean> {
-  const { files, host } = await publicationLinks(source, url);
+  const files = await loadPublicationFiles(source, url);
   const bestFile = files.find((file) => file.format !== 'ZIP' && file.format !== 'RAR') || files[0];
   if (!isCurrent()) return false;
   if (bestFile) return openReaderFile(bestFile.url);
-  if (host && isAndroidApp()) return openPublicationUrl(host);
   throw new Error('This listing has no direct reader file. Try another source or open the listing.');
 }

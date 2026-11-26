@@ -1,6 +1,5 @@
 package com.praha.stream;
 
-import android.content.Context;
 import android.net.Uri;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
@@ -27,8 +26,6 @@ import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -67,56 +64,15 @@ final class BookFileReader {
             .readTimeout(25, TimeUnit.SECONDS)
             .build();
 
-    private static final Set<File> ACTIVE_COMIC_FILES = new HashSet<>();
-
     private final ProtectedEmbedActivity activity;
-    private final boolean comicDownload;
     private volatile boolean closed;
     private volatile Call call;
     private volatile File file;
     private List<String> comicPages = List.of();
     private WebView view;
 
-    BookFileReader(ProtectedEmbedActivity activity, boolean comicDownload) {
+    BookFileReader(ProtectedEmbedActivity activity) {
         this.activity = activity;
-        this.comicDownload = comicDownload;
-    }
-
-    private static File comicCache(Context context) {
-        return new File(context.getCacheDir(), "comicsnake-reader");
-    }
-
-    static boolean clearComicCache(Context context) {
-        synchronized (ACTIVE_COMIC_FILES) {
-            File directory = comicCache(context);
-            if (!directory.exists()) return true;
-            File[] files = directory.listFiles();
-            if (files == null) return false;
-            boolean cleared = true;
-            for (File entry : files) {
-                if (!ACTIVE_COMIC_FILES.contains(entry) && !entry.delete() && entry.exists()) cleared = false;
-            }
-            return cleared;
-        }
-    }
-
-    private File newTemporaryFile(String prefix, String suffix) throws IOException {
-        if (!comicDownload) return File.createTempFile(prefix, suffix, activity.getCacheDir());
-        synchronized (ACTIVE_COMIC_FILES) {
-            File directory = comicCache(activity);
-            if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Could not create comic cache");
-            File entry = File.createTempFile(prefix, suffix, directory);
-            ACTIVE_COMIC_FILES.add(entry);
-            return entry;
-        }
-    }
-
-    private void removeTemporaryFile(File entry) {
-        if (entry == null) return;
-        synchronized (ACTIVE_COMIC_FILES) {
-            entry.delete();
-            ACTIVE_COMIC_FILES.remove(entry);
-        }
     }
 
     static boolean isBookDownload(String url, String disposition, String mime) {
@@ -138,7 +94,7 @@ final class BookFileReader {
         new Thread(() -> {
             File temporary = null;
             try {
-                temporary = newTemporaryFile("praha-book-", ".download");
+                temporary = File.createTempFile("praha-book-", ".download", activity.getCacheDir());
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 try (var output = new DigestOutputStream(new FileOutputStream(temporary), digest)) {
                     download(url, userAgent, referer, output, onProgress);
@@ -149,14 +105,14 @@ final class BookFileReader {
                 }
                 if (format.equals("cbr")) {
                     progress(onProgress, "Preparing comic pages…");
-                    File comic = newTemporaryFile("praha-comic-", ".cbz");
+                    File comic = File.createTempFile("praha-comic-", ".cbz", activity.getCacheDir());
                     try {
                         convertComicArchive(temporary, comic);
                     } catch (Exception error) {
-                        removeTemporaryFile(comic);
+                        comic.delete();
                         throw error;
                     }
-                    removeTemporaryFile(temporary);
+                    temporary.delete();
                     temporary = comic;
                     format = "cbz";
                 }
@@ -172,7 +128,7 @@ final class BookFileReader {
                     view.loadUrl(ORIGIN + "/reader/book-reader.html#format=" + readerFormat + "&id=" + id);
                 });
             } catch (Exception error) {
-                removeTemporaryFile(temporary);
+                if (temporary != null) temporary.delete();
                 String message = error instanceof BookError ? error.getMessage() : "The book could not be downloaded. Go back and try the link again.";
                 activity.runOnUiThread(() -> { if (!closed) onError.accept(message); });
             }
@@ -185,18 +141,14 @@ final class BookFileReader {
 
     private void download(String raw, String userAgent, String referer, DigestOutputStream output,
                           Consumer<String> onProgress) throws IOException {
-        // FlorenFile free downloads can take over an hour near the reader size limit.
-        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(comicDownload ? 120 : 5);
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(5);
         long usable = activity.getCacheDir().getUsableSpace();
         long limit = Math.min(MAX_BYTES, Math.max(0, usable - 32 * MIB));
         HttpUrl url = HttpUrl.parse(raw);
         HttpUrl referringPage = referer == null ? null : HttpUrl.parse(referer);
         for (int attempt = 0; attempt < 6; attempt++) {
             if (closed) throw new IOException("Reader closed");
-            if (url == null || !EmbedBlocklist.isPublicHttps(Uri.parse(url.toString()))) break;
-            // Verified FlorenFile links use HTTPS on port 183 on their numbered file servers.
-            boolean florenFileServer = comicDownload && url.port() == 183 && url.host().matches("s[0-9]+\\.florenfile\\.com");
-            if (url.port() != 443 && !florenFileServer) break;
+            if (url == null || url.port() != 443 || !EmbedBlocklist.isPublicHttps(Uri.parse(url.toString()))) break;
             Request.Builder request = new Request.Builder().url(url);
             if (userAgent != null && !userAgent.isEmpty()) request.header("User-Agent", userAgent);
             if (referringPage != null) {
@@ -204,7 +156,7 @@ final class BookFileReader {
                 HttpUrl.Builder refererUrl = referringPage.newBuilder().fragment(null);
                 if (!sameHost) refererUrl.encodedPath("/").query(null);
                 request.header("Referer", refererUrl.build().toString());
-                if (sameHost || (comicDownload && attempt == 0)) {
+                if (sameHost) {
                     String cookies = CookieManager.getInstance().getCookie(url.toString());
                     if (cookies != null && !cookies.isEmpty()) request.header("Cookie", cookies);
                 }
@@ -479,7 +431,7 @@ final class BookFileReader {
 
     private void deleteFile() {
         File document = file;
-        removeTemporaryFile(document);
+        if (document != null) document.delete();
         file = null;
     }
 
