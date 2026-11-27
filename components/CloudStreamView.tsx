@@ -15,9 +15,11 @@ import type {
   CloudStreamProvider, CloudStreamRepository, CloudStreamSearchItem,
 } from '../types';
 import { Toggle } from './SettingsView';
+import HoldToSaveButton from './HoldToSaveButton';
 
 interface CloudStreamViewProps {
   onOpenItem: (item: CloudStreamSearchItem) => void;
+  onSaveItem?: (item: CloudStreamSearchItem) => void;
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
 }
 
@@ -50,7 +52,7 @@ const STATUS_LABELS: Record<number, string> = { 0: 'Down', 1: 'Working', 2: 'Slo
  * repositories, the installed packages, and the provider list all come from the
  * host, and nothing is cached in localStorage.
  */
-const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify }) => {
+const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, onSaveItem, notify }) => {
   const available = cloudStreamAvailable();
 
   const [section, setSection] = useState<Section>('browse');
@@ -470,13 +472,13 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
                   </div>
                   <div className="cloudstream-grid">
                     {batch.items.map((item) => (
-                      <button className="cloudstream-tile" key={`${batch.apiName}:${item.url}`} onClick={() => onOpenItem(item)}>
+                      <HoldToSaveButton className="cloudstream-tile" key={`${batch.apiName}:${item.url}`} onClick={() => onOpenItem(item)} onSave={onSaveItem && (() => onSaveItem(item))}>
                         <span className="cloudstream-tile-art">
                           {item.posterUrl ? <img src={item.posterUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Boxes size={22} />}
                         </span>
                         <strong>{item.name}</strong>
                         <small>{[item.type, item.quality].filter(Boolean).join(' · ') || 'Title'}</small>
-                      </button>
+                      </HoldToSaveButton>
                     ))}
                   </div>
                 </section>
@@ -512,13 +514,13 @@ const CloudStreamView: React.FC<CloudStreamViewProps> = ({ onOpenItem, notify })
                   {row.enabled !== false && (
                     <div className="cloudstream-grid">
                       {row.items.map((item) => (
-                        <button className="cloudstream-tile" key={`${row.apiName}:${item.url}`} onClick={() => onOpenItem(item)}>
+                        <HoldToSaveButton className="cloudstream-tile" key={`${row.apiName}:${item.url}`} onClick={() => onOpenItem(item)} onSave={onSaveItem && (() => onSaveItem(item))}>
                           <span className="cloudstream-tile-art">
                             {item.posterUrl ? <img src={item.posterUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Boxes size={22} />}
                           </span>
                           <strong>{item.name}</strong>
                           <small>{item.type || 'Title'}</small>
-                        </button>
+                        </HoldToSaveButton>
                       ))}
                     </div>
                   )}

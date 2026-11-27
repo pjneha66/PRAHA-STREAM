@@ -99,9 +99,9 @@ export function tmdbImage(path: string | null | undefined, size = 'w500') {
   return path ? `${IMAGE_URL}/${size}${path}` : undefined;
 }
 
-export function mapTmdbItem(item: Record<string, any>, forcedType?: 'movie' | 'tv'): MediaItem | null {
+export function mapTmdbItem(item: Record<string, any>, forcedType?: 'movie' | 'tv', allowWithoutArt = false): MediaItem | null {
   const rawType = forcedType || item.media_type;
-  if (!['movie', 'tv'].includes(rawType) || (!item.poster_path && !item.backdrop_path)) return null;
+  if (!['movie', 'tv'].includes(rawType) || (!allowWithoutArt && !item.poster_path && !item.backdrop_path)) return null;
   const genreIds: number[] = Array.isArray(item.genre_ids) ? item.genre_ids : [];
   return {
     id: `tmdb:${item.id}`,
@@ -147,6 +147,12 @@ export function isValidCatalog(kind: TmdbCatalogKind, type: 'movie' | 'tv') {
 
 const seasonCache = new Map<string, TmdbEpisodeInfo[]>();
 
+export interface TmdbCollection {
+  id: number;
+  title: string;
+  poster?: string;
+}
+
 export const tmdbService = {
   async validateApiKey(apiKey: string) {
     await request('/configuration', apiKey);
@@ -174,6 +180,25 @@ export const tmdbService = {
       `${endpoint}?query=${encodeURIComponent(query)}&include_adult=${currentAllowsAdult()}&page=${page}`,
     );
     return listOf(data, endpoint);
+  },
+
+  async searchCollections(query: string, page: number) {
+    const params = new URLSearchParams({ query, page: String(page), include_adult: String(currentAllowsAdult()) });
+    const data = await request<{ results: Array<{ id: number; name: string; poster_path?: string; adult?: boolean }>; total_pages: number }>(
+      `/search/collection?${params}`,
+    );
+    const items: TmdbCollection[] = data.results
+      .filter((item) => item.name && (!item.adult || currentAllowsAdult()))
+      .map((item) => ({ id: item.id, title: item.name, poster: tmdbImage(item.poster_path) }));
+    return { items, hasMore: page < data.total_pages };
+  },
+
+  async collectionMovies(id: number) {
+    const data = await request<{ parts?: Array<Record<string, any>> }>(`/collection/${id}`);
+    return (data.parts ?? [])
+      .filter((part) => !part.adult || currentAllowsAdult())
+      .sort((a, b) => (a.release_date || '9999').localeCompare(b.release_date || '9999'))
+      .flatMap((part) => mapTmdbItem(part, 'movie', true) ?? []);
   },
 
   /**

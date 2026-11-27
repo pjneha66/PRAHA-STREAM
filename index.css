@@ -423,6 +423,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .filter-pills button.active, .quality-filters button.active { border-color: rgba(var(--accent-rgb), .2); background: rgba(var(--accent-rgb), .1); color: var(--accent); }
 .source-select { display: flex; align-items: center; gap: 7px; height: 33px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
 .source-select select { border: 0; outline: 0; background: #0c0e11; color: #b4bac1; font-size: 9px; }
+[data-hold-to-save] { user-select: none; -webkit-touch-callout: none; }
 .media-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 24px 15px; }
 .media-grid.compact-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
 .media-skeleton > span { display: block; aspect-ratio: 2 / 2.93; border-radius: 12px; background: linear-gradient(100deg, #14171a 20%, #1e2226 40%, #14171a 60%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
@@ -3376,6 +3377,8 @@ html.player-vlc-active .app-shell,
 .discover-crosstab-card li strong { display: block; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .discover-crosstab-card li small { display: block; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .discover-crosstab-card li > div { min-width: 0; flex: 1; }
+.discover-book-result { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.discover-book-result > div { min-width: 0; }
 @media (min-width: 900px) { .discover-crosstab { grid-template-columns: 1fr 1fr; align-items: start; } }
 
 /* Continue shelf — shared by Books / Comics / Audiobooks */

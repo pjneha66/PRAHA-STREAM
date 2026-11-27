@@ -242,6 +242,7 @@ const LibraryView: React.FC<{
               onPlay={onPlay}
               onResumeEntry={onResumeEntry}
               onRemove={onRemoveHistory}
+              onSave={() => { if (!watchlist.some((item) => item.id === entry.media.id)) onToggleWatchlist(entry.media); }}
             />
           ))}
         </div>

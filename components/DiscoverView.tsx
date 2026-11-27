@@ -8,6 +8,7 @@ import type { MusicTrack } from '../services/musicService';
 import type { DiscoverFilters, MediaItem } from '../types';
 import type { BookItem } from '../services/archiveService';
 import { MediaCard } from './MediaCard';
+import HoldToSaveButton from './HoldToSaveButton';
 import TmdbSetupCard from './TmdbSetupCard';
 import { readSearchHistory, clearSearchHistory } from '../services/searchHistory';
 
@@ -17,7 +18,9 @@ const CrossTabResults: React.FC<{
   music: MusicTrack[];
   books: BookItem[];
   onOpenInTab: (target: 'music' | 'books') => void;
-}> = ({ query, music, books, onOpenInTab }) => {
+  onOpenBook?: (book: BookItem) => void;
+  onSaveBook?: (book: BookItem) => void;
+}> = ({ query, music, books, onOpenInTab, onOpenBook, onSaveBook }) => {
   if (!music.length && !books.length) return null;
   return (
     <div className="discover-crosstab">
@@ -60,13 +63,17 @@ const CrossTabResults: React.FC<{
           <ul>
             {books.slice(0, 4).map((book) => (
               <li key={book.id}>
-                {book.coverUrl
-                  ? <img src={book.coverUrl} alt="" loading="lazy" />
-                  : <span className="discover-crosstab-thumb-fallback"><Library size={12} /></span>}
-                <div>
-                  <strong>{book.title}</strong>
-                  <small>{book.authors?.[0] || book.year || 'archive.org'}</small>
-                </div>
+                <HoldToSaveButton className="discover-book-result"
+                  onClick={() => onOpenBook ? onOpenBook(book) : onOpenInTab('books')}
+                  onSave={onSaveBook && (() => onSaveBook(book))}>
+                  {book.coverUrl
+                    ? <img src={book.coverUrl} alt="" loading="lazy" />
+                    : <span className="discover-crosstab-thumb-fallback"><Library size={12} /></span>}
+                  <div>
+                    <strong>{book.title}</strong>
+                    <small>{book.authors?.[0] || book.year || 'archive.org'}</small>
+                  </div>
+                </HoldToSaveButton>
               </li>
             ))}
           </ul>
@@ -114,12 +121,14 @@ const DiscoverView: React.FC<{
   compact: boolean;
   musicResults?: MusicTrack[];
   bookResults?: BookItem[];
+  onOpenBook?: (book: BookItem) => void;
+  onSaveBook?: (book: BookItem) => void;
   onOpenInTab?: (target: 'music' | 'books') => void;
   onPrefillSearch?: (term: string) => void;
 }> = ({
   items, loading, loadingMore, hasMore, error, query, filters, onFiltersChange, onLoadMore,
   watchlist, tmdbReady, imdxEnabled = false, onSelect, onToggleWatchlist, onClearSearch, onOpenSettings, compact,
-  musicResults, bookResults, onOpenInTab, onPrefillSearch,
+  musicResults, bookResults, onOpenInTab, onOpenBook, onSaveBook, onPrefillSearch,
 }) => {
   const [recentSearches, setRecentSearches] = React.useState<string[]>(() => readSearchHistory());
   const metadataReady = tmdbReady || imdxEnabled;
@@ -280,6 +289,8 @@ const DiscoverView: React.FC<{
               query={query}
               music={musicResults || []}
               books={bookResults || []}
+              onOpenBook={onOpenBook}
+              onSaveBook={onSaveBook}
               onOpenInTab={onOpenInTab}
             />
           )}

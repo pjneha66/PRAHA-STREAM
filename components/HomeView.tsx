@@ -275,7 +275,9 @@ const HomeView: React.FC<HomeViewProps> = ({
               <button className="text-button" onClick={onOpenLibrary}>View library <ArrowRight size={15} /></button>
             </div>
           </div>
-          <div className="continue-row">{continueEntries.slice(0, 6).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} onResumeEntry={onResumeEntry} onRemove={onRemoveHistory} />)}</div>
+          <div className="continue-row">{continueEntries.slice(0, 6).map((entry) => <ContinueCard key={`${entry.media.id}-${entry.season || 0}-${entry.episode || 0}`} entry={entry} onPlay={onPlay} onResumeEntry={onResumeEntry} onRemove={onRemoveHistory} onSave={() => {
+            if (!watchlist.some((item) => item.id === entry.media.id)) onToggleWatchlist(entry.media);
+          }} />)}</div>
         </section> : null;
         const rows = {
           trending: ['Trending this week', 'Live from TMDB — what everyone is pressing play on.'],

@@ -3,6 +3,7 @@ import { Check, ChevronLeft, ChevronRight, Play, Plus, Star, X } from 'lucide-re
 import type { MediaItem, WatchProgress } from '../types';
 import { formatTime } from './player/format';
 import { buildImageCandidates } from '../services/androidBridge';
+import HoldToSaveButton from './HoldToSaveButton';
 
 export const Artwork = React.memo(function Artwork({ src, alt, className = '', priority = false }: {
   src?: string; alt: string; className?: string; priority?: boolean;
@@ -49,15 +50,16 @@ interface MediaCardProps {
 }
 
 export const MediaCard = React.memo(function MediaCard({ item, onSelect, onToggleWatchlist, inWatchlist, compact }: MediaCardProps) {
+  const save = () => { if (!inWatchlist) onToggleWatchlist(item); };
   return (
     <article className={`media-card ${compact ? 'compact' : ''}`}>
       <div className="poster-wrap">
-        <button className="poster-button" onClick={() => onSelect(item)} aria-label={`View ${item.title}`}>
+        <HoldToSaveButton className="poster-button" onSave={save} onClick={() => onSelect(item)} aria-label={`View ${item.title}`}>
           <Artwork src={item.poster} alt={item.title} />
           <span className="poster-shade" />
           {item.rating && <span className="rating-badge"><Star size={11} fill="currentColor" />{item.rating.toFixed(1)}</span>}
           <span className="poster-play"><Play size={20} fill="currentColor" /></span>
-        </button>
+        </HoldToSaveButton>
         <button
           className={`watchlist-button ${inWatchlist ? 'selected' : ''}`}
           onClick={() => onToggleWatchlist(item)}
@@ -66,19 +68,20 @@ export const MediaCard = React.memo(function MediaCard({ item, onSelect, onToggl
           {inWatchlist ? <Check size={15} /> : <Plus size={16} />}
         </button>
       </div>
-      <button className="media-card-copy" onClick={() => onSelect(item)}>
+      <HoldToSaveButton className="media-card-copy" onSave={save} onClick={() => onSelect(item)}>
         <strong>{item.title}</strong>
         <span>{item.year || '—'} <i /> {item.type === 'movie' ? 'Movie' : 'Series'}</span>
-      </button>
+      </HoldToSaveButton>
     </article>
   );
 });
 
-export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, onResumeEntry, onRemove }: {
+export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, onResumeEntry, onRemove, onSave }: {
   entry: WatchProgress;
   onPlay: (item: MediaItem) => void;
   onResumeEntry?: (entry: WatchProgress) => void;
   onRemove?: (entry: WatchProgress) => void;
+  onSave?: () => void;
 }) {
   const episodeLabel = entry.media.type === 'series' && entry.season
     ? `S${entry.season} E${entry.episode || 1}${entry.episodeTitle ? ` · ${entry.episodeTitle}` : ''}`
@@ -90,8 +93,9 @@ export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, on
 
   return (
     <article className="continue-card-wrap">
-      <button
+      <HoldToSaveButton
         className="continue-card"
+        onSave={onSave}
         onClick={() => (onResumeEntry ? onResumeEntry(entry) : onPlay(entry.media))}
       >
         <div className="continue-art">
@@ -120,7 +124,7 @@ export const ContinueCard = React.memo(function ContinueCard({ entry, onPlay, on
           <span>{episodeLabel}</span>
         </div>
         <div className="progress-track"><span style={{ width: `${Math.max(2, Math.min(100, entry.progress))}%` }} /></div>
-      </button>
+      </HoldToSaveButton>
       {onRemove && (
         <button
           type="button"

@@ -5,7 +5,7 @@ import {
   BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
   FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, X,
 } from 'lucide-react';
-import { buildImageCandidates, openArchiveLoan, openSafeExternalUrl } from '../services/androidBridge';
+import { buildImageCandidates, isAndroidApp, openArchiveLoan, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
@@ -16,6 +16,7 @@ import ArchiveReader from './ArchiveReader';
 import ChapterOrder, { compareChapters, useChapterOrder } from './ChapterOrder';
 import ReadingSaveButton from './ReadingSaveButton';
 import type { ReadingLibraryProps } from '../services/readingLibrary';
+import HoldToSaveButton from './HoldToSaveButton';
 import ArchiveBorrowButton from './ArchiveBorrowButton';
 import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '../services/comicLanguages';
 import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, loadComicBookSite, openComicBookSite, readPublicationIssue } from '../services/comicBookSites';
@@ -257,18 +258,30 @@ async function loadComicPage(
 }
 
 async function loadAllComicSources(
-  sources: string[], query: string, feed: ComicFeed, page: number, signal: AbortSignal,
+  pages: [source: string, page: number][], query: string, feed: ComicFeed, signal: AbortSignal,
   language: ComicLanguageFilter, bypassCache: boolean, onTitles: (items: SankaTitle[]) => void,
+  onNextPage: (source: string, nextPage: number) => void,
 ) {
-  const results = await Promise.allSettled(sources.map(async (source) => {
-    const result = await loadComicPage(source, query, feed, page, signal, language, bypassCache, onTitles);
-    onTitles(result.items);
-    return result.hasMore ? [source] : [];
-  }));
-  return {
-    nextSources: results.flatMap((result) => result.status === 'fulfilled' ? result.value : []),
-    failures: results.filter((result) => result.status === 'rejected').length,
+  let cursor = 0;
+  let failures = 0;
+  const worker = async () => {
+    while (!signal.aborted && cursor < pages.length) {
+      const [source, page] = pages[cursor++];
+      try {
+        const result = await loadComicPage(source, query, feed, page, signal, language, bypassCache, onTitles);
+        if (signal.aborted) return;
+        onTitles(result.items);
+        if (result.hasMore) onNextPage(source, page + 1);
+      } catch {
+        failures += 1;
+      }
+    }
   };
+  // Keep bridge capacity for chapter opens while catalogs and pagination overlap.
+  const limit = pages[0]?.[1] === 1 ? 4 : 1;
+  const workers = isAndroidApp() ? Math.min(limit, pages.length) : pages.length;
+  await Promise.all(Array.from({ length: workers }, worker));
+  return failures;
 }
 
 const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adultMode?: NsfwMode; onAdultMode?: (mode: NsfwMode) => void }> = ({ prefillQuery, adultMode, onAdultMode, ...readingLibrary }) => {
@@ -284,8 +297,9 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [searchingSources, setSearchingSources] = useState(false);
   const browseRequest = useRef<AbortController | null>(null);
-  const nextSources = useRef<string[]>([]);
+  const nextSourcePages = useRef(new Map<string, number>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [fallbackNotice, setFallbackNotice] = useState('');
@@ -456,10 +470,12 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
     browseRequest.current = controller;
     setLoading(true);
     setLoadingMore(false);
+    setSearchingSources(false);
     setError('');
     setFallbackNotice('');
     setPage(1);
     setHasMore(false);
+    nextSourcePages.current.clear();
 
     const load = async () => {
       const bypassCache = attempt > 0;
@@ -467,22 +483,24 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
 
       if (activeSource === 'all') {
         setItems([]);
-        setLoadingMore(true);
+        setSearchingSources(true);
         const sources = submittedQuery && language === 'all'
           ? [...ALL_COMIC_SOURCES, 'oceanofpdf']
           : ALL_COMIC_SOURCES;
-        const { nextSources: remaining, failures } = await loadAllComicSources(
-          sources, submittedQuery, feed, 1, controller.signal, language, bypassCache,
+        const failures = await loadAllComicSources(
+          sources.map((id) => [id, 1]), submittedQuery, feed, controller.signal, language, bypassCache,
           (titles) => {
             if (!current || !titles.length) return;
             setItems((previous) => mergeUniqueTitles(previous, titles).merged);
             setLoading(false);
           },
+          (id, nextPage) => {
+            nextSourcePages.current.set(id, nextPage);
+            setHasMore(true);
+          },
         );
         if (!current) return;
-        nextSources.current = remaining;
-        setHasMore(remaining.length > 0);
-        setLoadingMore(false);
+        setSearchingSources(false);
         if (failures === sources.length) setError('The comic sources did not respond.');
         else if (failures) setFallbackNotice('Some comic sources did not respond.');
         return;
@@ -604,12 +622,14 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
     };
     try {
       if (source === 'all') {
-        const { nextSources: remaining } = await loadAllComicSources(
-          nextSources.current, submittedQuery, feed, nextPage, signal, language, false, append,
+        const ready = [...nextSourcePages.current];
+        nextSourcePages.current.clear();
+        await loadAllComicSources(
+          ready, submittedQuery, feed, signal, language, false, append,
+          (id, sourcePage) => nextSourcePages.current.set(id, sourcePage),
         );
         if (signal.aborted) return;
-        nextSources.current = remaining;
-        setHasMore(remaining.length > 0);
+        setHasMore(nextSourcePages.current.size > 0);
       } else {
         const next = await loadComicPage(source, submittedQuery, feed, nextPage, signal, language);
         if (signal.aborted) return;
@@ -781,12 +801,10 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
     if (source === 'all' && term === submittedQuery) setAttempt((value) => value + 1);
   };
 
-  const resumeComic = (entry: ContinueEntry) => {
+  const comicFromContinue = (entry: ContinueEntry) => {
     const payload = (entry.payload || {}) as { language?: ComicLanguageFilter; source?: string; detailPath?: string; poster?: string; kind?: SankaTitle['kind'] };
     if (!payload.source) return;
-    setEditions([]);
-    setReaderLanguage(payload.language && payload.language !== 'all' ? payload.language : payload.source === 'peppercarrot' ? 'en' : 'all');
-    setSelected({
+    const item: SankaTitle = {
       id: entry.id,
       slug: entry.id,
       title: entry.title,
@@ -795,7 +813,16 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
       genres: [],
       source: payload.source,
       detailPath: payload.detailPath,
-    });
+    };
+    return { item, language: payload.language };
+  };
+
+  const resumeComic = (entry: ContinueEntry) => {
+    const result = comicFromContinue(entry);
+    if (!result) return;
+    setEditions([]);
+    setReaderLanguage(result.language && result.language !== 'all' ? result.language : result.item.source === 'peppercarrot' ? 'en' : 'all');
+    setSelected(result.item);
   };
 
   const handleRetry = () => {
@@ -862,7 +889,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
             ×
           </button>
         )}
-        <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+        <button className="button button-primary button-small" type="submit" disabled={loading && source !== 'all'}>Search</button>
       </form>
 
       <div className="sanka-toolbar reading-controls">
@@ -918,6 +945,10 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
       <ContinueShelf
         entries={continueEntries}
         onResume={resumeComic}
+        onSave={(entry) => {
+          const result = comicFromContinue(entry);
+          if (result) readingLibrary.onSaveReading?.({ kind: 'sanka', item: result.item });
+        }}
         onDismiss={(entry) => {
           removeContinue('comic', entry.id);
           setContinueEntries(readContinue('comic'));
@@ -953,7 +984,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
           </h2>
         </div>
         {!loading && !error && (
-          <span>{groups.length} titles · {activeSourceLabel}</span>
+          <span>{groups.length} titles · {searchingSources ? 'Checking more sources…' : activeSourceLabel}</span>
         )}
       </div>
 
@@ -992,9 +1023,10 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
 
               return (
                 <article className={`comic-card ${readingEntry ? 'comic-card-reading' : ''}`} key={`${item.id}-${item.title}`}>
-                  <button
+                  <HoldToSaveButton
                     className="comic-card-open"
                     type="button"
+                    onSave={() => readingLibrary.onSaveReading?.({ kind: 'sanka', item })}
                     onClick={() => handleSelectTitle(item, [item, ...alternates])}
                     aria-label={`Open ${item.title}${isComicBookSite(item.source) ? '' : ' chapters'}`}
                   >
@@ -1019,7 +1051,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
                       <h3 title={item.title}>{item.title}</h3>
                       <p>{metaLine}</p>
                     </div>
-                  </button>
+                  </HoldToSaveButton>
                 </article>
               );
             })}
@@ -1043,7 +1075,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
                   </>
                 )}
               </button>
-            ) : page > 1 ? (
+            ) : page > 1 && !searchingSources ? (
               <span className="sanka-end-note">Showing all {items.length} loaded titles</span>
             ) : null}
           </div>

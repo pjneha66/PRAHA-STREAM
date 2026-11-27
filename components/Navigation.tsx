@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, LayoutGrid, Library,
+  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, Layers, LayoutGrid, Library,
   Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
   Trash2, UserPlus, Users, X,
 } from 'lucide-react';
@@ -50,6 +50,7 @@ const mainNav = [
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
+  { id: 'collections' as const, label: 'Collections', icon: Layers },
   { id: 'library' as const, label: 'My Library', icon: Library },
 ];
 
@@ -62,6 +63,7 @@ const primaryMobileNavItems = [
 
 const moreNavItems = [
   { id: 'cloudstream' as const, label: 'CloudStream', icon: Boxes, desc: 'Repositories & .cs3 extensions' },
+  { id: 'collections' as const, label: 'Collections', icon: Layers, desc: 'Franchises & shared universes' },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones, desc: '9 audiobook sources & player' },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play, desc: 'Video streams & trending clips' },

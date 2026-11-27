@@ -259,6 +259,33 @@ describe('Sanka comic reader & pagination flow', () => {
     expect(screen.getByAltText('Page 5')).toHaveProperty('src', expect.stringMatching(/E01P04\.jpg$/));
   });
 
+  it('can load the next page from a ready source while the first page from another source is pending', async () => {
+    let finishArchive!: (response: Response) => void;
+    const archive = new Promise<Response>((resolve) => { finishArchive = resolve; });
+    const manga = (id: string, title: string) => ({ id, attributes: { title: { en: title }, contentRating: 'safe' } });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('archive.org/advancedsearch.php')) return archive;
+      if (url.includes('api.mangadex.org/manga?')) {
+        const offset = new URL(url).searchParams.get('offset');
+        return offset === '0'
+          ? json({ data: [manga('first', 'First Manga')], total: 2 })
+          : json({ data: [manga('second', 'Second Manga')], total: 2 });
+      }
+      return json({ data: [] });
+    }));
+    try {
+      render(<SankaExplorer />);
+      selectComicSource('All Sources');
+      expect(await screen.findByRole('button', { name: 'Open First Manga chapters' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+      expect(await screen.findByRole('button', { name: 'Open Second Manga chapters' })).toBeTruthy();
+      expect(screen.getByText(/Checking more sources/)).toBeTruthy();
+    } finally {
+      finishArchive(json({ response: { docs: [] } }));
+    }
+  });
+
   it('groups translated title aliases and lets the reader switch to the other provider', async () => {
     const manga = {
       id: 'shared-manga', attributes: { title: { en: 'Shared Title' }, altTitles: [{ id: 'Judul Bersama' }], contentRating: 'safe' },

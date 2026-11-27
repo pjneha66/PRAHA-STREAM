@@ -8,6 +8,7 @@ import LibraryView from './components/LibraryView';
 import { readingKey, type ReadingEntry } from './services/readingLibrary';
 import ExtensionsView from './components/ExtensionsView';
 import CloudStreamView from './components/CloudStreamView';
+import CollectionsView from './components/CollectionsView';
 import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
@@ -68,7 +69,7 @@ const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 // Loaded like `PlayerModal`, so neither is in the first bundle.
 const LiveTvPlayer = React.lazy(() => import('./components/player/LiveTvPlayer'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'cloudstream', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'collections', 'cloudstream', 'extensions', 'settings'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -400,6 +401,12 @@ const App: React.FC = () => {
   const notify = useCallback((message: string, tone: 'default' | 'success' | 'error' = 'default') => {
     setToast({ id: Date.now(), message, tone });
   }, []);
+
+  const saveReading = (entry: ReadingEntry) => {
+    const key = readingKey(entry);
+    setSavedReading((current) => current.some((saved) => readingKey(saved) === key) ? current : [entry, ...current]);
+    notify(`${entry.item.title} saved to your library.`, 'success');
+  };
 
   // Every profile switch (Settings dropdown, Navigation dropdown and the full
   // ProfilePicker) funnels through these helpers so a PIN-protected profile can
@@ -970,7 +977,7 @@ const App: React.FC = () => {
    * itself supplies the sources. There is nothing for TMDB to enrich here — the
    * item may not even exist in TMDB — so this goes straight to the source list.
    */
-  const openCloudStreamItem = async (item: CloudStreamSearchItem) => {
+  const openCloudStreamItem = async (item: CloudStreamSearchItem, save = false) => {
     try {
       const response = await loadTitle(item.apiName, item.url);
       const isSeries = response.kind === 'series' || response.kind === 'anime';
@@ -990,7 +997,12 @@ const App: React.FC = () => {
         cloudstreamUrl: item.url,
         cloudstreamPlayables: response.playables,
       };
-      if (isSeries) {
+      if (save) {
+        setWatchlist((current) => current.some((saved) => saved.id === media.id)
+          ? current
+          : [{ ...media, libraryStatus: 'plan' }, ...current]);
+        notify(`${media.title} saved to your library.`, 'success');
+      } else if (isSeries) {
         // Each playable is one episode; the season/episode numbers the extension
         // reported are what SourceModal matches against.
         const first = response.playables[0];
@@ -999,7 +1011,7 @@ const App: React.FC = () => {
         openSources(media);
       }
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'That title could not be opened.', 'error');
+      notify(err instanceof Error ? err.message : save ? 'That title could not be saved.' : 'That title could not be opened.', 'error');
     }
   };
 
@@ -1457,6 +1469,7 @@ const App: React.FC = () => {
         onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
         savedReading={savedReading}
         onToggleReading={toggleReading}
+        onSaveReading={saveReading}
         openReading={readingTarget?.kind === 'sanka' ? readingTarget : null}
         prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
       />
@@ -1468,6 +1481,7 @@ const App: React.FC = () => {
         onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
         savedReading={savedReading}
         onToggleReading={toggleReading}
+        onSaveReading={saveReading}
         openReading={readingTarget?.kind === 'manga' ? readingTarget : null}
         prefillQuery={searchPrefill?.view === 'manga' ? searchPrefill.term : undefined}
       />
@@ -1505,6 +1519,7 @@ const App: React.FC = () => {
       <BooksView
         savedReading={savedReading}
         onToggleReading={toggleReading}
+        onSaveReading={saveReading}
         openReading={readingTarget?.kind === 'books' ? readingTarget : null}
         compact={settings.compactCards}
         prefillQuery={searchPrefill?.view === 'books' ? searchPrefill.term : undefined}
@@ -1546,6 +1561,8 @@ const App: React.FC = () => {
         compact={settings.compactCards}
         musicResults={discoverExtras?.music}
         bookResults={discoverExtras?.books}
+        onOpenBook={(item) => { navigate('books'); setReadingTarget({ kind: 'books', item }); }}
+        onSaveBook={(item) => saveReading({ kind: 'books', item })}
         onOpenInTab={(target) => {
           setSearchPrefill({ view: target, term: query.trim() });
           navigate(target);
@@ -1589,9 +1606,13 @@ const App: React.FC = () => {
     page = (
       <CloudStreamView
         onOpenItem={openCloudStreamItem}
+        onSaveItem={(item) => void openCloudStreamItem(item, true)}
         notify={notify}
       />
     );
+  } else if (view === 'collections') {
+    page = <CollectionsView tmdbReady={tmdbReady} watchlist={watchlist} onSelect={openDetails}
+      onToggleWatchlist={toggleWatchlist} onOpenSettings={() => navigate('settings')} />;
   } else if (view === 'extensions') {
     page = (
       <ExtensionsView

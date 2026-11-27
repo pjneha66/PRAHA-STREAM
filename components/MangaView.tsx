@@ -8,6 +8,7 @@ import MangaReader from './MangaReader';
 import ChapterOrder, { compareChapters, useChapterOrder } from './ChapterOrder';
 import ReadingSaveButton from './ReadingSaveButton';
 import type { MangaSource, ReadingLibraryProps } from '../services/readingLibrary';
+import HoldToSaveButton from './HoldToSaveButton';
 import { mangaDexCatalog, mangaDexDetail, mangaDexPages } from '../services/mangaDexService';
 import ReadingSourceDirectory from './ReadingSourceDirectory';
 import type { SankaTitle } from '../services/sankaService';
@@ -336,10 +337,11 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
         <>
           <div className="comic-grid manga-grid">
             {items.map((item, index) => (
-              <button
+              <HoldToSaveButton
                 key={item.id}
                 type="button"
                 className="manga-card"
+                onSave={() => readingLibrary.onSaveReading?.({ kind: 'manga', item, source })}
                 onClick={() => void openDetail(item)}
               >
                 <div className="manga-cover">
@@ -349,7 +351,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
                   <strong>{item.title}</strong>
                   <span>{[item.kotatsuProvider && kotatsuProviders[item.kotatsuProvider], item.type, item.year, item.status].filter(Boolean).join(' · ')}</span>
                 </div>
-              </button>
+              </HoldToSaveButton>
             ))}
           </div>
           {items.length > 0 && hasMore && (

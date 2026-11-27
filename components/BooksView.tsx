@@ -1,5 +1,6 @@
 import ReadingSaveButton from './ReadingSaveButton';
 import type { ReadingLibraryProps } from '../services/readingLibrary';
+import HoldToSaveButton from './HoldToSaveButton';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen, CircleAlert, ExternalLink, FileDown, LoaderCircle, RefreshCw, Search, X,
@@ -106,7 +107,7 @@ const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
   );
 };
 
-const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> = ({ item, onOpen }) => {
+const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void; onSave?: (item: BookItem) => void }> = ({ item, onOpen, onSave }) => {
   const sourceBadge = isPublicationSite(item.source) ? SOURCE_LABEL[item.source] : item.source === 'openlibrary'
     ? 'OL'
     : item.id.startsWith('bookracy-')
@@ -114,11 +115,11 @@ const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> =
       : item.restricted ? 'IA · 🔒' : 'IA';
   return (
     <article className="book-card">
-      <button
+      <HoldToSaveButton
         type="button"
         className="book-card-open"
         onClick={() => onOpen(item)}
-        onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
+        onSave={onSave && (() => onSave(item))}
         aria-label={`Open ${item.title}`}
       >
         <div className="book-poster">
@@ -130,12 +131,13 @@ const BookCard: React.FC<{ item: BookItem; onOpen: (item: BookItem) => void }> =
           <p>{item.authors.join(', ') || SOURCE_LABEL[item.source]}</p>
           {item.year && <span>{item.year}</span>}
         </div>
-      </button>
+      </HoldToSaveButton>
     </article>
   );
 };
 
 const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuery?: string }> = ({ compact, prefillQuery, ...readingLibrary }) => {
+  const saveBook = (item: BookItem) => readingLibrary.onSaveReading?.({ kind: 'books', item });
   const [mode, setMode] = useState<SourceMode>('all');
   const [collectionId, setCollectionId] = useState<string>(ARCHIVE_COLLECTIONS[1].id);
   const [input, setInput] = useState('');
@@ -304,9 +306,9 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
     setSelected(null);
   };
 
-  const resumeBook = (entry: ContinueEntry) => {
+  const bookFromContinue = (entry: ContinueEntry): BookItem => {
     const payload = (entry.payload || {}) as Partial<BookItem>;
-    const item: BookItem = {
+    return {
       id: entry.id,
       title: entry.title,
       authors: payload.authors || [],
@@ -319,6 +321,10 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
       source: payload.source || 'archive',
       sourceUrl: payload.sourceUrl,
     };
+  };
+
+  const resumeBook = (entry: ContinueEntry) => {
+    const item = bookFromContinue(entry);
     if (item.identifier && !item.restricted) setReaderItem(item);
     else void openItem(item);
   };
@@ -419,6 +425,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
       <ContinueShelf
         entries={continueEntries}
         onResume={resumeBook}
+        onSave={(entry) => saveBook(bookFromContinue(entry))}
         onDismiss={(entry) => {
           removeContinue('book', entry.id);
           setContinueEntries(readContinue('book'));
@@ -450,7 +457,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
               <h2>{shelf.label}</h2>
               <div className="books-shelf-row">
                 {shelf.items.map((item) => (
-                  <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} />
+                  <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} onSave={saveBook} />
                 ))}
               </div>
             </section>
@@ -463,7 +470,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
       ) : (
         <div className={`books-grid ${compact ? 'books-grid-compact' : ''}`}>
           {items.map((item) => (
-            <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} />
+            <BookCard key={item.id} item={item} onOpen={(book) => void openItem(book)} onSave={saveBook} />
           ))}
         </div>
       )}
