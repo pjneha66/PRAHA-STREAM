@@ -64,7 +64,7 @@ export function englishReadingIndex(bytes, format) {
   if (!Array.isArray(rows)) throw new Error('Invalid reading index.');
   const entries = new Map();
   for (const item of rows) {
-    if (typeof item?.name !== 'string' || !english.test(item.lang) || item.isBroken || item.nsfw) continue;
+    if (typeof item?.name !== 'string' || !english.test(item.lang) || item.isBroken || item.nsfw || item.contentType === 'HENTAI') continue;
     const name = item.name.trim();
     if (!name || name.length > 140) continue;
     let site;
@@ -78,6 +78,15 @@ export function englishReadingIndex(bytes, format) {
 }
 
 const readingPages = {
+  grabberzone: ['https://grabber.zone', /^\/(?:type\/fancomic(?:\/page\/\d+)?|comics\/[\w-]+(?:\/[\w-]+){0,2})\/$/],
+  ithinkilikeyou: ['https://ithinkilikeyou.net', /^\/(?:series\/i-think-i-like-you\/|comic\/[\w-]+\/)?$/],
+  mangakatana: ['https://mangakatana.com', /^\/(?:page\/\d+|manga(?:\/page\/\d+|\/[\w-]+\.\d+(?:\/c\d+(?:\.\d+)?)?)?)?$/],
+  mangatellers: ['https://reader.mangatellers.gr', /^\/(?:directory|series\/[\w-]+|read\/[\w-]+\/en\/\d+(?:\.\d+)?\/\d+(?:\.\d+)?)\/$/],
+  guyacubari: ['https://guya.cubari.moe', /^\/api\/series\/[\w-]+\/$/],
+  webtoonsenglish: ['https://www.webtoons.com', /^\/en\/(?:originals|search|[\w-]+\/[\w-]+\/(?:list|[\w-]+\/viewer))$/],
+  twokinds: ['https://twokinds.keenspot.com', /^\/(?:archive\/|comic\/\d+\/)$/],
+  wanderinginn: ['https://wanderinginn.com', /^\/(?:table-of-contents\/|\d{4}\/\d{2}\/\d{2}\/[\w-]+\/)$/],
+  standardebooks: ['https://standardebooks.org', /^\/ebooks(?:\/[\w-]+\/[\w-]+(?:\/[\w-]+)?(?:\/text(?:\/[\w-]+)?)?)?$/],
   annasarchive: ['https://annas-archive.gl', /^\/(?:search|md5\/[a-f\d]+)\/?$/i],
   oceanofpdf: ['https://theoceanofpdf.com', /^\/(?:[\w-]+\/)?$/],
   comicsall: ['https://comics-all.com', /^\/(?:index\.php|page\/\d+\/|\d+-[\w-]+\.html)?$/],

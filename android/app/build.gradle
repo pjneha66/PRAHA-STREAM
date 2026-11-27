@@ -10,6 +10,7 @@ def ksKeyPass = System.getenv("ANDROID_KEY_PASSWORD")
 def hasReleaseSigning = ksPass && ksAlias && ksKeyPass && file(ksPath).exists()
 
 def phoneOnly = project.hasProperty('phoneOnly')
+def phoneUniversal = project.hasProperty('phoneUniversal')
 def releaseAbis = phoneOnly ? ['arm64-v8a'] : ['arm64-v8a', 'armeabi-v7a', 'x86_64']
 
 android {
@@ -19,8 +20,8 @@ android {
         applicationId "com.praha.stream"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 57
-        versionName "2.11.32"
+        versionCode 58
+        versionName "2.11.33"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -34,11 +35,11 @@ android {
         }
     }
 
-    // Full releases include ABI splits and a universal APK. Phone releases
-    // build only the ARM64 split.
+    // General releases include ABI splits and a universal APK. The universal
+    // phone release packages every supported ABI into one APK.
     splits {
         abi {
-            enable true
+            enable !phoneUniversal
             reset()
             include(*releaseAbis)
             universalApk(!phoneOnly)

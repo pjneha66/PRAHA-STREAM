@@ -1,5 +1,6 @@
 import { nativeFetchText } from './androidBridge';
 import { currentWeebCentralAdultParam } from './nsfwGate';
+import type { ExtraKotatsuProvider } from './kotatsuMangaService';
 
 const BASE_URL = 'https://weebcentral.com';
 const COVER_CDN = 'https://temp.compsci88.com/cover';
@@ -17,6 +18,7 @@ export interface MangaItem {
   tags?: string[];
   synopsis?: string;
   url: string;
+  kotatsuProvider?: 'twokinds' | 'weebcentral' | 'webtoons' | ExtraKotatsuProvider;
 }
 
 export interface MangaChapter {

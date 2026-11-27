@@ -543,6 +543,11 @@ export function buildImageCandidates(url?: string): string[] {
     return [trimmed];
   }
 
+  if (parsed.origin === 'https://webtoon-phinf.pstatic.net') {
+    const proxied = proxyStreamUrlWithHeaders(trimmed, { Referer: 'https://www.webtoons.com/' });
+    return proxied === trimmed ? [trimmed] : [proxied, trimmed];
+  }
+
   if (GLOBAL_CDN_HOST_RE.test(parsed.hostname)) {
     return [trimmed, `https://external-content.duckduckgo.com/iu/?u=${encodeURIComponent(trimmed)}&f=1`];
   }

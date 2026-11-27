@@ -1,7 +1,9 @@
+import ReadingSourceDirectory from './ReadingSourceDirectory';
+import type { NsfwMode } from '../types';
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, ExternalLink,
-  FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, Sparkles, X,
+  FileDown, Flame, LoaderCircle, Play, RotateCcw, Search, X,
 } from 'lucide-react';
 import { buildImageCandidates, openArchiveLoan, openSafeExternalUrl } from '../services/androidBridge';
 import SkeletonGrid from './SkeletonGrid';
@@ -19,6 +21,7 @@ import { COMIC_LANGUAGES, type ComicLanguage, type ComicLanguageFilter } from '.
 import { COMIC_BOOK_SITES, comicBookSiteUrl, isComicBookSite, loadComicBookSite, openComicBookSite, readPublicationIssue } from '../services/comicBookSites';
 import ReaderZoomControls, { useReaderZoom } from './ReaderZoomControls';
 import { comicEditionKey, groupComicTitles } from '../services/comicGroups';
+import { isKotatsuComicSource, KOTATSU_COMIC_SOURCES } from '../services/kotatsuComicService';
 import {
   clearSankaCache, fetchSankaChapterImages, fetchSankaMangaDetail, fetchSankaTitlesPage,
   resolveArtworkFallback, SANKA_API_ORIGIN, SANKA_COMIC_SOURCES,
@@ -160,7 +163,9 @@ const COMIC_SOURCE_OPTIONS = [
   { id: 'all', label: 'All Sources' },
   { id: 'mangadex', label: 'MangaDex' },
   { id: 'peppercarrot', label: 'Pepper&Carrot' },
+  { id: 'twokinds', label: 'Twokinds (Kotatsu)' },
   { id: 'weebcentral', label: 'Weeb Central' },
+  ...KOTATSU_COMIC_SOURCES,
   ...SANKA_COMIC_SOURCES.map((option) => ({ id: option.id as string, label: option.label })),
   { id: 'comick', label: 'Comick (aggregator search)' },
   { id: 'webtoon', label: 'WEBTOON' },
@@ -219,7 +224,7 @@ async function loadComicPage(
 ): Promise<SankaTitlesPage> {
   if (isComicBookSite(source)) return loadComicBookSite(source, query, language, page);
   if (!isArchiveSource(source)) {
-    const knownLanguage = source === 'weebcentral' ? 'en'
+    const knownLanguage = source === 'weebcentral' || source === 'twokinds' || isKotatsuComicSource(source) ? 'en'
       : SANKA_COMIC_SOURCES.some((option) => option.id === source) ? 'id' : undefined;
     if (language !== 'all' && source !== 'mangadex' && source !== 'peppercarrot' && language !== knownLanguage) {
       return { page, items: [], hasMore: false };
@@ -266,7 +271,7 @@ async function loadAllComicSources(
   };
 }
 
-const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> = ({ prefillQuery, ...readingLibrary }) => {
+const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adultMode?: NsfwMode; onAdultMode?: (mode: NsfwMode) => void }> = ({ prefillQuery, adultMode, onAdultMode, ...readingLibrary }) => {
   // 'archive' routes search + detail to the Internet Archive folkscanomy
   // collections instead of the Sanka web sources.
   const [source, setSource] = useState<string>('bacakomik');
@@ -295,6 +300,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
   const [detail, setDetail] = useState<SankaMangaDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const detailRequest = useRef<AbortController | null>(null);
   const [chapterQuery, setChapterQuery] = useState('');
   const [chapterOrder, setChapterOrder] = useChapterOrder();
 
@@ -475,7 +481,8 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
         return;
       }
 
-      if (isArchiveSource(activeSource) || isComicBookSite(activeSource) || ['mangadex', 'peppercarrot'].includes(activeSource) || language !== 'all') {
+      if (isArchiveSource(activeSource) || isComicBookSite(activeSource) || isKotatsuComicSource(activeSource) ||
+        ['mangadex', 'peppercarrot', 'twokinds'].includes(activeSource) || language !== 'all') {
         try {
           const result = await loadComicPage(activeSource, submittedQuery, feed, 1, controller.signal, language, bypassCache);
           if (!current) return;
@@ -576,7 +583,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
       current = false;
       controller.abort();
     };
-  }, [source, feed, submittedQuery, attempt, manualSource, comickSubSource, language]);
+  }, [source, feed, submittedQuery, attempt, manualSource, comickSubSource, language, adultMode]);
 
   const handleLoadMore = async () => {
     if (loading || loadingMore || !hasMore) return;
@@ -624,6 +631,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
       return;
     }
     const controller = new AbortController();
+    detailRequest.current = controller;
     let current = true;
     setDetail(null);
     setDetailLoading(true);
@@ -645,6 +653,24 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
       controller.abort();
     };
   }, [selected, readerLanguage]);
+
+  const loadOlderChapters = async () => {
+    const signal = detailRequest.current?.signal;
+    if (!selected || !detail?.nextChapterPage || detailLoading || !signal || signal.aborted) return;
+    setDetailLoading(true);
+    setDetailError('');
+    try {
+      const older = await fetchSankaMangaDetail(selected.source, selected.slug, signal, selected.detailPath, readerLanguage, detail.nextChapterPage);
+      if (!signal.aborted) {
+        const chapters = [...new Map([...detail.chapters, ...older.chapters].map((chapter) => [chapter.id, chapter])).values()];
+        setDetail({ ...detail, chapters, nextChapterPage: older.nextChapterPage });
+      }
+    } catch {
+      if (!signal.aborted) setDetailError('Could not load older chapters. Try again.');
+    } finally {
+      if (!signal.aborted) setDetailLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!selected) return;
@@ -692,6 +718,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
     try {
       const pages = await fetchSankaChapterImages(selected.source, chapter.slug, controller.signal, chapter.chapterPath, readerLanguage);
       if (controller.signal.aborted) return;
+      if (!pages.length) throw new Error('This chapter has no readable pages.');
       setReaderImages(pages);
       recordContinue({
         domain: 'comic',
@@ -797,46 +824,53 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
 
   const selectedBookSite = isComicBookSite(source) ? source : null;
   const activeSourceLabel = COMIC_SOURCE_OPTIONS.find((item) => item.id === source)?.label || source;
+  const selectKotatsuSource = (id: string) => {
+    setManualSource(true);
+    setLanguage('en');
+    setQuery('');
+    setSubmittedQuery('');
+    setSource(id);
+  };
 
   return (
-    <div className="standard-page page-enter sanka-page">
-      <div className="comic-hero">
-        <span className="comic-hero-tile" aria-hidden="true"><BookOpen size={22} /></span>
-        <div>
-          <span className="page-kicker"><Sparkles size={12} /> MANGA · MANHWA · COMICS</span>
-          <h1>Comics</h1>
-          <p>Search manga, manhwa, and Western comics and read chapters in the app.</p>
-        </div>
-      </div>
-      <ContinueShelf
-        entries={continueEntries}
-        onResume={resumeComic}
-        onDismiss={(entry) => {
-          removeContinue('comic', entry.id);
-          setContinueEntries(readContinue('comic'));
-        }}
-      />
-
-      <div className="comic-source-rail" role="tablist" aria-label="Comic source">
-        {COMIC_SOURCE_OPTIONS.map((option) => (
+    <div className="standard-page page-enter sanka-page reading-page">
+      <h1 className="reading-heading">Comics</h1>
+      <form className="sanka-search reading-search" onSubmit={search}>
+        <Search size={16} />
+        <input
+          aria-label="Search manga and comics"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search comics"
+        />
+        {submittedQuery && (
           <button
-            key={option.id}
-            role="tab"
-            aria-selected={source === option.id}
-            className={`comic-source-chip ${source === option.id ? 'active' : ''}`}
-            title={option.label}
-            onClick={() => {
-              if (option.id === source) return;
-              setManualSource(true);
-              setSource(option.id);
-            }}
+            type="button"
+            className="search-clear"
+            onClick={() => { setQuery(''); setSubmittedQuery(''); }}
+            aria-label="Clear comic search"
           >
-            {COMIC_SOURCE_SHORT[option.id] || option.label}
+            ×
           </button>
-        ))}
-      </div>
+        )}
+        <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+      </form>
 
-      <div className="sanka-toolbar">
+      <div className="sanka-toolbar reading-controls">
+        <select className="reading-select" aria-label="Comic source" value={source} onChange={(event) => {
+          const id = event.target.value;
+          setManualSource(true);
+          if (isKotatsuComicSource(id) && language !== 'all') setLanguage('en');
+          setSource(id);
+        }}>
+          {COMIC_SOURCE_OPTIONS.filter(({ id }) => !isKotatsuComicSource(id)).map(({ id, label }) => (
+            <option key={id} value={id}>{COMIC_SOURCE_SHORT[id] || label}</option>
+          ))}
+          <optgroup label="Kotatsu Redo">
+            {KOTATSU_COMIC_SOURCES.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+          </optgroup>
+        </select>
+        <LanguageSelect language={language} onChange={setLanguage} label="Comic language" />
         <div className="filter-pills" role="tablist" aria-label="Comic feed">
           <button
             role="tab"
@@ -870,29 +904,23 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
             </select>
           </label>
         )}
-        <LanguageSelect language={language} onChange={setLanguage} label="Comic language" />
-        <form className="sanka-search" onSubmit={search}>
-          <Search size={16} />
-          <input
-            aria-label="Search manga and comics"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search manga and comics…"
-          />
-          {submittedQuery && (
-            <button
-              type="button"
-              className="search-clear"
-              onClick={() => { setQuery(''); setSubmittedQuery(''); }}
-              aria-label="Clear comic search"
-            >
-              ×
-            </button>
-          )}
-          <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
-        </form>
       </div>
 
+      <ContinueShelf
+        entries={continueEntries}
+        onResume={resumeComic}
+        onDismiss={(entry) => {
+          removeContinue('comic', entry.id);
+          setContinueEntries(readContinue('comic'));
+        }}
+      />
+
+      <ReadingSourceDirectory repository="kotatsu" adultMode={adultMode} onAdultMode={onAdultMode} collapseListings
+        readerLabels={Object.fromEntries(KOTATSU_COMIC_SOURCES.map(({ name, label }) => [name, label]))} readers={{
+        Twokinds: () => selectKotatsuSource('twokinds'),
+        'Weeb Central': () => selectKotatsuSource('weebcentral'),
+        ...Object.fromEntries(KOTATSU_COMIC_SOURCES.map(({ id, name }) => [name, () => selectKotatsuSource(id)])),
+      }} />
       {selectedBookSite && (
         <button className="button button-secondary button-small" onClick={() => void browseBookSite(comicBookSiteUrl(selectedBookSite, query.trim(), language))}>
           <ExternalLink size={14} /> Browse {COMIC_BOOK_SITES[selectedBookSite].label}
@@ -927,23 +955,6 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
           <span><CircleAlert size={25} /></span>
           <h2>{selectedBookSite ? 'Open the site’s catalog' : `Couldn’t reach ${activeSourceLabel}`}</h2>
           <p>{error}{!selectedBookSite && ' Try switching to another comic source or retrying.'}</p>
-          <div className="comic-source-rail comic-source-rail-center">
-            {COMIC_SOURCE_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={`comic-source-chip ${option.id === source ? 'active' : ''}`}
-                title={option.label}
-                onClick={() => {
-                  setManualSource(true);
-                  setSource(option.id);
-                  setAttempt((v) => v + 1);
-                }}
-              >
-                {COMIC_SOURCE_SHORT[option.id] || option.label}
-              </button>
-            ))}
-          </div>
           <button className="button button-secondary" onClick={handleRetry}>
             <RotateCcw size={15} /> Try again
           </button>
@@ -1184,6 +1195,11 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string }> =
                     onClick={() => setChapterWindow((value) => value + 400)}
                   >
                     Show more chapters ({(displayedChapters.length - chapterWindow).toLocaleString()} remaining)
+                  </button>
+                )}
+                {detail?.nextChapterPage && (
+                  <button className="sanka-chapter-more" disabled={detailLoading} onClick={() => void loadOlderChapters()}>
+                    {detailLoading ? 'Loading older chapters…' : 'Load older chapters'}
                   </button>
                 )}
               </div>

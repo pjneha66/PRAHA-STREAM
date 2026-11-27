@@ -11,6 +11,10 @@ const json = (body: unknown, status = 200) => ({
   text: async () => JSON.stringify(body),
 }) as unknown as Response;
 
+const selectComicSource = (label: string) => fireEvent.change(screen.getByRole('combobox', { name: 'Comic source' }), {
+  target: { value: (screen.getByRole('option', { name: label }) as HTMLOptionElement).value },
+});
+
 describe('Sanka comic reader & pagination flow', () => {
   afterEach(() => {
     cleanup();
@@ -35,11 +39,11 @@ describe('Sanka comic reader & pagination flow', () => {
     }));
 
     render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: 'OceanofPDF' }));
+    selectComicSource('OceanofPDF');
     fireEvent.click(await screen.findByRole('button', { name: 'Open Comic Title' }));
     await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith('https://theoceanofpdf.com/files/comic.cbz'));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Anna’s Archive' }));
+    selectComicSource('Anna’s Archive');
     expect(await screen.findByText('Open the site’s catalog')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Browse Anna’s Archive' }));
     await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith('https://annas-archive.gl/search?content=book_comic'));
@@ -62,7 +66,7 @@ describe('Sanka comic reader & pagination flow', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: label }));
+    selectComicSource(label);
     const field = screen.getByRole('textbox', { name: 'Search manga and comics' });
     fireEvent.change(field, { target: { value: 'Test Issue' } });
     fireEvent.submit(field.closest('form')!);
@@ -85,7 +89,7 @@ describe('Sanka comic reader & pagination flow', () => {
     }));
 
     render(<SankaExplorer onToggleReading={toggle} />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Comics-All' }));
+    selectComicSource('Comics-All');
     fireEvent.click(await screen.findByRole('button', { name: 'Open Test Issue' }));
     const detail = within(screen.getByRole('dialog', { name: 'Test Issue' }));
     expect((await detail.findByRole('alert')).textContent).toMatch(/no direct reader file/i);
@@ -94,7 +98,7 @@ describe('Sanka comic reader & pagination flow', () => {
     fireEvent.click(detail.getByRole('button', { name: 'Open listing' }));
     await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(listing));
     fireEvent.click(detail.getByRole('button', { name: 'Find another source' }));
-    expect(screen.getByRole('tab', { name: 'All Sources' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('combobox', { name: 'Comic source' })).toHaveProperty('value', 'all');
     expect((screen.getByRole('textbox', { name: 'Search manga and comics' }) as HTMLInputElement).value).toBe('Test Issue');
   });
 
@@ -215,7 +219,7 @@ describe('Sanka comic reader & pagination flow', () => {
     }));
 
     render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: 'All Sources' }));
+    selectComicSource('All Sources');
     fireEvent.click(await screen.findByRole('button', { name: 'Open Test Manga chapters' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Chapter 1' }));
     expect(await screen.findByAltText('Page 1')).toHaveProperty('src', 'https://images.example/data/hash/a.png');
@@ -246,7 +250,7 @@ describe('Sanka comic reader & pagination flow', () => {
     }));
 
     render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: 'All Sources' }));
+    selectComicSource('All Sources');
     await screen.findByText(/2 editions/);
     const cards = screen.getAllByRole('button', { name: /^Open (Shared Title|Judul Bersama) chapters$/ });
     expect(cards).toHaveLength(1);
@@ -260,7 +264,7 @@ describe('Sanka comic reader & pagination flow', () => {
   it('loads translated comic pages after filtering the catalog by language', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ data: [] })));
     render(<SankaExplorer />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Pepper&Carrot' }));
+    selectComicSource('Pepper&Carrot');
     fireEvent.change(screen.getByRole('combobox', { name: 'Comic language' }), { target: { value: 'fr' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Open Pepper&Carrot chapters' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Start Episode 1 · Potion of Flight' }));

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { loadNovelChapters, loadNovelText, NOVEL_SOURCES, searchNovels, type Novel, type NovelChapter, type NovelSource } from '../services/novelService';
+import ReadingSourceDirectory from './ReadingSourceDirectory';
 import ReaderZoomControls from './ReaderZoomControls';
+import { Artwork } from './MediaCard';
 import './novels-view.css';
 
 function getSavedChapter(novel: Novel) {
@@ -82,36 +84,40 @@ export default function NovelsView() {
     setSelected(novel);
   };
 
+  const chooseSource = (next: NovelSource) => {
+    if (source !== next) { setSource(next); setPage(1); setItems([]); }
+  };
   const resume = selected ? chapters.findIndex((entry) => entry.url === getSavedChapter(selected)?.url) : -1;
   return (
-    <div className="standard-page page-enter books-page">
-      <div className="books-hero">
-        <span className="books-hero-tile" aria-hidden="true"><BookOpen size={22} /></span>
-        <div><h1>Novels</h1><p>Search and read English novels in PRAHA.</p></div>
-      </div>
-      <div className="comic-source-rail" role="tablist" aria-label="Novel source">
-        {Object.entries(NOVEL_SOURCES).map(([id, site]) => (
-          <button key={id} type="button" role="tab" aria-selected={source === id} className={`comic-source-chip${source === id ? ' active' : ''}`}
-            onClick={() => { if (id !== source) { setSource(id as NovelSource); setPage(1); setItems([]); } }}>
-            {site.label}
-          </button>
-        ))}
-      </div>
-      <form className="sanka-search" onSubmit={(event) => {
+    <div className="standard-page page-enter books-page reading-page">
+      <h1 className="reading-heading">Novels</h1>
+      <form className="sanka-search reading-search" onSubmit={(event) => {
         event.preventDefault();
         if (query.trim() !== search || page !== 1) { setItems([]); setSearch(query.trim()); setPage(1); }
       }}>
         <Search size={16} />
-        <input aria-label="Search novels" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search novels…" />
+        <input type="search" aria-label="Search novels" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search novels" />
         <button type="submit" className="button button-primary">Search</button>
       </form>
+      <div className="reading-controls">
+        <select className="reading-select" aria-label="Novel source" value={source} onChange={(event) => chooseSource(event.target.value as NovelSource)}>
+          {Object.entries(NOVEL_SOURCES).map(([id, site]) => <option key={id} value={id}>{site.label}</option>)}
+        </select>
+        <details className="reading-options">
+          <summary>Source directories</summary>
+          <ReadingSourceDirectory repository="lnreader" readers={{ 'The Wandering Inn': () => chooseSource('wanderinginn') }} />
+          <ReadingSourceDirectory repository="ireader" readers={{ 'Standard Ebooks': () => chooseSource('standardebooks') }} />
+        </details>
+      </div>
       {loading && <p role="status">Loading novels…</p>}
       {error && <p role="alert">{error}</p>}
       {!loading && !error && !items.length && <p>No English novels found.</p>}
-      <div className="novel-list">
+      <div className="novel-grid">
         {items.map((novel) => (
-          <button type="button" key={novel.url} className="button button-secondary" onClick={() => openNovel(novel)}>
-            {novel.title}
+          <button type="button" key={novel.url} className="novel-card" onClick={() => openNovel(novel)}>
+            <span className="novel-cover"><Artwork src={novel.cover} alt={novel.title} /></span>
+            <strong>{novel.title}</strong>
+            {novel.author && <small>{novel.author}</small>}
           </button>
         ))}
       </div>

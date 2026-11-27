@@ -136,3 +136,12 @@ export const NSFW_COPY = {
   confirmAccept: "I'm 18 or older",
   confirmCancel: 'Cancel',
 } as const;
+
+export function confirmAdultMode(mode: NsfwMode): boolean {
+  if (mode === 'off') return true;
+  const key = 'praha.nsfw.ack.v1';
+  try { if (localStorage.getItem(key) === '1') return true; } catch { /* Ask again. */ }
+  if (!window.confirm(`${NSFW_COPY.confirmTitle}\n\n${NSFW_COPY.confirmBody}`)) return false;
+  try { localStorage.setItem(key, '1'); } catch { /* Ask again next time. */ }
+  return true;
+}

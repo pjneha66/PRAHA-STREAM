@@ -48,7 +48,7 @@ describe('Books search and scan resume', () => {
     });
 
     render(<BooksView />);
-    expect(screen.getByRole('tab', { name: 'All catalogs' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('combobox', { name: 'Book source' })).toHaveProperty('value', 'all');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search books' }), { target: { value: 'ISBN 978-0-14-032872-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByText('Bookracy unavailable.')).toBeTruthy();
@@ -72,7 +72,7 @@ describe('Books search and scan resume', () => {
     fireEvent.click(within(reader).getByRole('button', { name: 'Close reader' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'A Test Book' })).getByRole('button', { name: 'Close' }));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Open Library' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Book source' }), { target: { value: 'openlibrary' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Open A Test Book' }));
     fireEvent.click(screen.getByRole('button', { name: 'Resume page 151' }));
     expect(await screen.findByText('Page 151 / 180')).toBeTruthy();
@@ -135,7 +135,7 @@ describe('Books search and scan resume', () => {
     const openReaderFile = vi.fn(() => true);
     vi.stubGlobal('PrahaNative', { openReaderFile });
     render(<BooksView />);
-    fireEvent.click(screen.getByRole('tab', { name: 'OceanofPDF' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Book source' }), { target: { value: 'oceanofpdf' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Open Test Book' }));
     fireEvent.click(await screen.findByRole('button', { name: /test.epub/i }));
     await waitFor(() => expect(openReaderFile).toHaveBeenCalledWith('https://theoceanofpdf.com/files/test.epub'));

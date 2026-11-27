@@ -10,7 +10,7 @@ import { tmdbService } from '../services/tmdbService';
 import { IMDX_DOCS_URL, imdxService, normalizeImdxBaseUrl } from '../services/imdxService';
 import { checkAppDns, isAndroidApp, isAndroidTv, openPrivateDnsSettings, setVpnEnabled, getVpnStatus } from '../services/androidBridge';
 import { NETWORK_CONDITION_COPY, probeNetworkCondition, type NetworkCondition } from '../services/networkCondition';
-import { NSFW_COPY } from '../services/nsfwGate';
+import { confirmAdultMode, NSFW_COPY } from '../services/nsfwGate';
 import { TorrentStreamingEngine } from '../services/torrentStreamingService';
 import { torrServerController } from '../services/p2p/torrServerController';
 import type { TorrServerStatus } from '../services/p2p/torrServerBridge';
@@ -246,22 +246,8 @@ const SettingsView: React.FC<{
   /** Kids profiles can never see adult content, whatever is saved. */
   const kidsProfile = Boolean(activeProfile?.isKids);
 
-  /**
-   * Adult content needs one confirmation the first time it is switched on.
-   * Kept in localStorage rather than settings so it is a device-level promise,
-   * and it is never re-asked after the first accept.
-   */
-  const NSFW_ACK_KEY = 'praha.nsfw.ack.v1';
   const requestNsfwMode = (mode: NsfwMode) => {
-    if (mode === 'off') { update('nsfw', 'off'); return; }
-    let acknowledged = false;
-    try { acknowledged = localStorage.getItem(NSFW_ACK_KEY) === '1'; } catch { acknowledged = false; }
-    if (!acknowledged) {
-      const ok = window.confirm(`${NSFW_COPY.confirmTitle}\n\n${NSFW_COPY.confirmBody}`);
-      if (!ok) return;
-      try { localStorage.setItem(NSFW_ACK_KEY, '1'); } catch { /* storage full or blocked: ask again next time */ }
-    }
-    update('nsfw', mode);
+    if (confirmAdultMode(mode)) update('nsfw', mode);
   };
 
   /**
@@ -1082,7 +1068,7 @@ const SettingsView: React.FC<{
           <section className="settings-card">
             <div className="settings-card-heading"><span><MonitorPlay size={19} /></span><div><h2>Navigation</h2><p>Show or hide sections of the sidebar. Extensions and Settings always stay.</p></div></div>
             <div className="setting-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
-              {[['home', 'Home'], ['livetv', 'Live TV'], ['anime', 'Anime'], ['sanka', 'Comics'], ['manga', 'Manga'], ['music', 'Music'], ['audiobooks', 'Audiobooks'], ['books', 'Books'], ['discover', 'Discover'], ['flow', 'Flow · YouTube'], ['explore', 'Explore'], ['library', 'My Library']].map(([id, label]) => {
+              {[['home', 'Home'], ['livetv', 'Live TV'], ['anime', 'Anime'], ['reading', 'Reading'], ['music', 'Music'], ['audiobooks', 'Audiobooks'], ['discover', 'Discover'], ['flow', 'Flow · YouTube'], ['explore', 'Explore'], ['library', 'My Library']].map(([id, label]) => {
                 const visible = !hiddenNav.includes(id);
                 return (
                   <button

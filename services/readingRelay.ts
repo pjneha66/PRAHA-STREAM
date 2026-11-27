@@ -1,10 +1,11 @@
 import { nativeFetchText } from './androidBridge';
 import { comicsRelayUrl } from './comicsRelay';
 
-export async function fetchReadingPage(source: string, url: string): Promise<string> {
-  const request = (target: string) => nativeFetchText(target, { timeoutMs: 6500 });
+export async function fetchReadingPage(source: string, url: string, headers?: Record<string, string>): Promise<string> {
+  const request = (target: string, requestHeaders?: Record<string, string>) =>
+    nativeFetchText(target, { timeoutMs: 6500, headers: requestHeaders });
   try {
-    const response = await request(url);
+    const response = await request(url, headers);
     if (response.ok && response.data && !/<title>[^<]*(?:just a moment|ddos.guard|verify you are human)/i.test(response.data)) {
       return response.data;
     }

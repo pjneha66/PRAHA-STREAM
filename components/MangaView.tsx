@@ -1,15 +1,38 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronLeft, LoaderCircle, RotateCcw, Search, X } from 'lucide-react';
+import { ChevronLeft, LoaderCircle, RotateCcw, Search, X } from 'lucide-react';
 import { MangaService, type MangaChapter, type MangaItem } from '../services/mangaService';
+import { Artwork } from './MediaCard';
+import { webtoonsCatalog, webtoonsChapters, webtoonsPages } from '../services/webtoonsMangaService';
+import { extraKotatsuProvider, extraKotatsuProviders, type ExtraKotatsuProvider } from '../services/kotatsuMangaService';
 import MangaReader from './MangaReader';
 import ChapterOrder, { compareChapters, useChapterOrder } from './ChapterOrder';
 import ReadingSaveButton from './ReadingSaveButton';
 import type { MangaSource, ReadingLibraryProps } from '../services/readingLibrary';
 import { mangaDexCatalog, mangaDexDetail, mangaDexPages } from '../services/mangaDexService';
-import { NSFW_COPY } from '../services/nsfwGate';
+import ReadingSourceDirectory from './ReadingSourceDirectory';
+import type { SankaTitle } from '../services/sankaService';
+import { twokindsCatalog, twokindsDetail, twokindsPages } from '../services/twokindsService';
+import type { NsfwMode } from '../types';
 import './manga-view.css';
 
-interface MangaViewProps extends ReadingLibraryProps { prefillQuery?: string }
+interface MangaViewProps extends ReadingLibraryProps {
+  prefillQuery?: string;
+  adultMode?: NsfwMode;
+  onAdultMode?: (mode: NsfwMode) => void;
+}
+
+const kotatsuProviders = {
+  all: 'All providers', weebcentral: 'Weeb Central', webtoons: 'Webtoons English', twokinds: 'Twokinds',
+  mangakatana: 'MangaKatana', mangatellers: 'Mangatellers', guyacubari: 'GuyaCubari',
+} as const;
+type KotatsuProvider = keyof typeof kotatsuProviders;
+
+function catalogManga(item: SankaTitle): MangaItem {
+  return {
+    id: item.slug, title: item.title, coverNormal: item.poster || '', coverSmall: item.poster || '',
+    type: item.comicType || 'Manga', url: item.sourceUrl || '', synopsis: item.summary, year: item.year,
+  };
+}
 
 const MangaView: React.FC<MangaViewProps> = (props) => {
   const [source, setSource] = useState<MangaSource>(props.openReading?.kind === 'manga' ? props.openReading.source : 'WeebCentral');
@@ -19,12 +42,14 @@ const MangaView: React.FC<MangaViewProps> = (props) => {
 };
 
 const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceChange: (source: MangaSource) => void }> = ({
-  prefillQuery, source, onSourceChange, ...readingLibrary
+  prefillQuery, source, onSourceChange, adultMode, onAdultMode, ...readingLibrary
 }) => {
   const [query, setQuery] = useState(prefillQuery || '');
   const [submitted, setSubmitted] = useState(prefillQuery || '');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MangaItem[]>([]);
+  const [kotatsuProvider, setKotatsuProvider] = useState<KotatsuProvider>('all');
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<MangaItem | null>(null);
@@ -34,6 +59,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
   const detailRequest = useRef(0);
   const pageRequest = useRef(0);
   const [chaptersLoading, setChaptersLoading] = useState(false);
+  const [nextEpisodePage, setNextEpisodePage] = useState(0);
   const [reader, setReader] = useState<{
     chapter: MangaChapter;
     images: string[];
@@ -47,14 +73,51 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     setError('');
     try {
       const nextPage = reset ? 1 : page + 1;
-      const result: MangaItem[] = source === 'MangaDex'
-        ? (await mangaDexCatalog(submitted, nextPage, 'popular', undefined, 'en')).items.map((item) => ({
-          id: item.slug, title: item.title, coverNormal: item.poster || '', coverSmall: item.poster || '',
-          type: item.comicType || 'Manga', url: '', synopsis: item.summary, year: item.year,
-        }))
-        : submitted ? await MangaService.searchManga(submitted, nextPage) : await MangaService.getManga(nextPage);
+      let result: MangaItem[];
+      let more: boolean;
+      if (source === 'WeebCentral') {
+        result = submitted ? await MangaService.searchManga(submitted, nextPage) : await MangaService.getManga(nextPage);
+        more = result.length > 0;
+      } else if (source === 'MangaDex') {
+        const catalog = await mangaDexCatalog(submitted, nextPage, 'popular', undefined, 'en');
+        result = catalog.items.map(catalogManga);
+        more = catalog.hasMore;
+      } else {
+        const enabled = (id: KotatsuProvider) => kotatsuProvider === 'all' || kotatsuProvider === id;
+        const tasks: Promise<{ items: MangaItem[]; hasMore: boolean }>[] = [];
+        if (enabled('weebcentral')) {
+          const manga = submitted ? MangaService.searchManga(submitted, nextPage) : MangaService.getManga(nextPage);
+          tasks.push(manga.then((items) => ({
+            items: items.map((item) => ({ ...item, kotatsuProvider: 'weebcentral' })),
+            hasMore: items.length >= 30,
+          })));
+        }
+        if (enabled('webtoons') && adultMode !== 'only') tasks.push(webtoonsCatalog(submitted, nextPage));
+        if (enabled('twokinds')) {
+          const webcomic = twokindsCatalog(submitted, nextPage, 'en', adultMode);
+          tasks.push(Promise.resolve({
+            items: webcomic.items.map((item) => ({ ...catalogManga(item), kotatsuProvider: 'twokinds' })),
+            hasMore: false,
+          }));
+        }
+        if (adultMode !== 'only') {
+          for (const id of Object.keys(extraKotatsuProviders) as ExtraKotatsuProvider[]) {
+            if (enabled(id)) tasks.push(extraKotatsuProviders[id].catalog(submitted, nextPage, adultMode ?? 'off'));
+          }
+        }
+        const settled = await Promise.allSettled(tasks);
+        const catalogs = settled.flatMap((task) => task.status === 'fulfilled' ? [task.value] : []);
+        if (tasks.length && !catalogs.length) throw new Error('Kotatsu providers unavailable.');
+        result = [];
+        const count = Math.max(0, ...catalogs.map((catalog) => catalog.items.length));
+        for (let index = 0; index < count; index += 1) {
+          for (const { items } of catalogs) if (items[index]) result.push(items[index]);
+        }
+        more = catalogs.some((catalog) => catalog.hasMore);
+      }
       if (request !== pageRequest.current) return;
       setPage(nextPage);
+      setHasMore(more);
       if (reset) {
         setItems(result);
       } else {
@@ -65,12 +128,12 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     } finally {
       if (request === pageRequest.current) setLoading(false);
     }
-  }, [submitted, page, source]);
+  }, [submitted, page, source, adultMode, kotatsuProvider]);
 
   useEffect(() => {
     void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitted]);
+  }, [submitted, adultMode, kotatsuProvider]);
 
   useEffect(() => {
     if (prefillQuery) {
@@ -89,12 +152,23 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     const request = ++detailRequest.current;
     setDetail(item);
     setChapters([]);
+    setNextEpisodePage(0);
     setChapterError('');
     setChaptersLoading(true);
     const ascending = (a: MangaChapter, b: MangaChapter) => compareChapters(a.name, b.name, a.chapterNumber, b.chapterNumber);
     try {
-      if (source === 'MangaDex') {
-        const full = await mangaDexDetail(item.id, undefined, 'en');
+      const provider = source === 'Kotatsu' ? extraKotatsuProvider(item.kotatsuProvider) : undefined;
+      if (provider) {
+        if (adultMode === 'only') throw new Error('This provider is hidden in Hentai only mode.');
+        const list = await provider.chapters(item, adultMode ?? 'off');
+        if (request === detailRequest.current) setChapters(list.sort(ascending));
+      } else if (source === 'Kotatsu' && item.kotatsuProvider === 'webtoons') {
+        const result = await webtoonsChapters(item, 1);
+        if (request !== detailRequest.current) return;
+        setChapters(result.chapters.sort(ascending));
+        setNextEpisodePage(result.hasMore ? 2 : 0);
+      } else if (source === 'MangaDex' || (source === 'Kotatsu' && item.id === 'twokinds')) {
+        const full = source === 'Kotatsu' ? await twokindsDetail() : await mangaDexDetail(item.id, undefined, 'en');
         if (request !== detailRequest.current) return;
         setDetail({ ...item, synopsis: full.summary, author: full.author, tags: full.genres });
         setChapters(full.chapters.map((entry) => ({ id: entry.slug, name: entry.title, url: '' })).sort(ascending));
@@ -104,16 +178,16 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
           MangaService.getChapters(item.id),
         ]);
         if (request !== detailRequest.current) return;
-        if (full.status === 'fulfilled') setDetail(full.value);
+        if (full.status === 'fulfilled') setDetail({ ...full.value, kotatsuProvider: item.kotatsuProvider });
         if (list.status === 'rejected') throw list.reason;
         setChapters([...list.value].sort(ascending));
       }
-    } catch {
-      if (request === detailRequest.current) setChapterError('Could not load chapters.');
+    } catch (error) {
+      if (request === detailRequest.current) setChapterError(error instanceof Error ? error.message : 'Could not load chapters.');
     } finally {
       if (request === detailRequest.current) setChaptersLoading(false);
     }
-  }, [source]);
+  }, [source, adultMode]);
 
   const target = readingLibrary.openReading;
   const appliedTarget = useRef<typeof target>(null);
@@ -128,7 +202,13 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     setChapterError('');
     setReaderLoading(true);
     try {
-      const images = await (source === 'MangaDex' ? mangaDexPages(chapter.id) : MangaService.getChapterImages(chapter.id));
+      let images: string[];
+      const provider = source === 'Kotatsu' ? extraKotatsuProvider(detail?.kotatsuProvider) : undefined;
+      if (provider) images = await provider.pages(chapter);
+      else if (source === 'Kotatsu' && detail?.kotatsuProvider === 'webtoons') images = await webtoonsPages(chapter);
+      else if (source === 'Kotatsu' && detail?.id === 'twokinds') images = await twokindsPages(chapter.id);
+      else if (source === 'MangaDex') images = await mangaDexPages(chapter.id);
+      else images = await MangaService.getChapterImages(chapter.id);
       if (request !== detailRequest.current) return;
       if (!images.length) throw new Error('This chapter has no readable images right now.');
       setReader({ chapter, images, index });
@@ -145,31 +225,43 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     if (chapters[index]) void openChapter(chapters[index], index);
   };
 
+  const selectProvider = (provider: KotatsuProvider) => {
+    if (provider === kotatsuProvider) return;
+    pageRequest.current += 1;
+    setItems([]);
+    setPage(1);
+    setKotatsuProvider(provider);
+  };
+
+  const loadOlderEpisodes = async () => {
+    if (!detail || !nextEpisodePage) return;
+    const request = detailRequest.current;
+    setChaptersLoading(true);
+    setChapterError('');
+    try {
+      const result = await webtoonsChapters(detail, nextEpisodePage);
+      if (request !== detailRequest.current) return;
+      setChapters((current) => [...new Map([...current, ...result.chapters].map((chapter) => [chapter.id, chapter])).values()]
+        .sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0)));
+      setNextEpisodePage(result.hasMore ? nextEpisodePage + 1 : 0);
+    } catch {
+      if (request === detailRequest.current) setChapterError('Could not load older episodes.');
+    } finally {
+      if (request === detailRequest.current) setChaptersLoading(false);
+    }
+  };
+
   const heading = useMemo(() => {
     if (submitted) return `Results for “${submitted}”`;
+    if (source === 'Kotatsu') return kotatsuProvider === 'all' ? 'Kotatsu catalog' : kotatsuProviders[kotatsuProvider];
     return `Popular manga on ${source}`;
-  }, [submitted, source]);
+  }, [submitted, source, kotatsuProvider]);
 
   return (
-    <div className="standard-page manga-page page-enter">
-      <div className="manga-heading">
-        <div>
-          <BookOpen size={20} />
-          <div>
-            <h1>Manga</h1>
-            <p>English manga · {NSFW_COPY.title}: {NSFW_COPY.modes[0].label} by default</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="comic-source-rail" role="tablist" aria-label="Manga source">
-        {(['WeebCentral', 'MangaDex'] as const).map((name) => (
-          <button type="button" key={name} role="tab" aria-selected={source === name}
-            className={`comic-source-chip${source === name ? ' active' : ''}`} onClick={() => onSourceChange(name)}>{name}</button>
-        ))}
-      </div>
+    <div className="standard-page manga-page page-enter reading-page">
+      <h1 className="reading-heading">Manga</h1>
       <form
-        className="manga-search"
+        className="manga-search reading-search"
         onSubmit={(event) => {
           event.preventDefault();
           setSubmitted(query.trim());
@@ -179,7 +271,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search manga, manhwa, manhua…"
+          placeholder="Search manga"
           aria-label="Search manga"
         />
         {query && (
@@ -190,9 +282,30 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
         <button type="submit" className="button button-primary">Search</button>
       </form>
 
+      <div className="reading-controls">
+        <select className="reading-select" aria-label="Manga source" value={source}
+          onChange={(event) => onSourceChange(event.target.value as MangaSource)}>
+          {(['WeebCentral', 'MangaDex', 'Kotatsu'] as const).map((name) => <option key={name}>{name}</option>)}
+        </select>
+        {source === 'Kotatsu' && (
+          <select className="reading-select" aria-label="Kotatsu providers" value={kotatsuProvider}
+            onChange={(event) => selectProvider(event.target.value as KotatsuProvider)}>
+            {Object.entries(kotatsuProviders).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        )}
+      </div>
+      {source === 'Kotatsu' && (
+        <ReadingSourceDirectory repository="kotatsu" adultMode={adultMode} onAdultMode={onAdultMode} collapseListings
+          readers={{
+            Twokinds: () => selectProvider('twokinds'), 'Weeb Central': () => selectProvider('weebcentral'),
+            'LineWebtoons English': () => selectProvider('webtoons'), 'Webtoons English': () => selectProvider('webtoons'),
+            MangaKatana: () => selectProvider('mangakatana'), Mangatellers: () => selectProvider('mangatellers'),
+            GuyaCubari: () => selectProvider('guyacubari'),
+          }} />
+      )}
       <div className="manga-results-heading">
         <h2>{heading}</h2>
-        {!loading && <span>{items.length} titles</span>}
+        {!loading && <span>{items.length} {items.length === 1 ? 'title' : 'titles'}</span>}
       </div>
 
       {loading && !items.length ? (
@@ -205,6 +318,8 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
             <RotateCcw size={15} /> Try again
           </button>
         </div>
+      ) : !items.length ? (
+        <p>No matching titles.</p>
       ) : (
         <>
           <div className="comic-grid manga-grid">
@@ -216,20 +331,16 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
                 onClick={() => void openDetail(item)}
               >
                 <div className="manga-cover">
-                  {item.coverNormal ? (
-                    <img src={item.coverNormal} alt="" loading="lazy" />
-                  ) : (
-                    <span><BookOpen size={28} /></span>
-                  )}
+                  <Artwork src={item.coverNormal} alt={item.title} />
                 </div>
                 <div className="manga-card-meta">
                   <strong>{item.title}</strong>
-                  <span>{[item.type, item.year, item.status].filter(Boolean).join(' · ')}</span>
+                  <span>{[item.kotatsuProvider && kotatsuProviders[item.kotatsuProvider], item.type, item.year, item.status].filter(Boolean).join(' · ')}</span>
                 </div>
               </button>
             ))}
           </div>
-          {items.length > 0 && (
+          {items.length > 0 && hasMore && (
             <div className="manga-more">
               <button
                 className="button button-secondary"
@@ -269,7 +380,9 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
               {chapters.length > 1 && <ChapterOrder value={chapterOrder} onChange={setChapterOrder} />}
             </div>
             {chapterError && <p className="sanka-inline-error" role="alert">{chapterError}</p>}
-            {chaptersLoading ? (
+            {nextEpisodePage > 0 && <button type="button" className="button button-secondary button-small"
+              disabled={chaptersLoading} onClick={() => void loadOlderEpisodes()}>Load older episodes</button>}
+            {chaptersLoading && !chapters.length ? (
               <div className="manga-loading"><LoaderCircle size={18} className="spin" /> Loading chapters…</div>
             ) : (
               <div className="manga-chapters">

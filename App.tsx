@@ -37,7 +37,7 @@ import { fetchStremioCatalog, fetchStremioManifest, findStremioStreams, searchSt
 import * as metaAddons from './services/metaAddons';
 import * as pluginCatalogs from './services/pluginCatalogs';
 import { findNuvioStreams } from './services/nuvioService';
-import { setNsfwContext } from './services/nsfwGate';
+import { confirmAdultMode, effectiveNsfwMode, setNsfwContext } from './services/nsfwGate';
 import { tmdbService } from './services/tmdbService';
 import type { JellyfinSnapshot } from './services/jellyfinService';
 import { animeService } from './services/animeService';
@@ -72,7 +72,9 @@ const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'mu
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
-  const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0] as AppView;
+  const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0];
+  if (hash === 'reading') return 'manga';
+  const raw = hash as AppView;
   return VALID_VIEWS.includes(raw) ? raw : 'home';
 }
 
@@ -1394,6 +1396,10 @@ const App: React.FC = () => {
     }
   };
 
+  const updateReadingAdultMode = (mode: AppSettings['nsfw']) => {
+    if (confirmAdultMode(mode)) setSettings((current) => ({ ...current, nsfw: mode }));
+  };
+
   let page: React.ReactNode;
   if (view === 'home') {
     page = (
@@ -1443,6 +1449,8 @@ const App: React.FC = () => {
   } else if (view === 'sanka') {
     page = (
       <SankaExplorer
+        adultMode={effectiveNsfwMode(settings, activeProfile)}
+        onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
         savedReading={savedReading}
         onToggleReading={toggleReading}
         openReading={readingTarget?.kind === 'sanka' ? readingTarget : null}
@@ -1450,10 +1458,10 @@ const App: React.FC = () => {
       />
     );
   } else if (view === 'manga') {
-    // Separate Manga tab: WeebCentral + the webtoon/paged chapter reader.
-    // The Comics tab above keeps Sanka/Comick untouched.
     page = (
       <MangaView
+        adultMode={effectiveNsfwMode(settings, activeProfile)}
+        onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
         savedReading={savedReading}
         onToggleReading={toggleReading}
         openReading={readingTarget?.kind === 'manga' ? readingTarget : null}

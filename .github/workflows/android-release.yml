@@ -74,7 +74,7 @@ jobs:
           cd android
           chmod +x gradlew
           if [[ "$GITHUB_REF" == refs/tags/android-phone-v* ]]; then
-            ./gradlew assembleRelease --stacktrace -PphoneOnly
+            ./gradlew assembleRelease --stacktrace -PphoneUniversal
           else
             ./gradlew assembleRelease --stacktrace
           fi
@@ -90,7 +90,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/android-phone-v* ]]; then
             version="${GITHUB_REF_NAME#android-phone-}"
             test "${#apks[@]}" -eq 1
-            test "${apks[0]}" = "dist-apk/praha-stream-${version}-arm64-v8a.apk"
+            test "${apks[0]}" = "dist-apk/praha-stream-${version}-universal.apk"
           fi
 
       # Proves the release APKs carry the real release key. A debug key would

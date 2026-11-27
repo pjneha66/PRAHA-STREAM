@@ -3708,3 +3708,77 @@ html.player-vlc-active .app-shell,
   .sanka-results-heading { flex-wrap: wrap; gap: 8px; }
   .library-tabs { flex-wrap: wrap; gap: 8px 14px; }
 }
+
+.reading-source-directory { padding: 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 12px; }
+.reading-source-directory summary { cursor: pointer; font-weight: 650; }
+.reading-source-directory input, .reading-source-directory select { padding: 8px; margin: 8px 6px 0; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; max-width: 100%; }
+.reading-source-directory ul { margin: 8px 0; padding-inline-start: 18px; display: grid; gap: 6px; }
+.reading-source-directory .reading-source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; padding: 0; }
+.reading-source-actions .button { width: 100%; min-height: 40px; padding: 8px 10px; white-space: normal; }
+.reading-source-listings { margin-top: 12px; }
+
+.reading-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  max-width: 1080px;
+  margin: 10px auto 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+.reading-tab {
+  min-height: 40px;
+  padding: 4px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+}
+.reading-tab[aria-current] { background: rgba(var(--accent-rgb), .14); color: var(--accent); }
+.standard-page.reading-page { max-width: 1080px; margin-inline: auto; padding: 19px 0 24px; }
+.reading-heading { margin: 0 0 12px; font-size: clamp(24px, 3vw, 34px); line-height: 1.15; letter-spacing: -.025em; }
+.reading-page .reading-search {
+  width: 100%;
+  max-width: none;
+  min-height: 48px;
+  height: auto;
+  margin: 0 0 10px;
+}
+.reading-search > input, .reading-search .books-search-field input { font-size: 16px; }
+.reading-search .button { flex: none; min-height: 36px; padding: 8px 14px; }
+.reading-search .books-search-field { min-height: 48px; }
+.reading-controls, .sanka-toolbar.reading-controls {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.reading-controls > .reading-select, .reading-controls > .settings-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.reading-select, .reading-controls .settings-select, .reading-controls .source-select, .reading-options > summary {
+  min-height: 44px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.reading-controls .source-select select { min-width: 0; font-size: 13px; }
+.reading-options > summary { display: list-item; align-content: center; cursor: pointer; }
+.reading-options[open] { flex: 1 0 100%; }
+.reading-page .reading-pills { flex-wrap: nowrap; overflow-x: auto; }
+.reading-pills > button { flex: 0 0 auto; }
+.reading-page .manga-results-heading, .reading-page .sanka-results-heading { margin: 14px 0 12px; }
+.reading-page .sanka-fallback-note { margin: 10px 0; }
+@media (max-width: 600px) {
+  .reading-controls .filter-pills { width: 100%; }
+  .reading-controls .filter-pills button { flex: 1; justify-content: center; }
+  .reading-controls .books-external-link { flex-basis: 100%; justify-content: flex-start; min-height: 36px; }
+}

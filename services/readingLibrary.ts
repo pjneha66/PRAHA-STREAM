@@ -2,7 +2,7 @@ import type { BookItem } from './archiveService';
 import type { MangaItem } from './mangaService';
 import type { SankaTitle } from './sankaService';
 
-export type MangaSource = 'WeebCentral' | 'MangaDex';
+export type MangaSource = 'WeebCentral' | 'MangaDex' | 'Kotatsu';
 
 export type ReadingEntry =
   | { kind: 'books'; item: BookItem }

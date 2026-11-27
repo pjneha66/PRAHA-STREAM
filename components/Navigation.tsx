@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, LayoutGrid, Library,
-  MoreHorizontal, Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
+  Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
   UserPlus, Users, X,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
@@ -32,16 +32,20 @@ function readHiddenNav(): string[] {
   }
 }
 
+const readingTabs = [
+  { id: 'manga', label: 'Manga', icon: BookOpen },
+  { id: 'sanka', label: 'Comics', icon: BookOpen },
+  { id: 'books', label: 'Books', icon: BookMarked },
+  { id: 'novels', label: 'Novels', icon: BookOpen },
+] as const;
+
 const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
-  { id: 'sanka' as const, label: 'Comics', icon: BookOpen },
-  { id: 'manga' as const, label: 'Manga', icon: BookOpen },
+  { id: 'reading' as const, label: 'Reading', icon: BookOpen },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2 },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
-  { id: 'books' as const, label: 'Books', icon: BookMarked },
-  { id: 'novels' as const, label: 'Novels', icon: BookOpen },
   { id: 'discover' as const, label: 'Discover', icon: Compass },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play },
   { id: 'explore' as const, label: 'Explore', icon: LayoutGrid },
@@ -52,20 +56,17 @@ const primaryMobileNavItems = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
-  { id: 'manga' as const, label: 'Manga', icon: BookOpen },
+  { id: 'reading' as const, label: 'Reading', icon: BookOpen },
 ];
 
 const moreNavItems = [
-  { id: 'sanka' as const, label: 'Comics', icon: BookOpen, desc: 'Sanka & Comick catalogues' },
+  { id: 'cloudstream' as const, label: 'CloudStream', icon: Boxes, desc: 'Repositories & .cs3 extensions' },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones, desc: '9 audiobook sources & player' },
-  { id: 'books' as const, label: 'Books', icon: BookMarked, desc: 'Open Library, folkscanomy & archive.org' },
-  { id: 'novels' as const, label: 'Novels', icon: BookOpen, desc: 'English novels and an in-app reader' },
   { id: 'flow' as const, label: 'Flow · YouTube', icon: Play, desc: 'Video streams & trending clips' },
   { id: 'discover' as const, label: 'Discover', icon: Compass, desc: 'Recommendations & genres' },
   { id: 'library' as const, label: 'My Library', icon: Library, desc: 'Watchlist & history' },
   { id: 'extensions' as const, label: 'Addons & Plugins', icon: Blocks, desc: 'Stremio & Nuvio sources' },
-  { id: 'cloudstream' as const, label: 'CloudStream', icon: Boxes, desc: 'Repositories & .cs3 extensions' },
   { id: 'settings' as const, label: 'Settings', icon: Settings, desc: 'Debrid, player & auto-updates' },
 ];
 
@@ -123,6 +124,18 @@ const Navigation: React.FC<NavigationProps> = ({
     };
   }, [moreOpen]);
 
+  const readingView = readingTabs.find((item) => item.id === view)?.id;
+  const lastReadingView = useRef<AppView>('manga');
+  useEffect(() => {
+    if (readingView) lastReadingView.current = readingView;
+  }, [readingView]);
+  const activeMainView = readingView ? 'reading' : view;
+  const navigateMain = (destination: AppView | 'reading') => {
+    if (destination === 'reading') {
+      if (!readingView) onNavigate(lastReadingView.current);
+    } else onNavigate(destination);
+  };
+
   const isMoreActive = moreNavItems.some((item) => item.id === view);
 
   useEffect(() => {
@@ -140,16 +153,16 @@ const Navigation: React.FC<NavigationProps> = ({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const navButton = (item: { id: AppView; label: string; icon: typeof Home }) => {
+  const navButton = (item: { id: AppView | 'reading'; label: string; icon: typeof Home }) => {
     const Icon = item.icon;
     return (
       <button
         key={item.id}
-        className={`nav-item ${view === item.id ? 'active' : ''}`}
-        onClick={() => onNavigate(item.id)}
-        aria-current={view === item.id ? 'page' : undefined}
+        className={`nav-item ${activeMainView === item.id ? 'active' : ''}`}
+        onClick={() => navigateMain(item.id)}
+        aria-current={activeMainView === item.id ? 'page' : undefined}
       >
-        <Icon size={19} strokeWidth={view === item.id ? 2.4 : 1.8} />
+        <Icon size={19} strokeWidth={activeMainView === item.id ? 2.4 : 1.8} />
         <span>{item.label}</span>
         {item.id === 'extensions' && sourceCount > 0 && <span className="nav-count">{sourceCount}</span>}
       </button>
@@ -275,21 +288,30 @@ const Navigation: React.FC<NavigationProps> = ({
             <ProfileAvatar profile={activeProfile} size="sm" />
           </button>
         </header>
-        <main className="main-content">{children}</main>
+        <main className="main-content">
+          {readingView && <nav className="reading-tabs" aria-label="Reading sections">
+            {readingTabs.map(({ id, label }) => (
+              <button key={id} type="button" onClick={() => { if (view !== id) onNavigate(id); }}
+                aria-current={view === id ? 'page' : undefined}
+                className="reading-tab">{label}</button>
+            ))}
+          </nav>}
+          {children}
+        </main>
       </div>
 
       {/* Mobile Bottom Navigation: 4 Primary Tabs + More Hub */}
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {primaryMobileNavItems.map((item) => {
           const Icon = item.icon;
-          const isActive = view === item.id;
+          const isActive = activeMainView === item.id;
           return (
             <button
               key={item.id}
               className={`mobile-nav-btn ${isActive ? 'active' : ''}`}
               onClick={() => {
                 setMoreOpen(false);
-                onNavigate(item.id);
+                navigateMain(item.id);
               }}
               aria-label={item.label}
               aria-current={isActive ? 'page' : undefined}

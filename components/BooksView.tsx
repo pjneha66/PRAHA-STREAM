@@ -2,7 +2,7 @@ import ReadingSaveButton from './ReadingSaveButton';
 import type { ReadingLibraryProps } from '../services/readingLibrary';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  BookOpen, CircleAlert, ExternalLink, FileDown, Library, LoaderCircle, RefreshCw, Search, X,
+  BookOpen, CircleAlert, ExternalLink, FileDown, LoaderCircle, RefreshCw, Search, X,
 } from 'lucide-react';
 import {
   ALL_ARCHIVE_TEXTS, ARCHIVE_COLLECTIONS, BooksService, canReadBookFile, type BookFile, type BookItem,
@@ -350,78 +350,9 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
   const savedPage = selected?.identifier ? readScanPage(selected.identifier) : undefined;
 
   return (
-    <div className="standard-page page-enter books-page">
-      <div className="books-hero">
-        <span className="books-hero-tile" aria-hidden="true"><Library size={22} /></span>
-        <div>
-          <span className="page-kicker">EBOOKS · COMICS · PAPERBACKS</span>
-          <h1>Books</h1>
-          <p>Search by title, author, or ISBN.</p>
-        </div>
-      </div>
-
-      <ContinueShelf
-        entries={continueEntries}
-        onResume={resumeBook}
-        onDismiss={(entry) => {
-          removeContinue('book', entry.id);
-          setContinueEntries(readContinue('book'));
-        }}
-      />
-
-      <div className="books-toolbar">
-        <div className="filter-pills" role="tablist" aria-label="Book source">
-          {(Object.keys(SOURCE_LABEL) as SourceMode[]).map((key) => (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={mode === key}
-              className={mode === key ? 'active' : ''}
-              onClick={() => setMode(key)}
-            >
-              {SOURCE_LABEL[key]}
-            </button>
-          ))}
-        </div>
-        {mode === 'archive' && (
-          <label className="source-select">
-            <span className="books-sr-only">archive.org collection</span>
-            <select
-              aria-label="archive.org collection"
-              value={collectionId}
-              onChange={(e) => setCollectionId(e.target.value)}
-            >
-              {ARCHIVE_COLLECTIONS.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        {mode !== 'all' && SITE_URLS[mode] && <button
-          type="button"
-          className="text-button books-external-link"
-          onClick={() => mode === 'openlibrary' ? void openSite(SITE_URLS[mode]!) : void openSafeExternalUrl(SITE_URLS[mode]!)}
-        >
-          <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
-        </button>}
-      </div>
-
-      {mode === 'openlibrary' && (
-        <div className="books-subject-rail">
-          {OPEN_LIBRARY_SUBJECTS.map((subject) => (
-            <button
-              key={subject}
-              type="button"
-              className={`books-subject-chip ${submitted === subject ? 'active' : ''}`}
-              onClick={() => { setInput(subject); setSubmitted(subject); }}
-            >
-              {subject}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <form className="books-search" onSubmit={(e) => {
+    <div className="standard-page page-enter books-page reading-page">
+      <h1 className="reading-heading">Books</h1>
+      <form className="books-search reading-search" onSubmit={(e) => {
         e.preventDefault();
         const term = input.trim();
         if (term === submitted) void load();
@@ -444,6 +375,55 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
         </div>
         <button className="button button-primary button-small" type="submit">Search</button>
       </form>
+
+      <div className="books-toolbar reading-controls">
+        <select className="reading-select" aria-label="Book source" value={mode} onChange={(event) => setMode(event.target.value as SourceMode)}>
+          {Object.entries(SOURCE_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+        {mode === 'archive' && (
+          <select
+            className="reading-select"
+            aria-label="archive.org collection"
+            value={collectionId}
+            onChange={(e) => setCollectionId(e.target.value)}
+          >
+            {ARCHIVE_COLLECTIONS.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
+        {mode !== 'all' && SITE_URLS[mode] && <button
+          type="button"
+          className="text-button books-external-link"
+          onClick={() => mode === 'openlibrary' ? void openSite(SITE_URLS[mode]!) : void openSafeExternalUrl(SITE_URLS[mode]!)}
+        >
+          <ExternalLink size={12} /> {SOURCE_LABEL[mode]} site
+        </button>}
+      </div>
+
+      {mode === 'openlibrary' && (
+        <div className="books-subject-rail reading-pills">
+          {OPEN_LIBRARY_SUBJECTS.map((subject) => (
+            <button
+              key={subject}
+              type="button"
+              className={`books-subject-chip ${submitted === subject ? 'active' : ''}`}
+              onClick={() => { setInput(subject); setSubmitted(subject); }}
+            >
+              {subject}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <ContinueShelf
+        entries={continueEntries}
+        onResume={resumeBook}
+        onDismiss={(entry) => {
+          removeContinue('book', entry.id);
+          setContinueEntries(readContinue('book'));
+        }}
+      />
 
       {(error || unavailable.length > 0) && (
         <div className="books-error" role="status">
