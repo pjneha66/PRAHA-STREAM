@@ -113,9 +113,9 @@ export default function NovelsView() {
       {error && <p role="alert">{error}</p>}
       {!loading && !error && !items.length && <p>No English novels found.</p>}
       <div className="novel-grid">
-        {items.map((novel) => (
+        {items.map((novel, index) => (
           <button type="button" key={novel.url} className="novel-card" onClick={() => openNovel(novel)}>
-            <span className="novel-cover"><Artwork src={novel.cover} alt={novel.title} /></span>
+            <span className="novel-cover" aria-hidden="true"><Artwork src={novel.cover} alt={novel.title} priority={index < 2} /></span>
             <strong>{novel.title}</strong>
             {novel.author && <small>{novel.author}</small>}
           </button>

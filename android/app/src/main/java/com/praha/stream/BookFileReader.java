@@ -48,6 +48,7 @@ final class BookFileReader {
     private static final long MAX_PAGE_BYTES = 32 * MIB;
     private static final long MAX_EPUB_BYTES = 96 * MIB;
     private static final String ORIGIN = "https://" + WebViewAssetLoader.DEFAULT_DOMAIN;
+    private static final java.util.Set<File> ACTIVE_DOWNLOADS = new java.util.HashSet<>();
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
             .proxy(Proxy.NO_PROXY)
             .dns(host -> {
@@ -75,6 +76,31 @@ final class BookFileReader {
         this.activity = activity;
     }
 
+    static synchronized int clearDownloads(File directory) {
+        File[] files = directory.listFiles((parent, name) ->
+                (name.startsWith("praha-book-") && name.endsWith(".download"))
+                || (name.startsWith("praha-comic-") && name.endsWith(".cbz")));
+        if (files == null) return 0;
+        int removed = 0;
+        for (File candidate : files) {
+            if (!ACTIVE_DOWNLOADS.contains(candidate) && candidate.isFile() && candidate.delete()) removed++;
+        }
+        return removed;
+    }
+
+    private static synchronized File createDownload(String prefix, String suffix, File directory) throws IOException {
+        File temporary = File.createTempFile(prefix, suffix, directory);
+        ACTIVE_DOWNLOADS.add(temporary);
+        return temporary;
+    }
+
+    private static synchronized void deleteDownload(File temporary) {
+        if (temporary != null) {
+            temporary.delete();
+            ACTIVE_DOWNLOADS.remove(temporary);
+        }
+    }
+
     static boolean isBookDownload(String url, String disposition, String mime) {
         String filename = URLUtil.guessFileName(url, disposition, mime).toLowerCase(Locale.ROOT);
         String mediaType = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
@@ -94,25 +120,26 @@ final class BookFileReader {
         new Thread(() -> {
             File temporary = null;
             try {
-                temporary = File.createTempFile("praha-book-", ".download", activity.getCacheDir());
+                temporary = createDownload("praha-book-", ".download", activity.getCacheDir());
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 try (var output = new DigestOutputStream(new FileOutputStream(temporary), digest)) {
                     download(url, userAgent, referer, output, onProgress);
                 }
+                progress(onProgress, "Preparing reader…");
                 String format = detectFormat(temporary);
                 if (format.equals("epub") && temporary.length() > MAX_EPUB_BYTES) {
                     throw new BookError("The EPUB exceeds the 96 MB reader limit.");
                 }
                 if (format.equals("cbr")) {
                     progress(onProgress, "Preparing comic pages…");
-                    File comic = File.createTempFile("praha-comic-", ".cbz", activity.getCacheDir());
+                    File comic = createDownload("praha-comic-", ".cbz", activity.getCacheDir());
                     try {
                         convertComicArchive(temporary, comic);
                     } catch (Exception error) {
-                        comic.delete();
+                        deleteDownload(comic);
                         throw error;
                     }
-                    temporary.delete();
+                    deleteDownload(temporary);
                     temporary = comic;
                     format = "cbz";
                 }
@@ -128,7 +155,7 @@ final class BookFileReader {
                     view.loadUrl(ORIGIN + "/reader/book-reader.html#format=" + readerFormat + "&id=" + id);
                 });
             } catch (Exception error) {
-                if (temporary != null) temporary.delete();
+                deleteDownload(temporary);
                 String message = error instanceof BookError ? error.getMessage() : "The book could not be downloaded. Go back and try the link again.";
                 activity.runOnUiThread(() -> { if (!closed) onError.accept(message); });
             }
@@ -431,7 +458,7 @@ final class BookFileReader {
 
     private void deleteFile() {
         File document = file;
-        if (document != null) document.delete();
+        deleteDownload(document);
         file = null;
     }
 

@@ -1181,8 +1181,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sanka-reader-footer .button { min-height: 36px; padding: 0 12px; font-size: 11px; }
 .sanka-reader-loading { position: fixed; inset: 0; z-index: 140; display: flex; align-items: center; justify-content: center; gap: 9px; background: rgba(6,7,9,.75); color: var(--text); font-size: 12px; }
 .sanka-reader-loading svg { color: var(--accent); }
-.sanka-reader-error { position: fixed; z-index: 141; top: 50%; left: 50%; width: min(370px,90vw); padding: 20px; transform: translate(-50%,-50%); border: 1px solid var(--line); border-radius: 13px; background: #15181d; color: var(--text); text-align: center; font-size: 12px; }
-.sanka-reader-error button { color: var(--accent); background: transparent; font-size: 11px; margin-top: 8px; }
+.chapter-load-error { margin: 0 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft); color: var(--text); font-size: 13px; }
+.chapter-load-error p { margin: 0 0 8px; }
+.chapter-load-error > div { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Comics tab redesign (SankaExplorer browse layer; reader keeps sanka-* classes) */
 .comic-hero { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 22px; }
@@ -1375,6 +1376,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .music-playlists-empty { color: var(--muted-2); font-size: 10.5px; }
 
 @media (max-width: 680px) {
+  .modal-backdrop.music-sheet-backdrop {
+    padding: calc(8px + var(--phone-safe-top, 0px)) 8px calc(8px + var(--phone-safe-bottom, 0px));
+  }
+  .music-sheet-backdrop .music-sheet { max-height: 100%; height: 100%; border-radius: 18px; }
+  .music-sheet-header .icon-button { width: 44px; height: 44px; flex: 0 0 auto; }
   .music-hero { gap: 11px; }
   .music-hero-tile { width: 40px; height: 40px; border-radius: 12px; }
   .music-hero h1 { font-size: 26px; }
@@ -3740,6 +3746,8 @@ html.player-vlc-active .app-shell,
   font-weight: 650;
 }
 .reading-tab[aria-current] { background: rgba(var(--accent-rgb), .14); color: var(--accent); }
+.reading-download-tools { display: flex; align-items: center; justify-content: end; gap: 10px; max-width: 1080px; margin: 4px auto 0; color: var(--muted); font-size: 12px; }
+.reading-download-tools button { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-height: 38px; padding-inline: 8px; color: var(--text); background: transparent; }
 .standard-page.reading-page { max-width: 1080px; margin-inline: auto; padding: 19px 0 24px; }
 .reading-heading { margin: 0 0 12px; font-size: clamp(24px, 3vw, 34px); line-height: 1.15; letter-spacing: -.025em; }
 .reading-page .reading-search {

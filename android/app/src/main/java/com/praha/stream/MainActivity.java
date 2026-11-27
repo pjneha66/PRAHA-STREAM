@@ -545,6 +545,8 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return rpcBridge.cancelMoctaleMeter(args.optString(0, ""));
             case "openReaderFile":
                 return rpcBridge.openReaderFile(args.optString(0, ""));
+            case "clearReadingDownloads":
+                return BookFileReader.clearDownloads(getCacheDir());
             case "openArchiveLoan":
                 return rpcBridge.openArchiveLoan(args.optString(0, ""));
             case "openPrivateDnsSettings":

@@ -161,13 +161,10 @@ async function searchComickSource(query: string, source: string, signal?: AbortS
 
 /**
  * Search Comick. Two transports:
- *  - Android (direct native): ONE 'all' request — the upstream streams every
- *    source's NDJSON batch and closes after ~30s; a single request avoids
- *    queueing 46 jobs behind the ~6-worker native HTTP pool. (nativeFetchText
- *    buffers until close, so batches can't be streamed to the UI here.)
- *  - Desktop browser (relay): ONE streaming request (/comick-stream) that
- *    pushes each source's NDJSON batch as it completes — `onBatch` fires
- *    progressively and the first results land in a few seconds.
+ *  - Catalog screens can stream NDJSON from the relay and display each batch
+ *    as it arrives.
+ *  - The direct Android request remains available for a single provider or
+ *    when the relay returns no results.
  */
 export async function searchComick(
   query: string,
@@ -214,8 +211,9 @@ export async function searchComick(
     return series;
   };
 
-  // Browser: one streaming relay request, batches parsed as they arrive.
-  if (browserNeedsRelay()) {
+  // Show each Android batch as it arrives when a catalog screen is waiting.
+  const browser = browserNeedsRelay();
+  if (browser || (usesHostedComicsRelay && options?.onBatch && (!subSource || subSource === 'all'))) {
     const series: ComickSeries[] = [];
     try {
       const response = await fetch(comicsRelayUrl('/comick-stream'), {
@@ -224,7 +222,7 @@ export async function searchComick(
         body: JSON.stringify({ query: trimmed, source: subSource || 'all' }),
         signal,
       });
-      if (!response.ok || !response.body) return [];
+      if (!response.ok || !response.body) throw new Error('Comic search unavailable');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let lineBuf = '';
@@ -253,10 +251,13 @@ export async function searchComick(
           }
         }
       }
-    } catch {
-      return dedupe(series).slice(0, 40);
-    }
-    return series.slice(0, 40);
+      if (lineBuf.trim()) {
+        const fresh = dedupe(parseBatches(lineBuf));
+        series.push(...fresh);
+        if (fresh.length) options?.onBatch?.(fresh);
+      }
+    } catch { /* Keep partial results, or try the direct Android request. */ }
+    if (browser || series.length || signal?.aborted) return series.slice(0, 40);
   }
 
   // Device: single native request (all sources) or a single chosen source.
@@ -299,21 +300,26 @@ export async function comickChapters(seriesUrl: string): Promise<ComickChapter[]
  */
 export async function comickChapterImages(chapterUrl: string): Promise<string[]> {
   if (!isHttpUrl(chapterUrl)) return [];
+  let result;
   try {
     // Browser: scrape through the vite relay (aggregators block cross-origin
     // reads); device: fetch the chapter page directly over nativeFetchText.
     const fetchUrl = browserNeedsRelay()
       ? comicsRelayUrl('/comick-page?url=' + encodeURIComponent(chapterUrl))
       : chapterUrl;
-    const res = await nativeFetchText(fetchUrl, {
+    result = await nativeFetchText(fetchUrl, {
       headers: browserNeedsRelay() ? { Accept: 'text/html' } : { 'User-Agent': SCRAPER_UA, Accept: 'text/html' },
-      timeoutMs: 25000,
+      timeoutMs: 10000,
     });
-    if (!res.ok || !res.data) return [];
-    return extractPageImages(res.data, chapterUrl);
   } catch {
-    return [];
+    throw new Error('The chapter source took too long to respond.');
   }
+  if (/<title>[^<]*(?:just a moment|verify you are human)/i.test(result.data)) {
+    throw new Error('This source requires verification before it will show the chapter.');
+  }
+  if (result.status === 403 || result.status === 401) throw new Error('This source declined access to the chapter.');
+  if (!result.ok || !result.data) throw new Error('The chapter source is unavailable.');
+  return extractPageImages(result.data, chapterUrl);
 }
 
 const IMAGE_SUFFIXES = ['.webp', '.jpg', '.jpeg', '.png'];

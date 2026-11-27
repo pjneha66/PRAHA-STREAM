@@ -71,6 +71,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     const request = ++pageRequest.current;
     setLoading(true);
     setError('');
+    if (reset) setItems([]);
     try {
       const nextPage = reset ? 1 : page + 1;
       let result: MangaItem[];
@@ -105,14 +106,24 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
             if (enabled(id)) tasks.push(extraKotatsuProviders[id].catalog(submitted, nextPage, adultMode ?? 'off'));
           }
         }
-        const settled = await Promise.allSettled(tasks);
+        const resolved: Awaited<(typeof tasks)[number]>[] = [];
+        const combine = (catalogs: typeof resolved) => {
+          const titles: MangaItem[] = [];
+          const count = Math.max(0, ...catalogs.map((catalog) => catalog.items.length));
+          for (let index = 0; index < count; index += 1) {
+            for (const { items } of catalogs) if (items[index]) titles.push(items[index]);
+          }
+          return titles;
+        };
+        const settled = await Promise.allSettled(tasks.map(async (task, index) => {
+          const catalog = await task;
+          resolved[index] = catalog;
+          if (reset && request === pageRequest.current && catalog.items.length) setItems(combine(resolved.filter(Boolean)));
+          return catalog;
+        }));
         const catalogs = settled.flatMap((task) => task.status === 'fulfilled' ? [task.value] : []);
         if (tasks.length && !catalogs.length) throw new Error('Kotatsu providers unavailable.');
-        result = [];
-        const count = Math.max(0, ...catalogs.map((catalog) => catalog.items.length));
-        for (let index = 0; index < count; index += 1) {
-          for (const { items } of catalogs) if (items[index]) result.push(items[index]);
-        }
+        result = combine(catalogs);
         more = catalogs.some((catalog) => catalog.hasMore);
       }
       if (request !== pageRequest.current) return;
@@ -305,7 +316,8 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
       )}
       <div className="manga-results-heading">
         <h2>{heading}</h2>
-        {!loading && <span>{items.length} {items.length === 1 ? 'title' : 'titles'}</span>}
+        {loading && items.length > 0 ? <span role="status">Loading more results…</span>
+          : !loading && <span>{items.length} {items.length === 1 ? 'title' : 'titles'}</span>}
       </div>
 
       {loading && !items.length ? (
@@ -323,7 +335,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
       ) : (
         <>
           <div className="comic-grid manga-grid">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
@@ -331,7 +343,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
                 onClick={() => void openDetail(item)}
               >
                 <div className="manga-cover">
-                  <Artwork src={item.coverNormal} alt={item.title} />
+                  <Artwork src={item.coverNormal} alt={item.title} priority={index < 2} />
                 </div>
                 <div className="manga-card-meta">
                   <strong>{item.title}</strong>

@@ -55,6 +55,13 @@ function enablePageZoom() {
   });
 }
 
+function createPageStage() {
+  const stage = document.createElement('div');
+  stage.className = 'page-stage';
+  pages.append(stage);
+  return stage;
+}
+
 async function readPdf() {
   const [{ getDocument, GlobalWorkerOptions, PDFDataRangeTransport }, { default: worker }] = await Promise.all([
     import('pdfjs-dist/legacy/build/pdf.mjs'),
@@ -100,7 +107,7 @@ async function readPdf() {
   const resume = Number(readPosition());
   let number = Number.isInteger(resume) ? Math.min(Math.max(resume, 1), pdf.numPages) : 1;
   const canvas = document.createElement('canvas');
-  pages.append(canvas);
+  createPageStage().append(canvas);
 
   async function render(numberToRead: number) {
     previous.disabled = next.disabled = true;
@@ -174,22 +181,39 @@ async function readComic() {
 
   const saved = Number(readPosition());
   let index = Number.isInteger(saved) ? Math.min(Math.max(saved, 0), images.length - 1) : 0;
-  const image = document.createElement('img');
-  pages.append(image);
+  const stage = createPageStage();
+  let prefetched: { page: number; image: HTMLImageElement } | undefined;
+  const loadImage = (page: number) => {
+    const image = new Image();
+    image.src = `/document/page/${images[page].index}`;
+    return image;
+  };
   async function render(page: number) {
     previous.disabled = next.disabled = true;
-    image.src = `/document/page/${images[page].index}`;
+    const image = prefetched?.page === page ? prefetched.image : loadImage(page);
     await image.decode();
     index = page;
     image.alt = `Page ${index + 1}`;
+    stage.replaceChildren(image);
     pages.scrollTop = 0;
     position.textContent = `Page ${index + 1} of ${images.length}`;
     previous.disabled = index === 0;
     next.disabled = index === images.length - 1;
     savePosition(String(index));
+    const following = page + 1 < images.length ? page + 1 : page - 1;
+    prefetched = following >= 0 ? { page: following, image: loadImage(following) } : undefined;
+    void prefetched?.image.decode().catch(() => undefined);
   }
-  previous.onclick = () => void render(index - 1).catch(showError);
-  next.onclick = () => void render(index + 1).catch(showError);
+  const turnPage = (page: number) => {
+    void render(page).catch(() => {
+      prefetched = undefined;
+      position.textContent = `Page ${page + 1} failed. Try again.`;
+      previous.disabled = index === 0;
+      next.disabled = index === images.length - 1;
+    });
+  };
+  previous.onclick = () => turnPage(index - 1);
+  next.onclick = () => turnPage(index + 1);
   enablePageZoom();
   await render(index);
 }

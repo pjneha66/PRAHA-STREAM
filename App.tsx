@@ -558,6 +558,8 @@ const App: React.FC = () => {
         closePlayer();
         return;
       }
+      const musicBack = document.querySelector<HTMLButtonElement>('[data-music-back]');
+      if (musicBack) { musicBack.click(); return; }
       if (embedStateRef.current) {
         setEmbedState(null);
         return;

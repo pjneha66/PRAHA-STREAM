@@ -296,7 +296,14 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
 
   const [selected, setSelected] = useState<SankaTitle | null>(null);
   const [editions, setEditions] = useState<SankaTitle[]>([]);
-  const groups = useMemo(() => source === 'all' ? groupComicTitles(items) : items.map((item) => [item]), [items, source]);
+  const [failedEdition, setFailedEdition] = useState<{ term: string; key: string }>();
+  const groups = useMemo(() => {
+    if (source !== 'all') return items.map((item) => [item]);
+    const choices = failedEdition?.term === submittedQuery
+      ? items.filter((item) => comicEditionKey(item) !== failedEdition.key)
+      : items;
+    return groupComicTitles(choices);
+  }, [items, source, failedEdition, submittedQuery]);
   const [detail, setDetail] = useState<SankaMangaDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -510,6 +517,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
             setItems((prev) => mergeUniqueTitles(prev, titles).merged);
           }
         : undefined;
+      if (onTitles) setItems([]);
       try {
         const primary = await fetchSankaTitlesPage('comic', {
           query: submittedQuery,
@@ -764,6 +772,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
     const title = selected.title.trim();
     const suffix = title.match(/^(.*?)\s+\(([^()]+)\)$/);
     const term = suffix && suffix[2].toLowerCase().startsWith(suffix[1].toLowerCase()) ? suffix[2] : title;
+    setFailedEdition({ term, key: comicEditionKey(selected) });
     closeDetails();
     setSource('all');
     setManualSource(true);
@@ -967,7 +976,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
       ) : items.length ? (
         <>
           <div className="comic-grid">
-            {groups.map(([item, ...alternates]) => {
+            {groups.map(([item, ...alternates], index) => {
               const metaLine = [
                 alternates.length ? `${alternates.length + 1} editions` : source === 'all' ? sourceLabel(item.source) : undefined,
                 item.comicType,
@@ -992,6 +1001,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
                     <div className="comic-poster">
                       <SafeComicImg
                         src={item.poster}
+                        eager={index < 2}
                         title={item.title}
                         alt={`${item.title} cover`}
                         posterFallback={
@@ -1175,6 +1185,15 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
                 <p className="sanka-muted">No chapter list was provided by this source.</p>
               )}
 
+              {readerError && !readerLoading && (
+                <div className="chapter-load-error" role="alert">
+                  <p>{readerError}</p>
+                  <div>
+                    {selectedChapter && <button type="button" className="button button-secondary button-small" onClick={() => void openChapter(selectedChapter, readerChapterIndex)}>Retry chapter</button>}
+                    <button type="button" className="button button-secondary button-small" onClick={findAnotherSource}>Find another source</button>
+                  </div>
+                </div>
+              )}
               <div className="sanka-chapter-list">
                 {/* Long-running series expose 1,000–4,000+ chapters; mounting
                     every row (~4 nodes each) blocks the WebView main thread on
@@ -1295,12 +1314,6 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
             <div className="sanka-reader-loading" role="status">
               <LoaderCircle size={22} className="spin" />
               <span>Loading chapter pages…</span>
-            </div>
-          )}
-          {readerError && !readerLoading && (
-            <div className="sanka-reader-error" role="alert">
-              <p>{readerError}</p>
-              <button onClick={() => setReaderError('')}>Close</button>
             </div>
           )}
         </div>

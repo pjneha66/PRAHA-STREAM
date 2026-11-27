@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown, Disc3, ListMusic, LoaderCircle, Mic2, Music2, Pause, Play,
   Repeat, Repeat1, ScrollText, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X,
@@ -19,14 +20,14 @@ const NowPlayingSheet: React.FC = () => {
   const { currentTrack } = player;
   if (!player.sheetOpen || !currentTrack) return null;
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop music-sheet-backdrop"
       onMouseDown={(event) => event.target === event.currentTarget && player.setSheetOpen(false)}
     >
       <section className="music-sheet" role="dialog" aria-modal="true" aria-label="Now Playing">
         <header className="music-sheet-header">
-          <button type="button" className="icon-button" onClick={() => player.setSheetOpen(false)} aria-label="Minimize player">
+          <button type="button" className="icon-button" onClick={() => player.setSheetOpen(false)} aria-label="Back to music" data-music-back data-android-back>
             <ChevronDown size={18} />
           </button>
           <span className="page-kicker">NOW PLAYING · {player.isFullAudio ? 'FULL STREAM' : 'QUEUE'}</span>
@@ -202,7 +203,7 @@ const NowPlayingSheet: React.FC = () => {
           </div>
         </footer>
       </section>
-    </div>
+    </div>, document.body,
   );
 };
 

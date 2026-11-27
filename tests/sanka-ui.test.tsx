@@ -23,6 +23,32 @@ describe('Sanka comic reader & pagination flow', () => {
     vi.unstubAllGlobals();
   });
 
+  it('offers retry and another source when a Comick chapter returns a verification page', async () => {
+    const series = 'https://mkissa.to/manga/example';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/comick-stream')) return new Response(JSON.stringify({
+        source: 'MKissa', results: [{ title: 'Test Comic', url: series }],
+      }) + '\n');
+      if (url.includes('/api/chapters')) return json({
+        chapters: [{ number: 1, url: series + '/chapter-1' }],
+      });
+      if (url.includes('/comick-page')) return new Response('<title>Just a moment...</title>', { status: 403 });
+      return json({ data: [] });
+    }));
+
+    render(<SankaExplorer />);
+    selectComicSource('Comick');
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Test Comic chapters' }));
+    const detail = within(screen.getByRole('dialog', { name: 'Test Comic' }));
+    fireEvent.click(await detail.findByRole('button', { name: 'Start Chapter 1' }));
+    const error = within(await detail.findByRole('alert'));
+    expect(error.getByText(/requires verification/)).toBeTruthy();
+    expect(error.getByRole('button', { name: 'Retry chapter' })).toBeTruthy();
+    fireEvent.click(error.getByRole('button', { name: 'Find another source' }));
+    expect(screen.getByRole('combobox', { name: 'Comic source' })).toHaveProperty('value', 'all');
+  });
+
   it('opens OceanofPDF files directly and preserves the explicit catalog fallback', async () => {
     const openProtectedEmbed = vi.fn(() => true);
     const openReaderFile = vi.fn(() => true);

@@ -4,23 +4,37 @@ import type { MediaItem, WatchProgress } from '../types';
 import { formatTime } from './player/format';
 import { buildImageCandidates } from '../services/androidBridge';
 
-export const Artwork = React.memo(function Artwork({ src, alt, className = '' }: { src?: string; alt: string; className?: string }) {
+export const Artwork = React.memo(function Artwork({ src, alt, className = '', priority = false }: {
+  src?: string; alt: string; className?: string; priority?: boolean;
+}) {
   // Multi-candidate chain (proxy mirrors for hotlink-protected / blocked CDNs)
   // instead of a single URL — a failed poster falls through to a proxy before
   // giving up on the placeholder.
   const candidates = useMemo(() => buildImageCandidates(src), [src]);
   const [failedCount, setFailedCount] = useState(0);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const candidate = candidates[failedCount];
+  const tryNext = () => setFailedCount((count) => count === failedCount ? count + 1 : count);
   useEffect(() => setFailedCount(0), [candidates]);
-  if (!src || !candidates[failedCount]) {
+  useEffect(() => {
+    if (!priority || !candidate || failedCount >= candidates.length - 1) return;
+    const timer = setTimeout(() => {
+      if (!imageRef.current?.naturalWidth) setFailedCount((count) => count === failedCount ? count + 1 : count);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [priority, candidate, failedCount, candidates.length]);
+  if (!src || !candidate) {
     return <div className={`artwork-fallback ${className}`} role="img" aria-label={alt}><span>{alt}</span></div>;
   }
   return (
     <img
-      src={candidates[failedCount]}
+      ref={imageRef}
+      src={candidate}
       alt={alt}
       className={className}
-      onError={() => setFailedCount((count) => count + 1)}
-      loading={className.includes('hero-art') ? 'eager' : 'lazy'}
+      onError={tryNext}
+      loading={priority || className.includes('hero-art') ? 'eager' : 'lazy'}
+      fetchPriority={priority ? 'high' : undefined}
       referrerPolicy="no-referrer"
     />
   );

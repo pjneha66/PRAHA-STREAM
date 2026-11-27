@@ -354,13 +354,19 @@ public final class ProtectedEmbedActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(android.view.Gravity.CENTER);
         panel.setPadding(dp(24), dp(24), dp(24), dp(24));
-        panel.setBackgroundColor(Color.BLACK);
-        ProgressBar spinner = new ProgressBar(this);
-        panel.addView(spinner, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        panel.setBackgroundColor(0xff101113);
+        ProgressBar spinner = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        spinner.setMax(100);
+        spinner.setIndeterminate(true);
+        spinner.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffffd364));
+        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xffffd364));
+        panel.addView(spinner, new LinearLayout.LayoutParams(dp(220), dp(8)));
         TextView status = new TextView(this);
         boolean comic = comicSite || BookFileReader.isComicArchive(url, null, null);
         status.setText(comic ? "Opening comic…" : "Opening book…");
         status.setTextColor(Color.WHITE);
+        status.setTypeface(android.graphics.Typeface.SANS_SERIF);
+        status.setTextSize(16);
         status.setGravity(android.view.Gravity.CENTER);
         status.setPadding(0, dp(16), 0, dp(16));
         panel.addView(status);
@@ -374,6 +380,7 @@ public final class ProtectedEmbedActivity extends Activity {
         });
         panel.addView(retry);
         closeButton.setText(directBook ? "Back to PRAHA" : "Back to site");
+        closeButton.setTypeface(android.graphics.Typeface.SANS_SERIF);
         siteActions.setVisibility(View.GONE);
         String referer = web.getUrl();
         web.removeCallbacks(pageTimeout);
@@ -389,7 +396,16 @@ public final class ProtectedEmbedActivity extends Activity {
             status.setText(message);
             spinner.setVisibility(View.GONE);
             retry.setVisibility(View.VISIBLE);
-        }, status::setText);
+        }, message -> {
+            status.setText(message);
+            if (message.endsWith("%")) {
+                String value = message.substring(message.lastIndexOf(' ') + 1, message.length() - 1);
+                spinner.setIndeterminate(false);
+                spinner.setProgress(Integer.parseInt(value));
+            } else {
+                spinner.setIndeterminate(true);
+            }
+        });
     }
 
     private void closeBook() {

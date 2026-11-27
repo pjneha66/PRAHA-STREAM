@@ -352,6 +352,10 @@ export async function openReaderFile(url: string): Promise<boolean> {
   } catch { return false; }
 }
 
+export function clearReadingDownloads(): Promise<number> {
+  return prahaRpc<number>('clearReadingDownloads', []);
+}
+
 export async function openArchiveLoan(url: string): Promise<boolean> {
   if (!isAndroidApp()) return openSafeExternalUrl(url);
   try {
@@ -556,6 +560,8 @@ export function buildImageCandidates(url?: string): string[] {
   const push = (candidate?: string | null) => {
     if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
   };
+
+  if (parsed.origin === 'https://img.readnovelfull.com') push(trimmed);
 
   const proxyPort = getCachedProxyPort();
   if (proxyPort > 0) {

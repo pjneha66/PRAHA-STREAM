@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, LayoutGrid, Library,
   Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
-  UserPlus, Users, X,
+  Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
+import { bridgeRpcAvailable, clearReadingDownloads } from '../services/androidBridge';
 import type { AppView, UserProfile } from '../types';
 
 interface NavigationProps {
@@ -125,6 +126,20 @@ const Navigation: React.FC<NavigationProps> = ({
   }, [moreOpen]);
 
   const readingView = readingTabs.find((item) => item.id === view)?.id;
+  const [clearingReadingDownloads, setClearingReadingDownloads] = useState(false);
+  const [readingDownloadStatus, setReadingDownloadStatus] = useState('');
+  const clearDownloads = async () => {
+    setClearingReadingDownloads(true);
+    setReadingDownloadStatus('');
+    try {
+      const removed = await clearReadingDownloads();
+      setReadingDownloadStatus(removed ? `Cleared ${removed} reading ${removed === 1 ? 'file' : 'files'}.` : 'No reading downloads to clear.');
+    } catch {
+      setReadingDownloadStatus('Could not clear reading downloads. Try again.');
+    } finally {
+      setClearingReadingDownloads(false);
+    }
+  };
   const lastReadingView = useRef<AppView>('manga');
   useEffect(() => {
     if (readingView) lastReadingView.current = readingView;
@@ -296,6 +311,14 @@ const Navigation: React.FC<NavigationProps> = ({
                 className="reading-tab">{label}</button>
             ))}
           </nav>}
+          {readingView && bridgeRpcAvailable() && (
+            <div className="reading-download-tools">
+              <span role="status">{readingDownloadStatus}</span>
+              <button type="button" onClick={() => void clearDownloads()} disabled={clearingReadingDownloads}>
+                <Trash2 size={14} /> {clearingReadingDownloads ? 'Clearing…' : 'Clear downloads'}
+              </button>
+            </div>
+          )}
           {children}
         </main>
       </div>

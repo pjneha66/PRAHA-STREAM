@@ -1,7 +1,7 @@
 {
   "name": "praha-stream",
   "private": true,
-  "version": "2.11.36",
+  "version": "2.11.37",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
