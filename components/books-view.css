@@ -21,7 +21,7 @@
 .books-search-field { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--bg-soft); color: var(--muted); transition: border-color .2s, box-shadow .2s; }
 .books-search-field:focus-within { border-color: rgba(var(--accent-rgb), .38); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .05); }
 .books-search-field > svg { flex: 0 0 auto; }
-.books-search-field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 13px; padding-left: 9px; }
+.books-search-field input, .books-search-field input:focus-visible { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 13px; padding-left: 9px; }
 .books-search-field input::placeholder { color: var(--muted-2); }
 .search-clear { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: transparent; color: var(--muted); font-size: 16px; }
 
@@ -44,8 +44,9 @@
 .book-card { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .book-card-open { display: block; width: 100%; text-align: left; background: transparent; }
 .book-poster { position: relative; overflow: hidden; border-radius: 12px; background: var(--surface-2); }
-.book-cover { aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; color: var(--muted-2); overflow: hidden; }
-.book-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform .25s ease; }
+.book-cover { position: relative; aspect-ratio: 3 / 4; display: grid; place-items: center; color: var(--muted-2); background: var(--surface-2); overflow: hidden; }
+.book-cover > .artwork-fallback { display: none; }
+.book-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform .25s ease; }
 .book-card-open:hover .book-cover img { transform: scale(1.04); }
 .book-source-badge { position: absolute; right: 6px; top: 6px; padding: 2px 7px; border-radius: 6px; background: rgba(5, 6, 8, .82); color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .5px; }
 .book-copy { padding: 9px 3px 0; }

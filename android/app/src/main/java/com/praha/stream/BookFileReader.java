@@ -415,7 +415,9 @@ final class BookFileReader {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setBuiltInZoomControls(true);
+        // Scanned pages handle pinch inside the reader. Keep native zoom for EPUB text.
+        settings.setSupportZoom(format.equals("epub"));
+        settings.setBuiltInZoomControls(format.equals("epub"));
         settings.setDisplayZoomControls(false);
         reader.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {

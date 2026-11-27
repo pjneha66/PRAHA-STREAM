@@ -7,6 +7,8 @@ import './index.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('Could not find the PRAHA root element.');
+const androidApp = isAndroidApp();
+document.documentElement.classList.toggle('android-app', androidApp);
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
@@ -19,7 +21,7 @@ ReactDOM.createRoot(rootElement).render(
 );
 
 // Register PWA service worker on web (Android APK serves bundled assets locally).
-if ('serviceWorker' in navigator && import.meta.env.PROD && !isAndroidApp()) {
+if ('serviceWorker' in navigator && import.meta.env.PROD && !androidApp) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => undefined);
   });

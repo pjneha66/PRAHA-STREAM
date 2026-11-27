@@ -310,6 +310,13 @@ public final class ProtectedEmbedActivity extends Activity {
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse error) {
                 if (request.isForMainFrame()) {
                     view.removeCallbacks(pageTimeout);
+                    // Anna's Archive serves its browser verification as an HTML 403.
+                    // Let the site render it so the user can continue in this WebView.
+                    if (error.getStatusCode() == 403 && initialHost.equals("annas-archive.gl")
+                            && initialHost.equalsIgnoreCase(request.getUrl().getHost())) {
+                        if (loading.getParent() != null) content.removeView(loading);
+                        return;
+                    }
                     showPageError();
                 }
             }

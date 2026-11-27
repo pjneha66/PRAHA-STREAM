@@ -322,4 +322,16 @@ describe('MangaReader', () => {
     await waitFor(() => expect(screen.getByText('1 page could not be loaded.')).toBeTruthy());
     expect(screen.getByAltText('Page 2')).toBeTruthy();
   });
+
+  it('pinches the page within the reader without advancing the chapter', async () => {
+    setPaged();
+    renderReader();
+    const page = screen.getByAltText('Page 1');
+    fireEvent.touchStart(page, { touches: [{ clientX: 100, clientY: 180 }, { clientX: 200, clientY: 180 }] });
+    fireEvent.touchMove(page, { touches: [{ clientX: 50, clientY: 180 }, { clientX: 250, clientY: 180 }] });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset zoom to fit' }).textContent).toBe('200%'));
+    fireEvent.touchEnd(page, { touches: [], changedTouches: [{ clientX: 50, clientY: 180 }] });
+    expect(screen.getByText('1 / 43')).toBeTruthy();
+    expect(screen.getByAltText('Page 1')).toBe(page);
+  });
 });

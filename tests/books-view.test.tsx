@@ -28,6 +28,25 @@ afterEach(() => {
 });
 
 describe('Books search and scan resume', () => {
+  it('opens the exact Anna’s Archive search in PRAHA when the catalog requires verification', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (new URL(String(input)).hostname === 'annas-archive.gl') {
+        return { ok: false, status: 403, text: async () => '<title>DDoS-Guard</title>' } as Response;
+      }
+      return json({ response: { docs: [] } });
+    });
+    const openProtectedEmbed = vi.fn(() => true);
+    vi.stubGlobal('PrahaNative', { openProtectedEmbed });
+    render(<BooksView />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Book source' }), { target: { value: 'annasarchive' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search books' }), { target: { value: 'Sherlock Holmes' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue in PRAHA' }));
+    await waitFor(() => expect(openProtectedEmbed).toHaveBeenCalledWith(
+      'https://annas-archive.gl/search?content=book_fiction&content=book_nonfiction&q=Sherlock+Holmes&lang=en',
+    ));
+  });
+
   it('searches all catalogs by ISBN and resumes the same scan across catalogs', async () => {
     fetchMock.mockImplementation(async (input) => {
       const url = new URL(String(input));

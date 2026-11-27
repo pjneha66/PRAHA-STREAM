@@ -234,6 +234,7 @@ export function animeReference(entry: AniCoreEntry): AnimeReference {
   return {
     slug: String(entry.slug || entry.id || ''),
     anicoreId: entry.id ? Number(entry.id) : undefined,
+    alternatePoster: entry.images?.cover || entry.images?.banner || undefined,
     malId: entry.externalIds?.mal ? Number(entry.externalIds.mal) : undefined,
     anilistId: entry.externalIds?.anilist ? Number(entry.externalIds.anilist) : undefined,
     kitsuId: entry.externalIds?.kitsu ? Number(entry.externalIds.kitsu) : undefined,

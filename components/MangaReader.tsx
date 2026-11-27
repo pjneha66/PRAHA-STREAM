@@ -191,7 +191,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
   const [barVisible, setBarVisible] = useState(true);
 
   const stripRef = useRef<HTMLDivElement | null>(null);
-  const { zoom, changeZoom } = useReaderZoom(stripRef);
+  const { zoom, changeZoom, bindViewport } = useReaderZoom(stripRef);
   const restorePending = useRef(true);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -283,13 +283,15 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
     const strip = stripRef.current;
     if (!strip || strip.clientHeight === 0) return;
     const line = strip.scrollTop + strip.clientHeight * 0.35;
-    const nodes = strip.querySelectorAll<HTMLElement>('[data-page-index]');
-    let current = 0;
-    nodes.forEach((node) => {
-      if (node.offsetTop <= line) current = Number(node.dataset.pageIndex ?? 0);
-    });
-    setPage((previous) => (previous === current ? previous : current));
-  }, []);
+    let low = 0;
+    let high = total - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if ((strip.children[middle] as HTMLElement).offsetTop <= line) low = middle;
+      else high = middle - 1;
+    }
+    setPage(low);
+  }, [total]);
 
   useEffect(() => {
     if (mode !== 'webtoon' || !restorePending.current) return;
@@ -360,7 +362,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
             <p>This chapter has no pages yet.</p>
           </div>
         ) : mode === 'paged' ? (
-          <div className="mr-paged" ref={stripRef} onClick={() => setBarVisible((visible) => !visible)}>
+          <div className="mr-paged" ref={bindViewport} onClick={() => setBarVisible((visible) => !visible)}>
             <MangaPage
               key={`${chapterId}/${page}`}
               url={images[clampPage(page)]}
@@ -371,7 +373,7 @@ export const MangaReader: React.FC<MangaReaderProps> = ({
             />
           </div>
         ) : (
-          <div className="mr-strip" ref={stripRef} onScroll={handleStripScroll}>
+          <div className="mr-strip" ref={bindViewport} onScroll={handleStripScroll}>
             {images.map((url, index) => (
               <div
                 key={`${chapterId}/${index}`}

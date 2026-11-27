@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.11.39';
+export const APP_VERSION = '2.11.40';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'settings';
@@ -78,6 +78,7 @@ export interface HomeCatalog {
 
 /** Cross-database anime identifiers resolved by AniCore / Anikura. */
 export interface AnimeReference {
+  alternatePoster?: string;
   /** AniCore catalog slug (used for detail + episode endpoints). */
   slug: string;
   anicoreId?: number;

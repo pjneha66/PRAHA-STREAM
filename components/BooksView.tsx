@@ -15,7 +15,9 @@ import SkeletonGrid from './SkeletonGrid';
 import ContinueShelf from './ContinueShelf';
 import { BookracyService } from '../services/bookracyService';
 import { readContinue, readScanPage, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
-import { loadComicBookSite, loadPublicationFiles } from '../services/comicBookSites';
+import { comicBookSiteUrl, loadComicBookSite, loadPublicationFiles } from '../services/comicBookSites';
+import { ReadingVerificationRequired } from '../services/readingRelay';
+import { Artwork } from './MediaCard';
 import './books-view.css';
 
 type PublicationSite = 'annasarchive' | 'oceanofpdf';
@@ -53,56 +55,14 @@ const SOURCE_LABEL: Record<SourceMode, string> = {
   oceanofpdf: 'OceanofPDF',
 };
 
-/**
- * Cover image with a fallback chain: the primary URL, a wsrv.nl image proxy
- * of the same URL (survives covers.openlibrary.org rate limits and DNS-level
- * blocks), then the archive.org scan image, then a placeholder.
- */
 const BookCover: React.FC<{ item: BookItem }> = ({ item }) => {
-  const [candidateIdx, setCandidateIdx] = React.useState(0);
-  React.useEffect(() => setCandidateIdx(0), [item.coverUrl, item.identifier]);
-
-  const candidates = React.useMemo(() => {
-    const list: string[] = [];
-    const title = item.title.trim();
-    // Direct covers.openlibrary.org URLs HANG (no error event) on constrained
-    // networks, so every OL candidate goes through the wsrv.nl image proxy —
-    // it fetches the upstream server-side and 404s quickly when a cover is
-    // missing (default=false), letting the chain advance.
-    if (item.coverUrl) {
-      const olCover = item.coverUrl.replace('?default=false', '');
-      list.push(`https://wsrv.nl/?url=${encodeURIComponent(`${olCover}?default=false`)}`);
-    }
-    // OL editions frequently have no scan of their own — the title-based cover
-    // API almost always has one (verified: The Secret Garden cover_i 404s but
-    // /b/title/ serves a real 291×400 JPEG).
-    if (title) {
-      list.push(`https://wsrv.nl/?url=${encodeURIComponent(`https://covers.openlibrary.org/b/title/${encodeURIComponent(title)}-L.jpg?default=false`)}`);
-    }
-    if (item.identifier) list.push(`https://archive.org/services/img/${item.identifier}`);
-    return list;
-  }, [item.coverUrl, item.identifier, item.title]);
-
-  const advance = () => setCandidateIdx((idx) => idx + 1);
-  const url = candidates[candidateIdx];
+  const scan = item.identifier ? `https://archive.org/services/img/${encodeURIComponent(item.identifier)}` : undefined;
+  const src = item.coverUrl?.startsWith('https://covers.openlibrary.org/')
+    ? `${item.coverUrl.split('?')[0]}?default=false` : item.coverUrl;
   return (
     <div className="book-cover">
-      {url ? (
-        <img
-          src={url}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          // wsrv.nl happily proxies OL's blank cover as a 1×1 without an error
-          // event — treat tiny images as failures and keep walking the chain.
-          onLoad={(event) => {
-            if (event.currentTarget.naturalWidth <= 2) advance();
-          }}
-          onError={advance}
-        />
-      ) : (
-        <BookOpen size={30} />
-      )}
+      <BookOpen size={30} aria-hidden="true" />
+      <Artwork src={src} fallback={scan} alt="" directFirst />
     </div>
   );
 };
@@ -148,6 +108,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
   const pages = useRef<Partial<Record<Catalog, number>>>({});
   const [hasMore, setHasMore] = useState(false);
   const [unavailable, setUnavailable] = useState<Catalog[]>([]);
+  const [annaVerification, setAnnaVerification] = useState(false);
   const [siteError, setSiteError] = useState('');
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<BookItem | null>(null);
@@ -183,6 +144,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
       setLoading(true);
       setError('');
       setUnavailable([]);
+      setAnnaVerification(false);
       setHasMore(false);
       setItems([]);
       pages.current = mode === 'all'
@@ -215,6 +177,7 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
 
     const failed = activeCatalogs.filter((_, index) => results[index].status === 'rejected');
     const hasResults = results.some((result) => result.status === 'fulfilled' && result.value.length > 0);
+    setAnnaVerification(results.some((result) => result.status === 'rejected' && result.reason instanceof ReadingVerificationRequired));
     setUnavailable(failed);
     setHasMore(CATALOGS.some((catalog) => !failed.includes(catalog) && pages.current[catalog] !== undefined));
     if (!append && !hasResults && !failed.length) setError(submitted ? 'No books matched that search.' : 'Nothing found. Try a search.');
@@ -352,6 +315,11 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
     else if (mode === 'all') void load();
   };
 
+  const searchAllCatalogs = () => {
+    setMode('all');
+    setSubmitted(input.trim());
+  };
+
   const showShelves = mode === 'bookracy' && !submitted && (shelvesLoading || shelves.length > 0);
   const savedPage = selected?.identifier ? readScanPage(selected.identifier) : undefined;
 
@@ -435,14 +403,22 @@ const BooksView: React.FC<ReadingLibraryProps & { compact?: boolean; prefillQuer
       {(error || unavailable.length > 0) && (
         <div className="books-error" role="status">
           <CircleAlert size={15} />
-          {error || `${unavailable.map((catalog) => SOURCE_LABEL[catalog]).join(', ')} unavailable.`}
+          {error || (mode === 'annasarchive'
+            ? annaVerification ? 'Anna’s Archive requires verification. Continue in PRAHA to complete the check.'
+              : 'Anna’s Archive could not load in Books. Open the catalog to continue.'
+            : `${unavailable.map((catalog) => SOURCE_LABEL[catalog]).join(', ')} unavailable.`)}
           {unavailable.length > 0 && (
             <button type="button" onClick={() => void load(items.length > 0)} disabled={loadingMore}>
               <RefreshCw size={13} /> Retry
             </button>
           )}
-          {mode === 'bookracy' && unavailable.length > 0 && (
-            <button type="button" onClick={() => setMode('all')}>Search all catalogs</button>
+          {isPublicationSite(mode) && unavailable.includes(mode) && (
+            <button type="button" onClick={() => void openSite(comicBookSiteUrl(mode, input.trim(), 'en', 1, true))}>
+              <ExternalLink size={13} /> {annaVerification ? 'Continue in PRAHA' : 'Open catalog in PRAHA'}
+            </button>
+          )}
+          {mode !== 'all' && (
+            <button type="button" onClick={searchAllCatalogs}>Search all catalogs</button>
           )}
         </div>
       )}

@@ -70,6 +70,8 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
   const origin = COMIC_BOOK_SITES[source].origin;
   const items = new Map<string, SankaTitle>();
   const markup = CATALOG_MARKUP[source];
+  const normalize = (value: string) => value.normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ');
+  const terms = normalize(query).split(' ').filter(Boolean);
   $(markup.link).each((_, link) => {
     const href = $(link).attr('href');
     const title = $(link).text().trim().replace(/^Download\s+/i, '');
@@ -79,7 +81,12 @@ export async function loadComicBookSite(source: ComicBookSite, query: string, la
     if (detail.origin !== origin || detail.username || detail.password || items.has(detail.pathname)) return;
     const card = markup.card ? $(link).closest(markup.card) : null;
     const image = card?.find(markup.image).first();
-    const imageSrc = image?.attr('data-src') || image?.attr('src');
+    const imageSrc = image?.attr('data-lazy-src') || image?.attr('data-src') || image?.attr('src');
+    if (source === 'oceanofpdf' && books) {
+      if (card?.hasClass('category-blog')) return;
+      const metadata = normalize([title, card?.find('.wp-block-post-author-name').text(), image?.attr('alt'), imageSrc?.split('/').pop()].filter(Boolean).join(' '));
+      if (!terms.every((term) => metadata.includes(term))) return;
+    }
     let poster: string | undefined;
     try {
       const cover = imageSrc && new URL(imageSrc, url);

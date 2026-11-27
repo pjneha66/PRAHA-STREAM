@@ -1,23 +1,27 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Minus, Plus } from 'lucide-react';
-
-const READER_ZOOM_MAX = 3;
+import { bindReaderPinch, clampReaderZoom, MAX_READER_ZOOM, readerZoomOffset, type ZoomPoint } from '../services/readerPinch';
 
 export function useReaderZoom(viewport: RefObject<HTMLDivElement | null>) {
   const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  const unbind = useRef<(() => void) | null>(null);
   const target = useRef<{ left: number; top: number } | null>(null);
 
-  function changeZoom(next: number) {
+  const changeZoom = useCallback((value: number, point?: ZoomPoint) => {
+    const next = clampReaderZoom(value);
+    if (next === zoomRef.current) return;
     const root = viewport.current;
-    if (root) {
-      const ratio = next / zoom;
-      target.current = {
-        left: (root.scrollLeft + root.clientWidth / 2) * ratio - root.clientWidth / 2,
-        top: root.scrollTop * ratio,
-      };
-    }
+    if (root) target.current = readerZoomOffset(root, zoomRef.current, next, point);
+    zoomRef.current = next;
     setZoom(next);
-  }
+  }, [viewport]);
+
+  const bindViewport = useCallback((element: HTMLDivElement | null) => {
+    unbind.current?.();
+    viewport.current = element;
+    unbind.current = element ? bindReaderPinch(element, () => zoomRef.current, changeZoom) : null;
+  }, [viewport, changeZoom]);
 
   useLayoutEffect(() => {
     const root = viewport.current;
@@ -27,7 +31,7 @@ export function useReaderZoom(viewport: RefObject<HTMLDivElement | null>) {
     target.current = null;
   }, [viewport, zoom]);
 
-  return { zoom, changeZoom };
+  return { zoom, changeZoom, bindViewport };
 }
 
 export default function ReaderZoomControls({ zoom, onChange }: { zoom: number; onChange: (zoom: number) => void }) {
@@ -37,9 +41,9 @@ export default function ReaderZoomControls({ zoom, onChange }: { zoom: number; o
         <Minus size={16} />
       </button>
       <button type="button" aria-label="Reset zoom to fit" title="Fit page" disabled={zoom === 1} onClick={() => onChange(1)}>
-        {zoom * 100}%
+        {Math.round(zoom * 100)}%
       </button>
-      <button type="button" aria-label="Zoom in" disabled={zoom === READER_ZOOM_MAX} onClick={() => onChange(zoom + 0.25)}>
+      <button type="button" aria-label="Zoom in" disabled={zoom === MAX_READER_ZOOM} onClick={() => onChange(zoom + 0.25)}>
         <Plus size={16} />
       </button>
     </div>

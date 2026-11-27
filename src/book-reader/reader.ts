@@ -1,4 +1,5 @@
 import './reader.css';
+import { bindReaderPinch, clampReaderZoom, MAX_READER_ZOOM, readerZoomOffset, type ZoomPoint } from '../../services/readerPinch';
 
 const pages = document.querySelector<HTMLElement>('#pages')!;
 const previous = document.querySelector<HTMLButtonElement>('#previous')!;
@@ -27,32 +28,33 @@ function showError() {
   zoomControls.hidden = true;
 }
 
-function enableZoom(applyZoom: (zoom: number) => void) {
+function enableZoom(applyZoom: (next: number, current: number, point?: ZoomPoint) => void) {
   let zoom = 1;
-  const changeZoom = (nextZoom: number) => {
+  const changeZoom = (value: number, point?: ZoomPoint) => {
+    const nextZoom = clampReaderZoom(value);
+    if (nextZoom === zoom) return;
+    applyZoom(nextZoom, zoom, point);
     zoom = nextZoom;
-    applyZoom(zoom);
-    zoomReset.textContent = `${zoom * 100}%`;
+    zoomReset.textContent = `${Math.round(zoom * 100)}%`;
     zoomReset.disabled = zoomOut.disabled = zoom === 1;
-    zoomIn.disabled = zoom === 3;
+    zoomIn.disabled = zoom === MAX_READER_ZOOM;
   };
   zoomOut.onclick = () => changeZoom(zoom - 0.25);
   zoomReset.onclick = () => changeZoom(1);
   zoomIn.onclick = () => changeZoom(zoom + 0.25);
   zoomControls.hidden = false;
+  return { changeZoom, getZoom: () => zoom };
 }
 
 function enablePageZoom() {
-  let previousZoom = 1;
-  enableZoom((zoom) => {
-    const ratio = zoom / previousZoom;
-    const left = (pages.scrollLeft + pages.clientWidth / 2) * ratio - pages.clientWidth / 2;
-    const top = pages.scrollTop * ratio;
+  pages.classList.add('image-pages');
+  const { changeZoom, getZoom } = enableZoom((zoom, previousZoom, point) => {
+    const { left, top } = readerZoomOffset(pages, previousZoom, zoom, point);
     pages.style.setProperty('--reader-zoom', String(zoom));
     pages.scrollLeft = left;
     pages.scrollTop = top;
-    previousZoom = zoom;
   });
+  bindReaderPinch(pages, getZoom, changeZoom);
 }
 
 function createPageStage() {

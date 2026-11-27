@@ -5,41 +5,70 @@ import { formatTime } from './player/format';
 import { buildImageCandidates } from '../services/androidBridge';
 import HoldToSaveButton from './HoldToSaveButton';
 
-export const Artwork = React.memo(function Artwork({ src, alt, className = '', priority = false }: {
-  src?: string; alt: string; className?: string; priority?: boolean;
+export const Artwork = React.memo(function Artwork({ src, fallback, ...props }: {
+  src?: string; fallback?: string; alt: string; className?: string; priority?: boolean; directFirst?: boolean;
 }) {
-  // Multi-candidate chain (proxy mirrors for hotlink-protected / blocked CDNs)
-  // instead of a single URL — a failed poster falls through to a proxy before
-  // giving up on the placeholder.
-  const candidates = useMemo(() => buildImageCandidates(src), [src]);
+  return <ArtworkCandidates key={JSON.stringify([src, fallback])} src={src} fallback={fallback} {...props} />;
+});
+
+function ArtworkCandidates({ src, fallback, alt, className = '', priority = false, directFirst = false }: {
+  src?: string; fallback?: string; alt: string; className?: string; priority?: boolean; directFirst?: boolean;
+}) {
+  const candidates = useMemo(() => {
+    const primary = buildImageCandidates(src);
+    const alternate = buildImageCandidates(fallback);
+    const direct = directFirst && src && primary.includes(src) ? [src] : [];
+    return [...new Set([...direct, ...primary.slice(0, 2), ...alternate.slice(0, 2), ...primary.slice(2), ...alternate.slice(2)])];
+  }, [src, fallback, directFirst]);
   const [failedCount, setFailedCount] = useState(0);
+  const [loaded, setLoaded] = useState('');
   const imageRef = useRef<HTMLImageElement>(null);
   const candidate = candidates[failedCount];
+  const eager = priority || className.includes('hero-art');
   const tryNext = () => setFailedCount((count) => count === failedCount ? count + 1 : count);
-  useEffect(() => setFailedCount(0), [candidates]);
   useEffect(() => {
-    if (!priority || !candidate || failedCount >= candidates.length - 1) return;
-    const timer = setTimeout(() => {
-      if (!imageRef.current?.naturalWidth) setFailedCount((count) => count === failedCount ? count + 1 : count);
-    }, 4500);
-    return () => clearTimeout(timer);
-  }, [priority, candidate, failedCount, candidates.length]);
-  if (!src || !candidate) {
+    const image = imageRef.current;
+    if (!image || loaded === candidate) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watch = () => {
+      timer ??= setTimeout(() => setFailedCount((count) => count === failedCount ? count + 1 : count), 5000);
+    };
+    const observer = !eager && typeof IntersectionObserver !== 'undefined'
+      ? new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) { observer?.disconnect(); watch(); }
+      })
+      : null;
+    if (observer) observer.observe(image);
+    else if (eager) watch();
+    return () => { observer?.disconnect(); clearTimeout(timer); };
+  }, [eager, candidate, failedCount, loaded]);
+  if (!candidate) {
     return <div className={`artwork-fallback ${className}`} role="img" aria-label={alt}><span>{alt}</span></div>;
   }
   return (
     <img
+      key={candidate}
       ref={imageRef}
       src={candidate}
       alt={alt}
       className={className}
+      style={loaded === candidate ? undefined : { opacity: 0 }}
+      decoding="async"
+      onLoad={(event) => {
+        const image = event.currentTarget;
+        if (image.naturalWidth <= 2) { tryNext(); return; }
+        if (!image.decode) { setLoaded(candidate); return; }
+        void image.decode().then(() => {
+          if (imageRef.current === image) setLoaded(candidate);
+        }).catch(tryNext);
+      }}
       onError={tryNext}
-      loading={priority || className.includes('hero-art') ? 'eager' : 'lazy'}
+      loading={eager ? 'eager' : 'lazy'}
       fetchPriority={priority ? 'high' : undefined}
       referrerPolicy="no-referrer"
     />
   );
-});
+}
 
 interface MediaCardProps {
   item: MediaItem;
@@ -55,7 +84,7 @@ export const MediaCard = React.memo(function MediaCard({ item, onSelect, onToggl
     <article className={`media-card ${compact ? 'compact' : ''}`}>
       <div className="poster-wrap">
         <HoldToSaveButton className="poster-button" onSave={save} onClick={() => onSelect(item)} aria-label={`View ${item.title}`}>
-          <Artwork src={item.poster} alt={item.title} />
+          <Artwork src={item.poster} fallback={item.anime?.alternatePoster || item.backdrop} alt={item.title} />
           <span className="poster-shade" />
           {item.rating && <span className="rating-badge"><Star size={11} fill="currentColor" />{item.rating.toFixed(1)}</span>}
           <span className="poster-play"><Play size={20} fill="currentColor" /></span>

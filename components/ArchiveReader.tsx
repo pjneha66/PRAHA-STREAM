@@ -107,7 +107,7 @@ const ArchiveReader: React.FC<{
   /** Height of one leaf in px inside the scroll container (linear layout). */
   const [fitLeafHeight, setFitLeafHeight] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { zoom, changeZoom } = useReaderZoom(scrollRef);
+  const { zoom, changeZoom, bindViewport } = useReaderZoom(scrollRef);
   const leafHeight = fitLeafHeight === null ? null : fitLeafHeight * zoom;
   const scrollTarget = useRef<number | null>(null);
   const lastLayout = useRef<{ height: number | null; mode: string } | null>(null);
@@ -284,7 +284,7 @@ const ArchiveReader: React.FC<{
         {/* Native leaf rendering (unrestricted scans only) */}
         {!restricted && leafCount !== null && leafCount > 0 && !error && (
           <div
-            ref={scrollRef}
+            ref={bindViewport}
             className={mode === 'scroll' ? 'archive-scroll-body' : 'archive-paged-body'}
             style={{ '--reader-zoom': zoom } as React.CSSProperties}
             onScroll={mode === 'scroll' ? handleScroll : undefined}

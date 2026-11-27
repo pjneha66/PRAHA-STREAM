@@ -2,6 +2,7 @@
 :root { color-scheme: dark; font: 15px 'Reader Sans', sans-serif; background: #101113; color: #f2f1ed; }
 body { margin: 0; height: 100dvh; display: flex; flex-direction: column; }
 main { flex: 1; min-height: 0; overflow: auto; }
+main.image-pages { touch-action: pan-x pan-y; overflow-anchor: none; overscroll-behavior: contain; }
 .page-stage { display: flex; align-items: center; width: calc(100% * var(--reader-zoom, 1)); min-height: 100%; }
 .page-stage canvas, .page-stage img { display: block; width: 100%; height: auto; background: #fff; }
 main.epub { background: #fffaf0; }

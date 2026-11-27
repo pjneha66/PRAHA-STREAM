@@ -31,6 +31,7 @@
 
 /* ── Webtoon strip ─────────────────────────────────────────────────────── */
 .mr-strip {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -92,6 +93,8 @@
   cursor: pointer;
   overflow: hidden;
 }
+
+.mr-paged, .mr-strip { touch-action: pan-x pan-y; overflow-anchor: none; }
 
 .is-paged.is-zoomed .mr-paged {
   display: block;

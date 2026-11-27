@@ -1170,8 +1170,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sanka-reader-header small { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .sanka-reader-header h2 { overflow: hidden; margin: 2px 0 0; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .sanka-page-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.sanka-reader-pages { flex: 1; overflow: auto; overscroll-behavior: contain; text-align: center; }
-.sanka-reader-pages img { display: block; width: min(calc(100% * var(--reader-zoom)), calc(850px * var(--reader-zoom))); max-width: none; height: auto; margin: 0 auto; }
+.sanka-reader-pages { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-x pan-y; text-align: center; }
+.sanka-reader-pages img { display: block; width: min(calc(100% * var(--reader-zoom)), calc(850px * var(--reader-zoom))); max-width: none; height: auto; aspect-ratio: auto 2 / 3; margin: 0 auto; background: var(--surface); }
 .reader-zoom-controls { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 3px; }
 .reader-zoom-controls button { display: inline-flex; justify-content: center; align-items: center; min-width: 32px; min-height: 38px; padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
 .reader-zoom-controls button:disabled { opacity: .5; }
@@ -1426,7 +1426,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .archive-paged-body { position: relative; width: 100%; height: 100%; overflow-y: auto; overscroll-behavior: contain; text-align: center; padding-bottom: calc(60px + var(--phone-safe-bottom)); }
 .archive-leaf { min-height: 40px; width: min(calc(100% * var(--reader-zoom)), calc(820px * var(--reader-zoom))); margin: 0 auto; }
 .archive-leaf img { display: block; width: 100%; height: auto; margin: 0 auto; background: #0c0e11; }
-.archive-scroll-body { overflow-anchor: none; }
+.archive-scroll-body, .archive-paged-body { overflow-anchor: none; touch-action: pan-x pan-y; }
 .archive-scroll-body .archive-leaf { overflow: hidden; }
 .archive-scroll-body .archive-leaf img { height: 100%; object-fit: contain; }
 .archive-leaf-fallback { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(100%, 620px); margin: 14px auto; padding: 22px 14px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--muted); font-size: 12px; }
@@ -3661,6 +3661,24 @@ html.player-vlc-active .app-shell,
 .mr-back-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 @media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
   html { overflow-x: clip; }
+  html.android-app { scroll-padding-top: max(66px, calc(50px + var(--phone-safe-top))); }
+  .android-app body { overflow-x: clip; }
+  .android-app body.modal-open { overflow: hidden; }
+  .android-app .topbar {
+    height: max(66px, calc(50px + var(--phone-safe-top)));
+    background: var(--bg);
+  }
+  /* Keep fast-scrolling catalog tiles painted and avoid full-screen blur layers in WebView. */
+  .android-app :is(.media-section, .comic-card, .book-card) {
+    content-visibility: visible;
+    contain-intrinsic-size: none;
+  }
+  .android-app .page-enter { animation: none; }
+  .android-app :is(.modal-backdrop, .sanka-modal-backdrop, .mr-bar, .mr-edge, .archive-paged-zone, .archive-reader-scrub, .music-bar, .audiobook-bar, .yt-topbar) {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .android-app .mr-bar { background: var(--bg-soft); }
   .topbar { padding-top: max(14px, var(--phone-safe-top)); }
   .mobile-nav {
     width: calc(100dvw - 28px - var(--phone-safe-left) - var(--phone-safe-right));

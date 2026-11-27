@@ -100,7 +100,7 @@ const SafeComicImg: React.FC<{
   );
 };
 
-const ReaderPageImg: React.FC<{ src: string; pageNumber: number }> = ({ src, pageNumber }) => {
+const ReaderPageImg: React.FC<{ src: string; pageNumber: number; eager?: boolean }> = ({ src, pageNumber, eager }) => {
   const [retryTick, setRetryTick] = useState(0);
   const candidates = useMemo(() => buildImageCandidates(src), [src]);
   const [index, setIndex] = useState(0);
@@ -134,7 +134,7 @@ const ReaderPageImg: React.FC<{ src: string; pageNumber: number }> = ({ src, pag
   return (
     <img
       key={`${currentSrc}-${retryTick}`}
-      loading={pageNumber <= 3 ? 'eager' : 'lazy'}
+      loading={eager || pageNumber <= 3 ? 'eager' : 'lazy'}
       decoding="async"
       referrerPolicy="no-referrer"
       src={currentSrc}
@@ -330,7 +330,7 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
   const [readerLoading, setReaderLoading] = useState(false);
   const [readerError, setReaderError] = useState('');
   const readerPagesRef = useRef<HTMLDivElement | null>(null);
-  const { zoom: readerZoom, changeZoom: changeReaderZoom } = useReaderZoom(readerPagesRef);
+  const { zoom: readerZoom, changeZoom: changeReaderZoom, bindViewport: bindReaderPages } = useReaderZoom(readerPagesRef);
   const chapterAbortRef = useRef<AbortController | null>(null);
   const [scrubberPage, setScrubberPage] = useState(1);
   // Reader mode (port of PlayTorrio's manga reader): webtoon long-strip vs
@@ -360,13 +360,15 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
   const onReaderScroll = () => {
     const container = readerPagesRef.current;
     if (!container || !readerImages) return;
-    let current = 1;
-    for (let i = 0; i < readerImages.length; i += 1) {
-      const anchor = document.getElementById(`sanka-page-${i}`);
-      if (anchor && anchor.offsetTop - container.offsetTop <= container.scrollTop + 80) current = i + 1;
-      else break;
+    const line = container.scrollTop + 80;
+    let low = 0;
+    let high = readerImages.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if ((container.children[middle] as HTMLElement).offsetTop <= line) low = middle;
+      else high = middle - 1;
     }
-    setScrubberPage(current);
+    setScrubberPage(low + 1);
   };
   const [continueEntries, setContinueEntries] = useState<ContinueEntry[]>(() => readContinue('comic'));
   const readingSlugs = useMemo(() => new Set(continueEntries.map((entry) => entry.id)), [continueEntries]);
@@ -1294,13 +1296,13 @@ const SankaExplorer: React.FC<ReadingLibraryProps & { prefillQuery?: string; adu
                 <div
                   className="sanka-reader-pages"
                   style={{ '--reader-zoom': readerZoom } as React.CSSProperties}
-                  ref={readerPagesRef}
+                  ref={bindReaderPages}
                   onScroll={readerMode === 'webtoon' ? onReaderScroll : undefined}
                 >
                   {readerMode === 'paged'
                     ? readerImages[scrubberPage - 1] && (
                       <div className="sanka-page-anchor">
-                        <ReaderPageImg src={readerImages[scrubberPage - 1]} pageNumber={scrubberPage} />
+                        <ReaderPageImg src={readerImages[scrubberPage - 1]} pageNumber={scrubberPage} eager />
                       </div>
                     )
                     : readerImages.map((url, index) => (
