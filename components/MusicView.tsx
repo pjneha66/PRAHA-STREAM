@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookHeart, CircleAlert, Disc3, Heart, ListMusic, ListPlus, LoaderCircle, Mic2,
-  Music2, Pause, Play, Plus, Search, Sparkles, X,
+  Music2, Pause, Play, Plus, Search, X,
 } from 'lucide-react';
 import SkeletonGrid from './SkeletonGrid';
 import { OctaveMusicService, type MusicTrack, type OctaveSearchData } from '../services/musicService';
 import { useMusicPlayer, formatTime, type MusicPlaylist } from './music/MusicPlayerProvider';
+import './listening-view.css';
 
 const TRENDING_GENRES = [
   'Trending', 'Synthwave', 'Electronic', 'Pop', 'Anime OST',
@@ -203,15 +204,8 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
   };
 
   return (
-    <div className="standard-page page-enter music-page">
-      <div className="music-hero">
-        <span className="music-hero-tile" aria-hidden="true"><Music2 size={22} /></span>
-        <div>
-          <span className="page-kicker">YOUTUBE MUSIC · FULL STREAMS · SYNCED LYRICS</span>
-          <h1>Music</h1>
-          <p>Full-length streaming with a persistent player, synced lyrics, queue, and playlists — keep the song playing as you browse.</p>
-        </div>
-      </div>
+    <div className="standard-page page-enter music-page listening-page">
+      <h1 className="listening-heading">Music Streaming</h1>
 
       <form className="music-search" onSubmit={(event) => { event.preventDefault(); void performSearch(query); }}>
         <div className="music-search-field">
@@ -219,7 +213,7 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Songs, artists, or moods…"
+            placeholder="Search songs or artists"
             aria-label="Search music"
           />
           {query && (
@@ -231,7 +225,7 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
         <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
       </form>
 
-      <div className="music-genre-rail">
+      <div className="music-genre-rail listening-chips" aria-label="Music genres">
         {TRENDING_GENRES.map((genre) => (
           <button
             key={genre}
@@ -285,10 +279,10 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
           {sectionsLoading ? (
             <SkeletonGrid count={8} label="Loading shelves…" variant="row" />
           ) : (
-            (Object.entries(sections) as Array<[string, MusicTrack[]]>).map(([sectionTitle, tracks]) => (
+            (Object.entries(sections) as Array<[string, MusicTrack[]]>).map(([sectionTitle, tracks], index) => (
               <section key={sectionTitle} className="music-section">
                 <div className="music-section-head">
-                  <h2><Sparkles size={15} /> {sectionTitle}</h2>
+                  <h2>{sectionTitle}</h2>
                   <button
                     type="button"
                     className="button button-secondary button-small"
@@ -297,8 +291,17 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
                     <Play size={12} fill="currentColor" /> Play all
                   </button>
                 </div>
+                {index === 0 && tracks[0] && (
+                  <button type="button" className="music-spotlight" onClick={() => playTrack(tracks[0], tracks)} aria-label={`Play ${tracks[0].title}`}>
+                    <span className="music-spotlight-art">
+                      {tracks[0].coverUrl ? <img src={tracks[0].coverUrl} alt="" /> : <Disc3 size={34} />}
+                    </span>
+                    <span className="music-spotlight-copy"><strong>{tracks[0].title}</strong><small>{tracks[0].artist}</small></span>
+                    <span className="music-spotlight-play" aria-hidden="true"><Play size={18} fill="currentColor" /></span>
+                  </button>
+                )}
                 <div className="music-rail">
-                  {tracks.map((track) => (
+                  {tracks.slice(index === 0 ? 1 : 0).map((track) => (
                     <div key={track.id} className={`music-rail-card ${isCurrent(track.id) ? 'active' : ''}`}>
                       <button type="button" className="music-rail-open" onClick={() => playTrack(track, tracks)} aria-label={`Play ${track.title}`}>
                         <span className="music-rail-art">

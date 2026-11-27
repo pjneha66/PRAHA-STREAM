@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  BookHeadphones, Bookmark, CircleAlert, Headphones, LoaderCircle, Pause, Play,
+  Bookmark, CircleAlert, Headphones, LoaderCircle, Pause, Play,
   RotateCcw, RotateCw, Search, Volume2, X, Sparkles,
 } from 'lucide-react';
 import {
@@ -9,6 +9,8 @@ import {
   type AudiobookItem, type AudiobookChapter, type Audiobook as ScrapedAudiobook,
 } from '../services/audiobookService';
 import ContinueShelf from './ContinueShelf';
+import { Artwork } from './MediaCard';
+import './listening-view.css';
 import { readContinue, recordContinue, removeContinue, type ContinueEntry } from '../services/continueStore';
 import { resolvePlayableStreamUrl } from '../services/androidBridge';
 
@@ -311,294 +313,123 @@ const AudiobooksView: React.FC = () => {
   };
 
   return (
-    <div className="audiobooks-view" style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
-      <header style={{ marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-          <BookHeadphones size={28} color="#e50914" />
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 800, margin: 0 }}>10 Audiobook Sources</h1>
+    <div className="standard-page page-enter audiobooks-view listening-page">
+      <h1 className="listening-heading">Audiobooks</h1>
+      <form className="music-search" onSubmit={(event) => { event.preventDefault(); void performSearch(query); }}>
+        <div className="music-search-field">
+          <Search size={17} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Title, author, or series"
+            aria-label="Search audiobooks"
+          />
         </div>
-        <p style={{ color: 'var(--text-secondary, #999)', margin: '0 0 1.25rem 0' }}>
-          Listen to unabridged audiobooks across AudiobookBay, BookAudio, Golden, FullLength, Hot, Audiozaic, AudioAZ,
-          Audiobooks4Soul, Audionest, and the Internet Archive poetry &amp; literature collection (75,000+ free readings).
-        </p>
+        <button className="button button-primary button-small" type="submit" disabled={loading}>Search</button>
+      </form>
 
-        <ContinueShelf
-          entries={continueEntries}
-          onResume={resumeAudiobook}
-          onDismiss={(entry) => {
-            removeContinue('audiobook', entry.id);
-            setContinueEntries(readContinue('audiobook'));
-          }}
-        />
-
-        {/* Search Bar */}
-        <div style={{ display: 'flex', gap: '0.75rem', maxWidth: '650px', marginBottom: '1rem' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && performSearch(query)}
-              placeholder="Search by title, author, or series…"
-              className="text-input"
-              style={{
-                width: '100%',
-                padding: '0.75rem 1rem 0.75rem 2.5rem',
-                borderRadius: '8px',
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: '#fff',
-                fontSize: '0.95rem',
-              }}
-            />
-            <Search size={18} style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }} />
+      <div className="audiobook-source-controls">
+        <select aria-label="Audiobook sources" value={sourceMode} onChange={(event) => setSourceMode(event.target.value as typeof sourceMode)}>
+          <option value="classic">Classic · 9 sources + Archive</option>
+          <option value="vyse">Live · 8 scrapers</option>
+        </select>
+        <details className="audiobook-source-info">
+          <summary>Browse sources</summary>
+          <p>AudiobookBay, BookAudio, Golden, FullLength, Hot, Audiozaic, AudioAZ, Audiobooks4Soul, Audionest, and Internet Archive.</p>
+          <h2>Archive poetry &amp; literature</h2>
+          <div className="listening-chips" aria-label="Archive poetry and literature">
+            {ARCHIVE_BROWSE_TERMS.map((term) => (
+              <button key={term} type="button" className="music-genre-chip"
+                aria-pressed={query === term} onClick={() => { setQuery(term); void performSearch(term); }}>{term}</button>
+            ))}
           </div>
-          <button
-            className="button button-primary"
-            onClick={() => performSearch(query)}
-            disabled={loading}
-            style={{ padding: '0 1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-          >
-            {loading ? <LoaderCircle size={17} className="spin" /> : <Search size={17} />}
-            Search
-          </button>
-        </div>
+        </details>
+      </div>
+      <div className="listening-chips" aria-label="Audiobook suggestions">
+        {TRENDING_SUGGESTIONS.map((tag) => (
+          <button key={tag} type="button" className="music-genre-chip" aria-pressed={query === tag}
+            onClick={() => { setQuery(tag); void performSearch(tag); }}>{tag}</button>
+        ))}
+      </div>
 
-        {/* Source engine toggle: classic aggregator (default) vs. the 8 live scrapers */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.78rem', color: '#8a8a8a', fontWeight: 700, letterSpacing: '0.4px' }}>ENGINE:</span>
-          {([
-            { id: 'classic' as const, label: 'Classic · 9 sources + Archive' },
-            { id: 'vyse' as const, label: 'Live · 8 scrapers' },
-          ]).map((option) => (
-            <button
-              key={option.id}
-              onClick={() => setSourceMode(option.id)}
-              aria-pressed={sourceMode === option.id}
-              style={{
-                background: sourceMode === option.id ? 'rgba(229,9,20,0.18)' : 'rgba(255,255,255,0.06)',
-                border: sourceMode === option.id ? '1px solid rgba(229,9,20,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                color: '#fff',
-                padding: '0.35rem 0.8rem',
-                borderRadius: '20px',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-                fontWeight: sourceMode === option.id ? 700 : 400,
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+      <ContinueShelf
+        entries={continueEntries}
+        onResume={resumeAudiobook}
+        onDismiss={(entry) => {
+          removeContinue('audiobook', entry.id);
+          setContinueEntries(readContinue('audiobook'));
+        }}
+      />
 
-        {/* Quick Suggestion Pills */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.6rem' }}>
-          {TRENDING_SUGGESTIONS.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => { setQuery(tag); performSearch(tag); }}
-              style={{
-                background: query === tag ? 'var(--accent, #e50914)' : 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff',
-                padding: '0.35rem 0.75rem',
-                borderRadius: '20px',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-              }}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-
-        {/* Internet Archive · audio_bookspoetry one-tap browse */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.78rem', color: '#a497c4', fontWeight: 700, letterSpacing: '0.4px' }}>ARCHIVE · POETRY &amp; LIT:</span>
-          {ARCHIVE_BROWSE_TERMS.map((term) => (
-            <button
-              key={term}
-              onClick={() => { setQuery(term); performSearch(term); }}
-              style={{
-                background: 'rgba(214, 247, 122, 0.1)',
-                border: '1px solid rgba(214, 247, 122, 0.35)',
-                color: '#d6f77a',
-                padding: '0.35rem 0.75rem',
-                borderRadius: '20px',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-              }}
-            >
-              {term}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      {/* Error state */}
-      {error && (
-        <div style={{ background: 'rgba(229,9,20,0.1)', border: '1px solid rgba(229,9,20,0.3)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <CircleAlert size={20} color="#e50914" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Grid of Results */}
+      {error && <div className="music-error" role="alert"><CircleAlert size={16} /> {error}</div>}
       {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '5rem 0', gap: '1rem' }}>
-          <LoaderCircle size={36} className="spin" color="#e50914" />
-          <p style={{ color: '#aaa' }}>
-            {sourceMode === 'vyse'
-              ? 'Searching the 8 live audiobook scrapers in parallel…'
-              : 'Searching all 9 audiobook repositories in parallel…'}
-          </p>
-        </div>
+        <p className="audiobook-status" role="status"><LoaderCircle size={20} className="spin" /> Searching audiobooks…</p>
       ) : books.length > 0 ? (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-          gap: '1.25rem',
-          marginBottom: selectedBook ? '7rem' : '2rem',
-        }}>
-          {books.map((book) => (
-            <div
-              key={book.id}
-              onClick={() => openBook(book)}
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                borderRadius: '10px',
-                overflow: 'hidden',
-                cursor: 'pointer',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-                display: 'flex',
-                flexDirection: 'column',
-                border: selectedBook?.id === book.id ? '2px solid #e50914' : '1px solid rgba(255,255,255,0.08)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.5)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div style={{ width: '100%', height: '220px', background: '#1c1c1e', position: 'relative', overflow: 'hidden' }}>
-                {book.coverImage ? (
-                  <img
-                    src={book.coverImage}
-                    alt={book.title}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                  />
-                ) : (
-                  <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-                    <Headphones size={42} opacity={0.3} />
-                  </div>
-                )}
-                <span style={{
-                  position: 'absolute',
-                  bottom: '8px',
-                  right: '8px',
-                  background: 'rgba(0,0,0,0.75)',
-                  fontSize: '0.7rem',
-                  padding: '2px 8px',
-                  borderRadius: '12px',
-                  backdropFilter: 'blur(4px)',
-                }}>
-                  {book.sourceName}
-                </span>
-              </div>
-              <div style={{ padding: '0.85rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <strong style={{ fontSize: '0.9rem', lineHeight: '1.3', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {book.title}
-                </strong>
-                <span style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.5rem' }}>
-                  {book.sourceName}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : !error ? (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '4rem 1rem',
-          textAlign: 'center',
-          background: 'rgba(255,255,255,0.02)',
-          borderRadius: '16px',
-          border: '1px dashed rgba(255,255,255,0.1)',
-        }}>
-          <Headphones size={48} style={{ color: 'var(--accent, #e50914)', marginBottom: '1rem', opacity: 0.8 }} />
-          <h2 style={{ fontSize: '1.3rem', fontWeight: 700, margin: '0 0 0.5rem 0' }}>Explore Unabridged Audiobooks</h2>
-          <p style={{ color: '#888', maxWidth: '500px', fontSize: '0.9rem', margin: '0 0 1.5rem 0' }}>
-            Choose a trending title above or search by book name, author, or narrator to stream full audiobooks with chapter navigation.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', justifyContent: 'center', maxWidth: '600px' }}>
-            {['Sci-Fi & Fantasy', 'Mystery & Thriller', 'Philosophy', 'Classics', 'Self-Development'].map((genre) => (
+        <section className="audiobook-catalog">
+          <h2>{books === CURATED_FEATURED_AUDIOBOOKS ? 'Featured audiobooks' : 'Search results'}</h2>
+          <div className="audiobook-grid">
+            {books.map((book) => (
               <button
-                key={genre}
-                onClick={() => { setQuery(genre.split(' ')[0]); performSearch(genre.split(' ')[0]); }}
-                className="button button-secondary"
-                style={{ borderRadius: '20px', padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                type="button"
+                key={book.id}
+                className="audiobook-card"
+                onClick={() => void openBook(book)}
+                aria-label={`Open ${book.title}`}
               >
-                <Sparkles size={13} style={{ marginRight: '6px' }} /> {genre}
+                <span className="audiobook-cover">
+                  <Artwork src={book.coverImage} alt={book.title} />
+                  <span className="audiobook-cover-icon" aria-hidden="true"><Headphones size={16} /></span>
+                </span>
+                <strong>{book.title}</strong>
+                {book.author && <small>{book.author}</small>}
+                <small>{book.sourceName}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : !error ? (
+        <div className="empty-state">
+          <h2>Explore audiobooks</h2>
+          <div className="listening-chips">
+            {['Sci-Fi & Fantasy', 'Mystery & Thriller', 'Philosophy', 'Classics', 'Self-Development'].map((genre) => (
+              <button key={genre} type="button" className="music-genre-chip"
+                onClick={() => { setQuery(genre.split(' ')[0]); void performSearch(genre.split(' ')[0]); }}>
+                <Sparkles size={13} /> {genre}
               </button>
             ))}
           </div>
         </div>
       ) : null}
 
-      {/* Book Detail & Chapter Selector Modal */}
       {selectedBook && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelectedBook(null)}>
-          <div className="source-modal" style={{ maxWidth: '650px', padding: '1.5rem', paddingBottom: activeChapter ? '9rem' : '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+        <div className={`modal-backdrop audiobook-chapter-backdrop${activeChapter ? ' with-player' : ''}`}
+          onMouseDown={(event) => event.target === event.currentTarget && setSelectedBook(null)}>
+          <section className="source-modal audiobook-chapter-sheet" role="dialog" aria-modal="true" aria-label={selectedBook.title}>
+            <header className="audiobook-chapter-header">
+              <span className="audiobook-cover"><Artwork src={selectedBook.coverImage} alt={selectedBook.title} /></span>
               <div>
-                <span style={{ fontSize: '0.75rem', color: '#e50914', fontWeight: 700, letterSpacing: '1px' }}>AUDIOBOOK DETAILS</span>
-                <h2 style={{ fontSize: '1.4rem', margin: '0.25rem 0 0 0' }}>{selectedBook.title}</h2>
-                <span style={{ fontSize: '0.85rem', color: '#999' }}>Source: {selectedBook.sourceName}</span>
+                <h2>{selectedBook.title}</h2>
+                {selectedBook.author && <p>{selectedBook.author}</p>}
+                <p>{selectedBook.sourceName}</p>
               </div>
-              <button className="modal-close" onClick={() => setSelectedBook(null)}><X size={20} /></button>
-            </div>
-
-            <div style={{ marginBottom: '1.5rem', maxHeight: '350px', overflowY: 'auto' }}>
-              {chaptersLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '3rem', gap: '0.75rem' }}>
-                  <LoaderCircle size={24} className="spin" color="#e50914" />
-                  <span>Fetching chapter streams…</span>
-                </div>
-              ) : chapters.length === 0 ? (
-                <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>
-                  No playable chapters resolved for this source.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {chapters.map((ch, idx) => (
-                    <button
-                      key={ch.id}
-                      onClick={() => playChapter(idx)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '0.75rem 1rem',
-                        borderRadius: '8px',
-                        background: currentChapterIndex === idx ? 'rgba(229,9,20,0.15)' : 'rgba(255,255,255,0.05)',
-                        border: currentChapterIndex === idx ? '1px solid rgba(229,9,20,0.4)' : '1px solid transparent',
-                        color: '#fff',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        {currentChapterIndex === idx && isPlaying ? <Volume2 size={16} color="#e50914" /> : <Play size={15} />}
-                        <span style={{ fontWeight: currentChapterIndex === idx ? 700 : 400 }}>{ch.title}</span>
-                      </div>
-                      <span style={{ fontSize: '0.78rem', color: '#888' }}>Stream</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+              <button type="button" className="icon-button" aria-label="Close chapters" data-android-back onClick={() => setSelectedBook(null)}><X size={20} /></button>
+            </header>
+            {chaptersLoading ? (
+              <p className="audiobook-status" role="status"><LoaderCircle size={20} className="spin" /> Loading chapters…</p>
+            ) : !chapters.length ? (
+              <p className="audiobook-status">This source did not return playable chapters.</p>
+            ) : (
+              <div className="audiobook-chapter-list" aria-label="Audiobook chapters">
+                {chapters.map((chapter, index) => (
+                  <button type="button" key={chapter.id} className={currentChapterIndex === index ? 'active' : ''}
+                    onClick={() => playChapter(index)}>
+                    {currentChapterIndex === index && isPlaying ? <Volume2 size={17} /> : <Play size={16} />}
+                    <span>{chapter.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
 
