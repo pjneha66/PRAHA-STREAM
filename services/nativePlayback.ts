@@ -182,7 +182,7 @@ export function startNativePlayback(options: NativePlaybackOptions): NativePlayb
         retriedDirect = true;
         targetUrl = fallbackUrl;
         rearm();
-        void handle.load(targetUrl, { headers, startSeconds: 0, autoplay, isLive }).catch(() => {
+        void handle.load(targetUrl, { headers, startSeconds, autoplay, isLive }).catch(() => {
           fail('This stream could not be opened.');
         });
         return;

@@ -382,7 +382,7 @@ class PrahaMedia3Plugin : Plugin() {
             return
         }
         val headers = call.getObject("headers")
-        val startMs = call.getLong("startMs") ?: 0L
+        val startMs = call.data.optLong("startMs", 0L)
         val autoPlay = call.getBoolean("autoPlay") ?: true
         val isLive = call.getBoolean("isLive") ?: false
         val mimeType = call.getString("mimeType")
@@ -508,7 +508,7 @@ class PrahaMedia3Plugin : Plugin() {
 
     @PluginMethod
     fun seek(call: PluginCall) {
-        val timeMs = call.getLong("timeMs") ?: 0L
+        val timeMs = call.data.optLong("timeMs", 0L)
         val absolute = call.getBoolean("absolute") ?: true
         activity.runOnUiThread {
             val exo = player ?: run {

@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { MonitorPlay } from 'lucide-react';
 import { findStremioStreams, supportsResource } from '../services/stremioService';
 import { addonTarget, streamIdFor } from '../services/metaAddons';
@@ -9,6 +9,7 @@ import {
   cloudStreamAvailable, getLinks, prefetch, toStreamResults,
 } from '../services/cloudstreamService';
 import { filmQueryFromMedia, rankStreams, scrapeFilmSources } from '../services/sourceOrchestrator';
+import { findRefreshedStream } from '../services/sourcePreferences';
 import { findPluginStreamsEverywhere } from '../services/pluginFinder';
 import { buildPluginQuery } from '../services/pluginRuntime';
 import { activeRepos } from '../services/pluginRepositories';
@@ -44,6 +45,8 @@ const SourceModal: React.FC<{
   preferredLanguage: string;
   preferredSource: string;
   lastSource?: string;
+  retryStream?: StreamResult;
+  onResume?: (stream: StreamResult) => void;
   onPreferredSourceChange: (key: string) => void;
   onClose: () => void;
   /** Last resort only — opens the iframe aggregator when every source failed. */
@@ -69,6 +72,8 @@ const SourceModal: React.FC<{
   preferredLanguage,
   preferredSource,
   lastSource,
+  retryStream,
+  onResume,
   onPreferredSourceChange,
   onClose,
   onOpenEmbedded,
@@ -92,6 +97,20 @@ const SourceModal: React.FC<{
   const [errors, setErrors] = useState<SourceError[]>([]);
   const [loading, setLoading] = useState(true);
   const [requestKey, setRequestKey] = useState(0);
+  const [recovering, setRecovering] = useState(Boolean(retryStream));
+  const [refreshedStream, setRefreshedStream] = useState<StreamResult>();
+  const resumePending = useRef(Boolean(retryStream));
+
+  useEffect(() => {
+    if (!refreshedStream || !onResume || !resumePending.current || suspended) return;
+    resumePending.current = false;
+    onResume(refreshedStream);
+  }, [refreshedStream, onResume, suspended]);
+
+  const stopRecovery = () => {
+    resumePending.current = false;
+    setRecovering(false);
+  };
 
   const animeSlug = media.anime?.slug || (media.source === 'anicore' ? media.id.slice('anicore:'.length) : '');
 
@@ -258,10 +277,17 @@ const SourceModal: React.FC<{
         const s = media.type === 'series' ? season : undefined;
         const ep = media.type === 'series' ? episode : undefined;
 
+        const checkRecovery = (results: StreamResult[]) => {
+          if (!retryStream || !resumePending.current || season !== initialSeason || episode !== initialEpisode) return;
+          const match = findRefreshedStream(results, retryStream);
+          if (match) setRefreshedStream((current) => current ?? match);
+        };
+
         // Run providers independently so a slow scraper never blocks results
         // from providers that have already responded.
         const publish = (result: { streams: StreamResult[]; errors: SourceError[] }) => {
           if (cancelled) return;
+          checkRecovery(result.streams);
           setStreams((current) => {
             const seen = new Set<string>();
             // rankStreams puts VyseTV scrapers first, then debrid, TorrServer,
@@ -274,7 +300,7 @@ const SourceModal: React.FC<{
             });
           });
           setErrors((current) => [...current, ...result.errors]);
-          if (result.streams.length || result.errors.length) clearLoading();
+          if (result.streams.length) clearLoading();
         };
         const knownImdb = media.imdbId || (media.id.startsWith('tt') ? media.id : undefined);
         const knownTmdb = media.tmdbId ? String(media.tmdbId) : media.id.startsWith('tmdb:') ? media.id.slice(5) : undefined;
@@ -285,12 +311,19 @@ const SourceModal: React.FC<{
         // results arrive last; the fast scrapers must not be held back waiting
         // for them.
         const filmJob = extensionOnly ? Promise.resolve() : runProvider('vysetv:scrapers', async () => {
+          const seen = new Set<string>();
           const result = await scrapeFilmSources(filmQueryFromMedia(media, s, ep), {
             signal: controller.signal,
+            preferredSource: retryStream,
             onPartial: (partial) => {
-              // Publish each result as it lands, but keep the provider's health
-              // entry as "searching" until the full list arrives.
-              if (!cancelled && partial.streams.length) publish({ streams: partial.streams, errors: [] });
+              if (cancelled) return;
+              const fresh = partial.streams.filter((stream) => {
+                const key = JSON.stringify([stream.sourceName, stream.id]);
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+              if (fresh.length) publish({ streams: fresh, errors: [] });
             },
           });
           return {
@@ -360,10 +393,12 @@ const SourceModal: React.FC<{
           const tmdbId = knownTmdb || (await idJob).tmdbId;
           const id = 'playtorrio:vod';
           return runProvider(id, async () => {
-            const results = await findPlayTorrioStreams(media.title, media.type, tmdbId, media.year, s, ep);
+            const results = await findPlayTorrioStreams(media.title, media.type, tmdbId, media.year, s, ep,
+              (streams) => publish({ streams, errors: [] }));
             return { streams: results, errors: [] };
           }, (result) => {
             if (cancelled) return;
+            checkRecovery(result.streams);
             setStreams((current) => {
               const seen = new Set<string>();
               // PlayTorrio results go first so its 4K rows are visible without scrolling
@@ -462,12 +497,15 @@ const SourceModal: React.FC<{
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
       } finally {
         window.clearTimeout(loadingCap);
-        if (!cancelled) clearLoading();
+        if (!cancelled) {
+          clearLoading();
+          setRecovering(false);
+        }
       }
     };
     void load();
     return () => { cancelled = true; controller.abort(); };
-  }, [media, season, episode, requestKey, addons, repositories, pluginRepositories, nuvioSettings]);
+  }, [media, season, episode, requestKey, addons, repositories, pluginRepositories, nuvioSettings, retryStream]);
   useEffect(() => {
     if (suspended) return;
     const handler = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -498,6 +536,11 @@ const SourceModal: React.FC<{
       inert={suspended || undefined}
     >
       <section className="source-modal" role="dialog" aria-modal="true" aria-label={`Sources for ${media.title}`}>
+        {retryStream && resumePending.current && (
+          <div className="source-embed-fallback" role="status">
+            {recovering ? `Reconnecting to ${retryStream.sourceName}…` : `${retryStream.sourceName} was unavailable. Choose a stream to continue.`}
+          </div>
+        )}
         <SourcePanel
           media={media}
           streams={streams}
@@ -511,21 +554,24 @@ const SourceModal: React.FC<{
           episode={episode}
           seasons={seasons}
           episodes={episodes}
-          onSeasonChange={(nextSeason) => { setSeason(nextSeason); setEpisode(1); }}
-          onEpisodeChange={setEpisode}
-          onRefresh={() => setRequestKey((key) => key + 1)}
+          onSeasonChange={(nextSeason) => { stopRecovery(); setSeason(nextSeason); setEpisode(1); }}
+          onEpisodeChange={(nextEpisode) => { stopRecovery(); setEpisode(nextEpisode); }}
+          onRefresh={() => { stopRecovery(); setRequestKey((key) => key + 1); }}
           providerCount={providerCount}
           preferredLanguage={preferredLanguage}
           sourceSummary={extensionOnly
             ? `${media.cloudstreamApiName} extension`
             : `${providerCount} provider${providerCount === 1 ? '' : 's'}`}
-          onPlay={(stream, alternatives) => onPlay(
-            stream,
-            media.type === 'series' ? season : undefined,
-            media.type === 'series' ? episode : undefined,
-            media.type === 'series' ? currentEpTitle : undefined,
-            alternatives,
-          )}
+          onPlay={(stream, alternatives) => {
+            stopRecovery();
+            onPlay(
+              stream,
+              media.type === 'series' ? season : undefined,
+              media.type === 'series' ? episode : undefined,
+              media.type === 'series' ? currentEpTitle : undefined,
+              alternatives,
+            );
+          }}
           onOpenExtensions={onOpenExtensions}
           showClose
           onClose={onClose}

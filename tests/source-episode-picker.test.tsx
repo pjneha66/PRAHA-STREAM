@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { MediaItem } from '../types';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { MediaItem, StreamResult } from '../types';
 
 /**
  * Season switching has to re-resolve the episode, not replay the old number.
@@ -31,6 +31,9 @@ const tmdb = vi.hoisted(() => ({
   enrich: vi.fn(async (media: unknown) => media),
   resolveIds: vi.fn(async () => ({ tmdbId: 1, imdbId: '' })),
 }));
+const film = vi.hoisted(() => ({
+  scrape: vi.fn(async (_query: unknown, _options: unknown) => ({ streams: [] as StreamResult[], failures: [] })),
+}));
 
 vi.mock('../services/tmdbService', () => ({ tmdbService: tmdb }));
 vi.mock('../services/animeService', () => ({ animeService: { getEpisodes: async () => [] } }));
@@ -49,7 +52,7 @@ vi.mock('../services/cloudstreamService', () => ({
 vi.mock('../services/sourceOrchestrator', () => ({
   filmQueryFromMedia: () => ({ title: 'T', year: '2020' }),
   rankStreams: (streams: unknown[]) => streams,
-  scrapeFilmSources: async () => ({ streams: [], failures: [] }),
+  scrapeFilmSources: film.scrape,
 }));
 
 import SourceModal from '../components/SourceModal';
@@ -69,7 +72,7 @@ const media: MediaItem = {
   ],
 };
 
-function renderModal() {
+function renderModal(overrides: Partial<React.ComponentProps<typeof SourceModal>> = {}) {
   return render(
     <SourceModal
       media={media}
@@ -82,6 +85,7 @@ function renderModal() {
       onClose={() => undefined}
       onOpenExtensions={() => undefined}
       onPlay={() => undefined}
+      {...overrides}
     />,
   );
 }
@@ -95,7 +99,35 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  film.scrape.mockReset();
   vi.clearAllMocks();
+});
+
+it('resumes the same movie source with its refreshed link while other searches are pending', async () => {
+  const saved: StreamResult = {
+    id: 'saved',
+    title: '1080p',
+    url: 'https://old.example/video.m3u8',
+    sourceType: 'scraper',
+    sourceName: 'Movy · Boise',
+  };
+  const replacement = { ...saved, id: 'fresh', url: 'https://new.example/video.m3u8' };
+  const onResume = vi.fn();
+  let publish!: (result: { streams: StreamResult[] }) => void;
+  let finish!: () => void;
+  film.scrape.mockImplementationOnce(async (_query, options) => {
+    publish = (options as { onPartial: typeof publish }).onPartial;
+    await new Promise<void>((resolve) => { finish = resolve; });
+    return { streams: [replacement], failures: [] };
+  });
+
+  renderModal({ media: { ...media, type: 'movie' }, retryStream: saved, onResume });
+  await act(async () => publish({ streams: [saved, { ...replacement, sourceName: 'Movy · Vegas' }] }));
+  expect(onResume).not.toHaveBeenCalled();
+  await act(async () => publish({ streams: [replacement] }));
+  expect(onResume).toHaveBeenCalledExactlyOnceWith(replacement);
+  await act(async () => finish());
+  expect(onResume).toHaveBeenCalledTimes(1);
 });
 
 describe('SourceModal season/episode picker', () => {

@@ -95,6 +95,7 @@ interface SourceRequest {
   season?: number;
   episode?: number;
   episodeTitle?: string;
+  retryStream?: StreamResult;
 }
 
 function matchesPlayback(entry: WatchProgress, { media, season, episode }: SourceRequest) {
@@ -110,6 +111,7 @@ interface ActivePlayerState {
   episodeTitle?: string;
   initialTime?: number;
   alternatives?: StreamResult[];
+  resumeSourceOnError?: boolean;
   /**
    * Set for a Live TV channel. Its presence is what routes to the dedicated
    * live player instead of the film modal — VyseTV's split between
@@ -380,9 +382,7 @@ const App: React.FC = () => {
     return [...latest.values()].slice(0, 50);
   }, [history]);
   const lastSourceFor = (media: MediaItem) => {
-    const stream = media.type === 'series'
-      ? history.find((entry) => entry.media.id === media.id && entry.lastStream)?.lastStream
-      : undefined;
+    const stream = history.find((entry) => entry.media.id === media.id && entry.lastStream)?.lastStream;
     return stream ? sourceKey(stream) : '';
   };
   const [homeRowsRaw, setHomeRows] = usePersistentState<HomeRowSettings>(`praha.v2.profile.${activeProfile.id}.home-rows`, DEFAULT_HOME_ROWS);
@@ -1003,7 +1003,7 @@ const App: React.FC = () => {
     }
   };
 
-  const openSources = (item: MediaItem, season?: number, episode?: number, episodeTitle?: string) => {
+  const openSources = (item: MediaItem, season?: number, episode?: number, episodeTitle?: string, retryStream?: StreamResult) => {
     // A collection from a metadata addon (TMDB Collections and the like) has no
     // films of its own to play: its first film not watched to the end plays, as
     // the film it is. Same rule as VyseTV's player page.
@@ -1024,6 +1024,7 @@ const App: React.FC = () => {
     };
     setSourceState({
       ...request,
+      retryStream,
       episodeTitle: episodeTitle ?? history.find((entry) => matchesPlayback(entry, request))?.episodeTitle,
     });
   };
@@ -1105,6 +1106,7 @@ const App: React.FC = () => {
         season: entry.season,
         episode: entry.episode,
         episodeTitle: entry.episodeTitle,
+        resumeSourceOnError: true,
       }, 96);
       return;
     }
@@ -1697,7 +1699,7 @@ const App: React.FC = () => {
 
       {sourceState && (
         <SourceModal
-          key={JSON.stringify([sourceState.media.id, sourceState.season, sourceState.episode])}
+          key={JSON.stringify([sourceState.media.id, sourceState.season, sourceState.episode, Boolean(sourceState.retryStream)])}
           media={sourceState.media}
           initialSeason={sourceState.season}
           initialEpisode={sourceState.episode}
@@ -1710,6 +1712,13 @@ const App: React.FC = () => {
           preferredLanguage={settings.preferredLanguage}
           preferredSource={preferredSource}
           lastSource={lastSourceFor(sourceState.media)}
+          retryStream={sourceState.retryStream}
+          onResume={(stream) => {
+            const { media, season, episode, episodeTitle } = sourceState;
+            rememberPlaybackOrigin(null);
+            setSourceState(null);
+            startVideo({ media, stream, season, episode, episodeTitle }, 96);
+          }}
           onPreferredSourceChange={setPreferredSource}
           onClose={() => setSourceState(null)}
           onOpenEmbedded={(season, episode) => {
@@ -1761,10 +1770,10 @@ const App: React.FC = () => {
               setPlayer({ ...player, stream: next, alternatives: remaining, initialTime });
               notify(`Trying ${next.sourceName}…`);
             } : undefined}
-            onFindSources={() => {
+            onFindSources={(afterError) => {
               const { media, season, episode, episodeTitle } = player;
               closePlayer();
-              openSources(media, season, episode, episodeTitle);
+              openSources(media, season, episode, episodeTitle, afterError && player.resumeSourceOnError ? player.stream : undefined);
             }}
             onProgress={handlePlayerProgress}
             onNextEpisode={player.media.type === 'series' && player.season && player.episode ? handleNextEpisode : undefined}

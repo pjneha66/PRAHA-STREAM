@@ -709,6 +709,7 @@ export async function findPlayTorrioStreams(
   year?: number,
   season?: number,
   episode?: number,
+  onPartial?: (streams: StreamResult[]) => void,
 ): Promise<StreamResult[]> {
   if (!title || !title.trim()) return [];
 
@@ -725,7 +726,11 @@ export async function findPlayTorrioStreams(
     TorrentScraper.scrape(title, type, year, season, episode),
   ];
 
-  const results = await Promise.allSettled(jobs);
+  const results = await Promise.allSettled(jobs.map(async (job) => {
+    const streams = await job;
+    if (streams.length) onPartial?.(streams);
+    return streams;
+  }));
   const all: StreamResult[] = [];
   for (const r of results) {
     if (r.status === 'fulfilled' && Array.isArray(r.value)) {

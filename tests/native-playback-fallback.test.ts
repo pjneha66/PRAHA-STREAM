@@ -96,6 +96,25 @@ beforeEach(async () => {
 });
 
 describe('startNativePlayback fallback', () => {
+  it('keeps the resume position when retrying the same stream without the proxy', async () => {
+    vi.useFakeTimers();
+    const session = startNativePlayback({
+      engine: 'mpv', chain, surface: document.createElement('video'),
+      url: 'https://example.com/proxy.m3u8', fallbackUrl: 'https://example.com/video.m3u8',
+      startSeconds: 43, autoplay: true, volume: 100, rate: 1, handlers: handlers(),
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fake.calls.filter((call) => call.method === 'load').map((call) => call.args[0]))
+        .toEqual(expect.arrayContaining([expect.objectContaining({
+          url: 'https://example.com/video.m3u8', startSeconds: 43,
+        })]));
+    } finally {
+      session.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps playing when the live playlist rolls the position backwards', async () => {
     vi.useFakeTimers();
     const h = handlers();

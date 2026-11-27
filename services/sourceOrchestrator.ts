@@ -101,6 +101,7 @@ export async function scrapeFilmSources(
     enabledIds?: string[];
     timeoutMs?: number;
     signal?: AbortSignal;
+    preferredSource?: Pick<StreamResult, 'provider' | 'sourceName'>;
     /** Called with everything finished so far, in FILM_SOURCES order. */
     onPartial?: (result: ScrapeResult) => void;
   } = {},
@@ -114,17 +115,28 @@ export async function scrapeFilmSources(
       });
   const timeoutMs = options.timeoutMs ?? 8000;
 
-  const ask = async (source: FilmSource) => {
+  const ask = async (source: FilmSource, onStream: (stream: FoundStream) => void) => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    options.signal?.addEventListener('abort', abort, { once: true });
     try {
       return await Promise.race([
-        source.scraper(query),
+        source.scraper(query, {
+          signal: controller.signal,
+          preferredServer: options.preferredSource?.sourceName.startsWith(`${source.name} · `)
+            ? options.preferredSource.sourceName.slice(source.name.length + 3)
+            : undefined,
+          onStream: (stream) => { if (!controller.signal.aborted) onStream(stream); },
+        }),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error('timeout')), Math.max(timeoutMs, source.timeoutMs ?? 0));
         }),
       ]);
     } finally {
       clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abort);
+      abort();
     }
   };
 
@@ -133,8 +145,11 @@ export async function scrapeFilmSources(
   // searches) run in their own lane at the same time, or their 20 s would be
   // spent waiting behind the waves rather than alongside them.
   const longLane = enabled.filter((source) => (source.timeoutMs ?? 0) > timeoutMs);
-  const wavable = enabled.filter((source) => !longLane.includes(source));
+  const preferred = enabled.find((source) => source.name === options.preferredSource?.provider);
+  const wavable = [preferred, ...enabled.filter((source) => source !== preferred)]
+    .filter((source): source is FilmSource => Boolean(source && !longLane.includes(source)));
   const answers = new Map<string, Awaited<ReturnType<FilmSource['scraper']>> | Error>();
+  const partials = new Map<string, FoundStream[]>();
 
   // Emit in FILM_SOURCES order, whatever order the lanes finished in, so a
   // partial result reads the same as the final one.
@@ -144,14 +159,21 @@ export async function scrapeFilmSources(
     for (const source of enabled) {
       const answer = answers.get(source.id);
       if (answer instanceof Error) failures.push({ source: source.name, message: answer.message });
-      else if (Array.isArray(answer)) for (const found of answer) streams.push(foundToStream(found, source.name));
+      for (const found of Array.isArray(answer) ? answer : partials.get(source.id) ?? []) {
+        streams.push(foundToStream(found, source.name));
+      }
     }
     return { streams, failures };
   };
   const run = async (source: FilmSource) => {
     if (options.signal?.aborted) return;
     try {
-      answers.set(source.id, await ask(source));
+      answers.set(source.id, await ask(source, (stream) => {
+        const found = partials.get(source.id) ?? [];
+        found.push(stream);
+        partials.set(source.id, found);
+        options.onPartial?.(collect());
+      }));
     } catch (reason) {
       answers.set(source.id, reason instanceof Error ? reason : new Error(String(reason)));
     }

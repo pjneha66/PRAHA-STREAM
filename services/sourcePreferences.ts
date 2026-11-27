@@ -5,6 +5,18 @@ export function sourceKey(stream: Pick<StreamResult, 'sourceType' | 'sourceName'
   return JSON.stringify([stream.sourceType, stream.sourceName]);
 }
 
+export function findRefreshedStream(streams: StreamResult[], previous: StreamResult): StreamResult | undefined {
+  return streams.find((stream) =>
+    sourceKey(stream) === sourceKey(previous) &&
+    stream.url !== previous.url &&
+    Boolean(stream.url || stream.infoHash || stream.ytId) &&
+    stream.infoHash?.toLowerCase() === previous.infoHash?.toLowerCase() &&
+    stream.fileIdx === previous.fileIdx &&
+    streamQuality(stream) === streamQuality(previous) &&
+    (stream.language || '').toLowerCase() === (previous.language || '').toLowerCase(),
+  );
+}
+
 export interface SourceFilters {
   quality: string;
   provider: string;

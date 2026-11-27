@@ -56,7 +56,7 @@ export interface FilmSource {
   id: string;
   name: string;
   note: string;
-  scraper: (q: FilmQuery) => Promise<FoundStream[]>;
+  scraper: (q: FilmQuery, options?: FilmScrapeOptions) => Promise<FoundStream[]>;
   /** Only asked for films: it has nothing for episodes, or failed the checks with them. */
   filmsOnly?: boolean;
   /** Only asked for episodes, the same way round. */
@@ -69,6 +69,12 @@ export interface FilmSource {
    * twice, so both need longer or their answers would always arrive too late.
    */
   timeoutMs?: number;
+}
+
+export interface FilmScrapeOptions {
+  signal?: AbortSignal;
+  preferredServer?: string;
+  onStream?: (stream: FoundStream) => void;
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -584,14 +590,14 @@ const movySource: FilmSource = {
   id: 'movy',
   name: 'Movy',
   note: '17 servers, some in other languages',
-  // 17 servers in parallel, each with a 6.5 s request budget.
-  timeoutMs: 20000,
-  scraper: (q) => findMovyStreams({
+  // Servers run in waves on Android to leave capacity for other providers.
+  timeoutMs: 45000,
+  scraper: (q, options) => findMovyStreams({
     tmdbId: Number(q.id),
     series: q.season !== undefined && q.episode !== undefined,
     season: q.season,
     episode: q.episode,
-  }),
+  }, options),
 };
 
 const knabenSource: FilmSource = {

@@ -598,7 +598,7 @@ class PrahaMpvPlugin : Plugin() {
 
     @PluginMethod
     fun seek(call: PluginCall) {
-        val timeMs = call.getLong("timeMs") ?: 0L
+        val timeMs = call.data.optLong("timeMs", 0L)
         val absolute = call.getBoolean("absolute") ?: true
         val seconds = timeMs / 1000.0
         command(call, if (absolute) "seek $seconds absolute" else "seek $seconds relative")

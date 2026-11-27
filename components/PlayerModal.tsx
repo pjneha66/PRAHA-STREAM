@@ -45,7 +45,7 @@ const PlayerModal: React.FC<{
   onPlayerSettingsChange: (patch: Partial<PlayerSettings>) => void;
   onProgress: (currentTime: number, duration: number) => void;
   onTryAnother?: () => void;
-  onFindSources?: () => void;
+  onFindSources?: (afterError?: boolean) => void;
   onNextEpisode?: () => void;
   nextEpisodeLoading?: boolean;
   onPreloadNextEpisode?: () => void;
@@ -478,7 +478,7 @@ const PlayerModal: React.FC<{
                 </button>
               ) : null}
               {!debridBusy && onTryAnother && <button className="button button-secondary" onClick={onTryAnother}>Try another source</button>}
-              {onFindSources && <button className="button button-secondary" onClick={onFindSources}>Find sources</button>}
+              {onFindSources && <button className="button button-secondary" onClick={() => onFindSources()}>Find sources</button>}
               <button className="button button-secondary" onClick={copyLink}>
                 {copied ? <Check size={17} /> : <Copy size={17} />}
                 {copied ? 'Copied' : 'Copy magnet'}

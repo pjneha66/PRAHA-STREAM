@@ -100,7 +100,7 @@ interface MpvPlayerProps {
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
   onRequestClose: () => void;
   onTryAnother?: () => void;
-  onFindSources?: () => void;
+  onFindSources?: (afterError?: boolean) => void;
 }
 
 // Shared empty defaults. A `= []` default in the destructuring below allocates
@@ -761,7 +761,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
     if (autoRecoveredRef.current === key) return;
     const timer = window.setTimeout(() => {
       autoRecoveredRef.current = key;
-      onFindSources();
+      onFindSources(true);
     }, 2500);
     return () => window.clearTimeout(timer);
   }, [fatal, onFindSources, media?.id, stream.id]);
@@ -1025,7 +1025,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           <p>{fatal}</p>
           <button className="mpv-chip" onClick={() => { setFatal(''); engine.retry(); }}>Try again</button>
           {onTryAnother && <button className="mpv-chip" onClick={onTryAnother}>Try another source</button>}
-          {onFindSources && <button className="mpv-chip" onClick={onFindSources}>Find sources</button>}
+          {onFindSources && <button className="mpv-chip" onClick={() => onFindSources()}>Find sources</button>}
         </div>
       )}
 

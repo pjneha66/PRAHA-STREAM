@@ -16,8 +16,9 @@
 // the scheme, and it is carried over operation for operation — the 32-bit
 // rotations and masks are load-bearing, not style.
 
+import { Capacitor } from '@capacitor/core';
 import { nativeFetchText } from '../androidBridge';
-import type { FoundStream } from '../filmSources';
+import type { FilmScrapeOptions, FoundStream } from '../filmSources';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const HEADERS: Record<string, string> = {
@@ -314,25 +315,36 @@ export class MovySession {
 
 /**
  * Every Movy server's stream for one title. The Dart asks a server only when
- * the user picks it; PRAHA's source list is a list, so all of them are asked at
- * once and whatever answers becomes a row. One dead server never hides another.
+ * the user picks it. PRAHA publishes each response separately and leaves room
+ * in the Android HTTP pool for other providers and the player.
  */
 export async function findMovyStreams(query: {
   tmdbId: number;
   series: boolean;
   season?: number;
   episode?: number;
-}): Promise<FoundStream[]> {
+}, options: FilmScrapeOptions = {}): Promise<FoundStream[]> {
   const { tmdbId, series, season, episode } = query;
-  if (!Number.isFinite(tmdbId) || tmdbId <= 0) return [];
+  if (!Number.isFinite(tmdbId) || tmdbId <= 0 || options.signal?.aborted) return [];
 
   const session = new MovySession(tmdbId, series, season, episode);
   session.warmUp();
 
-  const settled = await Promise.allSettled(MOVY_SERVERS.map((server) => session.fetch(server)));
-  const out: FoundStream[] = [];
-  for (const result of settled) {
-    if (result.status === 'fulfilled' && result.value) out.push(result.value);
-  }
-  return out;
+  const preferred = MOVY_SERVERS.find((server) => server.name === options.preferredServer);
+  const servers = preferred ? [preferred, ...MOVY_SERVERS.filter((server) => server !== preferred)] : MOVY_SERVERS;
+  const work = servers.values();
+  const answers = new Map<Shard, FoundStream>();
+  const worker = async () => {
+    for (const server of work) {
+      if (options.signal?.aborted) return;
+      const stream = await session.fetch(server).catch(() => null);
+      if (stream && !options.signal?.aborted) {
+        answers.set(server, stream);
+        options.onStream?.(stream);
+      }
+    }
+  };
+  const lanes = Capacitor.getPlatform() === 'android' ? 3 : servers.length;
+  await Promise.all(Array.from({ length: lanes }, worker));
+  return MOVY_SERVERS.flatMap((server) => answers.get(server) ?? []);
 }

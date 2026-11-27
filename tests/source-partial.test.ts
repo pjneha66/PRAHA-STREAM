@@ -31,9 +31,11 @@ const mock = vi.hoisted(() => {
         name: 'Slow',
         note: '',
         timeoutMs: 20000,
-        scraper: vi.fn(async () => {
+        scraper: vi.fn(async (_query, options) => {
+          const early = { url: 'https://slow/early.m3u8', server: 'Early shard', quality: '1080p', type: 'hls' };
+          options?.onStream?.(early);
           await slowGate;
-          return [{ url: 'https://slow/one.m3u8', server: 'Slow', quality: '4K', type: 'hls' }];
+          return [early, { url: 'https://slow/one.m3u8', server: 'Slow', quality: '4K', type: 'hls' }];
         }),
       },
     ],
@@ -59,11 +61,13 @@ describe('scrapeFilmSources partial publishing', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(seen.flat().some((name) => name.startsWith('Fast'))).toBe(true);
     // The slow source has not reported yet, so it must not be in the partials.
-    expect(seen.flat().some((name) => name.startsWith('Slow'))).toBe(false);
+    expect(seen.flat()).toContain('Slow · Early shard');
+    expect(seen.flat()).not.toContain('Slow · Slow');
+    expect(seen.flat()).not.toContain('Slow regular · Slow regular');
 
     // The result is only complete once the long lane is released.
     mock.releaseSlow();
     const result = await finished;
-    expect(result.streams).toHaveLength(3);
+    expect(result.streams).toHaveLength(4);
   });
 });
