@@ -4,6 +4,7 @@ import {
   Repeat, Repeat1, ScrollText, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X,
 } from 'lucide-react';
 import { useMusicPlayer, useMusicPosition, formatTime, type MusicPlaylist } from './MusicPlayerProvider';
+import AppleMusicBadge from './AppleMusicBadge';
 
 /**
  * Full-screen Now Playing sheet (SimpMusic-style): big artwork, seek bar,
@@ -61,6 +62,7 @@ const NowPlayingSheet: React.FC = () => {
             </div>
 
             {player.streamError && <p className="music-sheet-error" role="alert">{player.streamError}</p>}
+            {currentTrack.storeUrl && <AppleMusicBadge url={currentTrack.storeUrl} />}
 
             <div className="music-sheet-seek">
               <span>{formatTime(currentTime)}</span>

@@ -6,6 +6,7 @@ import {
 import SkeletonGrid from './SkeletonGrid';
 import { OctaveMusicService, type MusicTrack, type OctaveSearchData } from '../services/musicService';
 import { useMusicPlayer, formatTime, type MusicPlaylist } from './music/MusicPlayerProvider';
+import AppleMusicBadge from './music/AppleMusicBadge';
 import './listening-view.css';
 
 const TRENDING_GENRES = [
@@ -117,7 +118,8 @@ const MusicView: React.FC<{ prefillQuery?: string }> = ({ prefillQuery }) => {
         >
           <ListPlus size={15} />
         </button>
-        <span className="music-row-duration">{track.duration ? formatTime(track.duration) : ''}</span>
+        {track.storeUrl ? <AppleMusicBadge url={track.storeUrl} />
+          : <span className="music-row-duration">{track.duration ? formatTime(track.duration) : ''}</span>}
         {/* Inline save-to-playlist popover */}
         {playlistMenuFor?.id === track.id && (
           <div className="music-row-menu" onClick={(event) => event.stopPropagation()}>

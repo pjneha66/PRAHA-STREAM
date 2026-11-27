@@ -1267,6 +1267,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .music-row-fav:hover, .music-row-queue:hover { color: var(--text); background: var(--surface-2); }
 .music-row-fav.active { color: var(--accent); }
 .music-row-duration { flex: 0 0 auto; color: var(--muted-2); font-size: 10.5px; min-width: 34px; text-align: right; }
+.apple-music-badge { display: inline-flex; flex: 0 0 auto; width: 85px; }
+.apple-music-badge img { display: block; width: 100%; height: auto; }
+.music-sheet .apple-music-badge { width: 125px; }
 /* Inline save-to-playlist popover on track rows */
 .music-row-menu { position: absolute; right: 8px; top: calc(100% - 4px); z-index: 40; display: flex; flex-direction: column; gap: 4px; min-width: 230px; max-height: 260px; overflow-y: auto; padding: 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 44px rgba(0, 0, 0, .55); }
 .music-row-menu-label { color: var(--muted-2); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * The two catalog/fallback clients ported from VyseTV:
  *
- *  - `deezerApiClient` is the only metadata source, and its `fromJson` chains
+ *  - `deezerApiClient` is the primary metadata source, and its `fromJson` chains
  *    are what let one parser serve chart, search, album and playlist payloads.
  *  - `convertytmp3Client` is the mp3 mirror used when YouTube refuses, and its
  *    handshake has to be followed exactly or it returns nothing.
@@ -18,6 +18,7 @@ vi.mock('../services/androidBridge', () => ({
 import * as deezer from '../services/music/deezerApiClient';
 import { getStreamUrl } from '../services/music/convertytmp3Client';
 import { musicTrackFromJson, formattedDuration } from '../services/music/musicTrack';
+import { OctaveMusicService } from '../services/musicService';
 
 function ok(value: unknown) {
   return { ok: true, status: 200, data: JSON.stringify(value) };
@@ -33,6 +34,38 @@ function requestedUrls(): string[] {
 
 beforeEach(() => {
   fetchMock.mockReset();
+});
+
+it('fills the Tracks section when Deezer only returns artists', async () => {
+  fetchMock.mockImplementation(async (target: string) => {
+    const url = new URL(target);
+    if (url.hostname === 'itunes.apple.com') {
+      return ok({ results: [
+        { kind: 'song', trackId: 7, trackName: 'One More Time', artistName: 'Daft Punk', trackTimeMillis: 320000,
+          trackViewUrl: 'https://music.apple.com/us/album/discovery/1?i=7',
+          previewUrl: 'https://audio-ssl.itunes.apple.com/example.m4a' },
+        { kind: 'song', trackId: 8, trackName: 'One More Time', artistName: 'Daft Punk',
+          trackViewUrl: 'https://music.apple.com/us/album/discovery/1?i=8' },
+      ] });
+    }
+    if (url.pathname === '/search/artist') return ok({ data: [{ id: 27, name: 'Daft Punk' }] });
+    return ok({ data: [] });
+  });
+  const data = await OctaveMusicService.searchFull('Daft Punk');
+  expect(data.artists[0]?.name).toBe('Daft Punk');
+  expect(data.tracks).toEqual([expect.objectContaining({
+    id: 'itunes:7', title: 'One More Time', artist: 'Daft Punk', duration: 320,
+    previewUrl: 'https://audio-ssl.itunes.apple.com/example.m4a',
+  })]);
+});
+
+it('keeps the primary tracks and skips the fallback when Deezer returns songs', async () => {
+  fetchMock.mockImplementation(async (target: string) => ok({
+    data: new URL(target).pathname === '/search' ? [{ id: 12, title: 'Track', artist: { name: 'Artist' } }] : [],
+  }));
+  const data = await OctaveMusicService.searchFull('Track');
+  expect(data.tracks[0]?.id).toBe('12');
+  expect(requestedUrls().some((url) => url.includes('itunes.apple.com'))).toBe(false);
 });
 
 describe('musicTrackFromJson', () => {

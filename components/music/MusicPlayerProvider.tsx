@@ -209,12 +209,12 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (resolved?.url) {
         setCurrentTime(0);
         setDuration(track.duration || 0);
-        // A preview is 30 s regardless of the catalog duration.
-        setIsFullAudio(resolved.sourceUrl !== track.previewUrl);
+        const isPreview = resolved.sourceUrl === track.previewUrl;
+        setIsFullAudio(!isPreview);
         startAudio(resolved.url, seq);
-        if (resolved.sourceUrl === track.previewUrl) {
-          setDuration(30);
-          setStreamError('Full stream unavailable — playing the 30-second preview.');
+        if (isPreview) {
+          setDuration(0);
+          setStreamError('Playing a preview. Full stream unavailable.');
         }
         return;
       }
@@ -251,8 +251,8 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const onPreview = audio?.src === track.previewUrl;
       if (track.previewUrl && audio && !onPreview) {
         setIsFullAudio(false);
-        setDuration(30);
-        setStreamError('Stream ended early — playing the 30-second preview.');
+        setDuration(0);
+        setStreamError('Stream ended early. Playing a preview.');
         audio.src = track.previewUrl;
         audio.currentTime = 0;
         audio.play().catch(() => {
@@ -278,9 +278,8 @@ export const MusicPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (resolved?.url && audio) {
         const isPreview = resolved.sourceUrl === track.previewUrl;
         setIsFullAudio(!isPreview);
-        // A preview is 30 s whatever the catalog claims.
-        setDuration(isPreview ? 30 : track.duration || 0);
-        if (isPreview) setStreamError('Full stream unavailable — playing the 30-second preview.');
+        setDuration(isPreview ? 0 : track.duration || 0);
+        setStreamError(isPreview ? 'Playing a preview. Full stream unavailable.' : '');
         audio.src = resolved.url;
         // Resume only within full audio: a preview starts at its own beginning,
         // since the second we broke at does not exist in a 30 s clip.

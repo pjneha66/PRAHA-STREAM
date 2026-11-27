@@ -3,16 +3,14 @@ import * as vyseMusic from './music/musicService';
 import { getAudioUrl as extractorAudioUrl, searchVideoId } from './music/youtubeAudioExtractor';
 import { forgetStreamUrl, resetStreamResolverCache, resolveUrl } from './music/youtubeStreamResolver';
 import { youtubeRateLimitGuard } from './music/youtubeRateLimitGuard';
-import { proxyStreamUrlWithHeaders } from './androidBridge';
+import { nativeFetchText, proxyStreamUrlWithHeaders } from './androidBridge';
 
 /**
  * Music data + playback layer.
  *
- * This is the VyseTV music stack, ported wholesale: Deezer is the only catalog
- * source and playback resolves through YouTube (title+artist search → player
- * client sweep → Convertytmp3 mp3 mirror → Deezer 30 s preview). The previous
- * implementation here mixed iTunes with YouTube mirrors and could not play
- * full songs; it has been replaced rather than patched, per the port.
+ * Deezer provides the main catalog. The iTunes Search API supplies song
+ * results when Deezer's regional track list is empty. Both use the same
+ * full-stream resolver and retain their catalog previews.
  *
  * The exported surface is unchanged so the four call sites — MusicView,
  * MusicPlayerProvider, DiscoverView (type only) and App's universal search —
@@ -30,8 +28,9 @@ export interface MusicTrack {
   /** Length in seconds. */
   duration: number;
   coverUrl: string;
-  /** 30-second Deezer preview — the final fallback tier. */
+  /** Catalog preview, used when a full stream is unavailable. */
   previewUrl?: string;
+  storeUrl?: string;
   explicit?: boolean;
   trackNumber?: number;
 }
@@ -140,22 +139,58 @@ function isVideoId(id: string): boolean {
   return /^[A-Za-z0-9_-]{11}$/.test(id);
 }
 
+function appleUrl(value: unknown, domain: string): string | undefined {
+  if (typeof value !== 'string') return;
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:' && !url.username && !url.password
+        && (url.hostname === domain || url.hostname.endsWith('.' + domain))) return url.href;
+  } catch { /* Ignore malformed catalog URLs. */ }
+}
+
+async function searchStoreSongs(query: string): Promise<MusicTrack[]> {
+  try {
+    const url = new URL('https://itunes.apple.com/search');
+    url.search = new URLSearchParams({ term: query, media: 'music', entity: 'song', limit: '30' }).toString();
+    const response = await nativeFetchText(url.href, { timeoutMs: 5500 });
+    if (!response.ok) return [];
+    const { results } = JSON.parse(response.data);
+    if (!Array.isArray(results)) return [];
+    const songs = new Map<string, MusicTrack>();
+    for (const row of results) {
+      if (row?.kind !== 'song' || !Number.isSafeInteger(row.trackId)
+          || typeof row.trackName !== 'string' || typeof row.artistName !== 'string') continue;
+      const title = row.trackName.trim();
+      const artist = row.artistName.trim();
+      const storeUrl = appleUrl(row.trackViewUrl, 'music.apple.com') || appleUrl(row.trackViewUrl, 'itunes.apple.com');
+      if (!title || !artist || !storeUrl) continue;
+      const key = JSON.stringify([title.toLowerCase(), artist.toLowerCase()]);
+      const track = {
+        id: 'itunes:' + row.trackId, title, artist, storeUrl,
+        album: typeof row.collectionName === 'string' ? row.collectionName : undefined,
+        coverUrl: appleUrl(row.artworkUrl100, 'mzstatic.com')?.replace(/100x100bb(?=\.)/, '400x400bb') || '',
+        duration: typeof row.trackTimeMillis === 'number' ? Math.round(row.trackTimeMillis / 1000) : 0,
+        previewUrl: appleUrl(row.previewUrl, 'itunes.apple.com') || appleUrl(row.previewUrl, 'mzstatic.com'),
+        explicit: row.trackExplicitness === 'explicit',
+      };
+      if (!songs.has(key) || (!songs.get(key)?.previewUrl && track.previewUrl)) songs.set(key, track);
+    }
+    return [...songs.values()];
+  } catch {
+    return [];
+  }
+}
+
 export class OctaveMusicService {
-  /**
-   * Search tracks, artists and albums. Port of `MusicService.searchFull`:
-   * four Deezer queries in parallel, no mirrors, no iTunes.
-   */
   static async searchFull(query: string): Promise<OctaveSearchData> {
     const trimmed = query.trim();
     if (!trimmed) return { tracks: [], artists: [], albums: [] };
 
     const data = await vyseMusic.searchFull(trimmed);
-    if (!data.tracks.length && !data.artists.length && !data.albums.length) {
-      return { tracks: [], artists: [], albums: [] };
-    }
+    const tracks = data.tracks.length ? data.tracks.map(toAppTrack) : await searchStoreSongs(trimmed);
 
     return {
-      tracks: data.tracks.map(toAppTrack),
+      tracks,
       artists: data.artists.map((artist) => ({
         id: artist.id,
         name: artist.name,
@@ -191,6 +226,9 @@ export class OctaveMusicService {
    */
   static async resolveTrack(track: MusicTrack): Promise<MusicPlayback | null> {
     const resolved = await resolveUrl(toResolverTrack(track));
+    if (track.previewUrl && track.storeUrl && (!resolved || resolved.url === track.previewUrl)) {
+      return { url: track.previewUrl, sourceUrl: track.previewUrl };
+    }
     if (!resolved?.url) return null;
 
     // An `<audio>` element cannot set a User-Agent, and googlevideo rejects a
