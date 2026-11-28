@@ -1,5 +1,5 @@
 import type { HikiTitle } from './services/hikariExtensions';
-export const APP_VERSION = '2.11.40';
+export const APP_VERSION = '2.11.41';
 
 export type MediaType = 'movie' | 'series';
 export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'video-downloads' | 'dubbing' | 'telegram' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'settings';
