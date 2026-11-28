@@ -9,8 +9,10 @@ export const NOVEL_SOURCES = {
 } as const;
 
 export type NovelSource = keyof typeof NOVEL_SOURCES;
-export type Novel = { title: string; url: string; source: NovelSource; cover?: string; author?: string };
-export type NovelChapter = { title: string; url: string; source: NovelSource };
+/** Ecosystem novels (Sora novel modules) carry `ecoKey` instead of `source`:
+ * their chapters are read through the reading facade, not loadNovelText. */
+export type Novel = { title: string; url: string; source?: NovelSource; ecoKey?: string; cover?: string; author?: string };
+export type NovelChapter = { title: string; url: string; source?: NovelSource; ecoKey?: string };
 
 const standardBookPath = /^\/ebooks\/[\w-]+\/[\w-]+(?:\/[\w-]+)?$/;
 const standardChapterPath = /^\/ebooks\/[\w-]+\/[\w-]+(?:\/[\w-]+)?\/text\/[\w-]+$/;
@@ -124,6 +126,7 @@ export async function loadNovelChapters(novel: Novel, page: number) {
 
 export async function loadNovelText(chapter: NovelChapter): Promise<string[]> {
   const { source } = chapter;
+  if (!source) throw new Error('Invalid chapter.');
   const url = localPath(chapter.url, new URL(NOVEL_SOURCES[source].origin),
     source === 'wanderinginn' ? innChapterPath : source === 'standardebooks' ? standardChapterPath : chapterPath);
   if (!url) throw new Error('Invalid chapter.');

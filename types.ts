@@ -1,7 +1,8 @@
+import type { HikiTitle } from './services/hikariExtensions';
 export const APP_VERSION = '2.11.40';
 
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'video-downloads' | 'dubbing' | 'telegram' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -113,7 +114,8 @@ export interface MediaItem {
   genres: string[];
   runtime?: string;
   maturity?: string;
-  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube' | 'iptv' | 'cloudstream';
+  source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube' | 'iptv' | 'cloudstream'
+    | 'sora' | 'skystream' | 'zangetsu' | 'anymex' | 'telegram' | 'hikari';
   /** Present when the title was resolved through AniCore / Anikura. */
   anime?: AnimeReference;
   addonUrl?: string;
@@ -131,6 +133,7 @@ export interface MediaItem {
    * resolved by asking that extension for links, so the provider name and the
    * playable list travel with the item rather than being looked up again.
    */
+  hikari?: HikiTitle;
   cloudstreamApiName?: string;
   cloudstreamUrl?: string;
   cloudstreamPlayables?: CloudStreamPlayable[];
@@ -508,7 +511,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed' | 'cloudstream';
+  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed' | 'cloudstream' | 'ecosystem' | 'telegram' | 'hikari';
   quality?: string;
   size?: string;
   language?: string;

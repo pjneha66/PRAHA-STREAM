@@ -7,7 +7,7 @@ import {
   enterNativeAndroidPip, isAndroidApp, setImmersiveFullscreen,
 } from '../../services/androidBridge';
 import { mpvAvailable } from '../../services/mpvBridge';
-import { media3Available } from '../../services/media3Bridge';
+import { media3Available, PrahaMedia3 } from '../../services/media3Bridge';
 import {
   createNativeEngine, type NativeEngineHandle, type NativeEngineId, type NativeSnapshot,
 } from '../../services/nativePlayerAdapter';
@@ -1089,6 +1089,22 @@ export function useMpvEngine({
     video.currentTime = clamp(video.currentTime + direction * (1 / 30), 0, video.duration || 0);
   }, []);
 
+  const dubLevelRevision = useRef(0);
+  const setDubDuck = useCallback(async (enabled: boolean, baseVolume: number) => {
+    const revision = ++dubLevelRevision.current;
+    const native = nativeSessionRef.current;
+    if (native) {
+      const cut = native.handle.id === 'media3'
+        ? await PrahaMedia3.setDubDialogueCut({ enabled }).catch(() => ({ works: false }))
+        : { works: false };
+      if (nativeSessionRef.current === native && revision === dubLevelRevision.current) {
+        await native.handle.setVolume(enabled && !cut.works ? baseVolume * 0.27 : baseVolume).catch(() => {});
+      }
+      return;
+    }
+    if (videoRef.current) videoRef.current.volume = clamp(baseVolume * (enabled ? 0.27 : 1) / 100, 0, 1);
+  }, []);
+
   const setVolume = useCallback((percent: number) => {
     const next = clamp(Math.round(percent), 0, 100);
     if (next > 0) lastAudibleVolumeRef.current = next;
@@ -1346,8 +1362,8 @@ export function useMpvEngine({
     play, pause, toggle, seekTo, seekBy, seekToPercent, stepFrame,
     engineLabel,
     /** True while mpv/Media3 draws the picture; the <video> is then a surface. */
-    nativeActive,
-    setVolume, toggleMute, setSpeed, setLevel,
+    nativeActive, nativeEngine: nativeSessionRef.current?.handle.id,
+    setDubDuck, setVolume, toggleMute, setSpeed, setLevel,
     selectAudio, cycleAudio, selectText, cycleText,
     toggleFullscreen, togglePip, promptCast, saveFrame, toggleLoop, retry, recoveryAttempts, recoveryStatus,
   };

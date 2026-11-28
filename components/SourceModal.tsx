@@ -14,6 +14,8 @@ import { findPluginStreamsEverywhere } from '../services/pluginFinder';
 import { buildPluginQuery } from '../services/pluginRuntime';
 import { activeRepos } from '../services/pluginRepositories';
 import * as pluginCatalogs from '../services/pluginCatalogs';
+import { enabledEcosystemExtensions, listEcosystemExtensions } from '../services/ecosystems/store';
+import { findEcosystemStreams } from '../services/ecosystems/streams';
 import { FILM_SOURCES } from '../services/filmSources';
 import { tmdbService } from '../services/tmdbService';
 import { animeService } from '../services/animeService';
@@ -22,6 +24,7 @@ import type {
   SourceError, StreamResult, TmdbEpisodeInfo, TmdbSeasonSummary, ProviderHealth,
 } from '../types';
 import SourcePanel from './SourcePanel';
+import { hikiStreams } from '../services/hikariExtensions';
 
 /**
  * The empty plugin list. It must be one shared array: a `= []` default in the
@@ -96,6 +99,7 @@ const SourceModal: React.FC<{
   const [health, setHealth] = useState<ProviderHealth[]>([]);
   const [errors, setErrors] = useState<SourceError[]>([]);
   const [loading, setLoading] = useState(true);
+  const [settledEpisode, setSettledEpisode] = useState('');
   const [requestKey, setRequestKey] = useState(0);
   const [recovering, setRecovering] = useState(Boolean(retryStream));
   const [refreshedStream, setRefreshedStream] = useState<StreamResult>();
@@ -124,13 +128,15 @@ const SourceModal: React.FC<{
    * Declared once, above the load effect that reads it: a second copy further
    * down the component could drift from this one.
    */
+  const hikariTitle = media.hikari;
+  const extensionName = hikariTitle?.provider.name || media.cloudstreamApiName;
   const extensionOnly = Boolean(
-    media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
+    hikariTitle || media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
   );
 
   // Load real season metadata from AniCore (anime) or TMDB for series
   useEffect(() => {
-    if (media.type !== 'series') return;
+    if (media.type !== 'series' || hikariTitle) return;
     let active = true;
     (async () => {
       if (animeSlug) {
@@ -157,12 +163,20 @@ const SourceModal: React.FC<{
       }
     })();
     return () => { active = false; };
-  }, [media, animeSlug]);
+  }, [media, animeSlug, hikariTitle]);
 
   // Load real episode titles for the active season
   useEffect(() => {
     if (media.type !== 'series') {
       setEpisodes([]);
+      return;
+    }
+    if (hikariTitle) {
+      const list = hikariTitle.episodes.filter((entry) => entry.season === season)
+        .map((entry) => ({ id: entry.number, season: entry.season, episode: entry.number,
+          title: entry.name || `Episode ${entry.number}`, overview: '', still: entry.image }));
+      setEpisodes(list);
+      if (list.length) setEpisode((current) => list.some((item) => item.episode === current) ? current : list[0].episode);
       return;
     }
     if (animeSlug) {
@@ -204,7 +218,7 @@ const SourceModal: React.FC<{
       })
       .catch(() => { if (active) setEpisodes([]); });
     return () => { active = false; };
-  }, [media.type, resolvedTmdbId, season, animeSlug]);
+  }, [media.type, resolvedTmdbId, season, animeSlug, hikariTitle]);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,8 +249,17 @@ const SourceModal: React.FC<{
     const pluginRepos = extensionOnly ? [] : activeRepos(pluginRepositories);
     const pluginJobs = pluginRepos.flatMap((repo) =>
       repo.plugins.map((plugin) => ({ repo, plugin })));
+    const ecosystemRows = extensionOnly ? [] : listEcosystemExtensions()
+      .filter((entry) => entry.enabled)
+      .map((entry) => ({
+        id: `eco:${entry.key}`,
+        name: `${entry.name} (${entry.ecosystem === 'sora' ? 'Sora' : entry.ecosystem === 'skystream' ? 'SkyStream' : entry.ecosystem === 'zangetsu' ? 'Zangetsu' : 'AnymeX'})`,
+        status: 'searching' as const,
+      }));
+    const ownEcosystem = ecosystemRows.find((row) => row.id === `eco:${media.providerId}`);
     setHealth(extensionOnly
-      ? [{ id: `cloudstream:${media.cloudstreamApiName}`, name: `${media.cloudstreamApiName} (CloudStream)`, status: 'searching' as const }]
+      ? [{ id: hikariTitle ? `hiki:${hikariTitle.provider.key}` : `cloudstream:${media.cloudstreamApiName}`,
+          name: `${extensionName} (${hikariTitle ? 'Hikari' : 'CloudStream'})`, status: 'searching' as const }]
       : [
           // Counted from the source list itself: the literal said 39 while the
           // list had grown to 41, so the health row under-reported the work.
@@ -245,6 +268,8 @@ const SourceModal: React.FC<{
           ...enabledAddons.map((addon) => ({ id: `stremio:${addon.manifestUrl}`, name: addon.manifest.name, status: 'searching' as const })),
           ...scrapers.map(({ repo, scraper }) => ({ id: `nuvio:${scraper.id}`, name: `${repo.name} · ${scraper.name}`, status: 'searching' as const })),
           ...pluginJobs.map(({ repo, plugin }) => ({ id: `plugin:${repo.url}:${plugin.id}`, name: `${repo.name} · ${plugin.name}`, status: 'searching' as const })),
+          // A title from one ecosystem extension is asked of that one alone.
+          ...(ownEcosystem ? [ownEcosystem] : ecosystemRows),
         ]);
     const updateHealth = (id: string, patch: Partial<ProviderHealth>) => {
       if (!cancelled) setHealth((current) => current.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
@@ -435,6 +460,27 @@ const SourceModal: React.FC<{
             return { streams, errors: [] };
           }, publish);
         })();
+        // Stage 1.5 — the extension ecosystems (Sora, SkyStream, Zangetsu,
+        // AnymeX). Each installed extension is its own provider row, asked the
+        // same way: search the title, resolve the episode, list the links. A
+        // title that came from one of them is asked of that extension alone.
+        const ecosystemJob = extensionOnly ? Promise.resolve() : (async () => {
+          const all = listEcosystemExtensions().filter((entry) => entry.enabled);
+          if (!all.length) return;
+          // One of this extension's own titles: that extension alone, by its id.
+          const ownKey = all.find((entry) => media.source === entry.ecosystem && media.providerId === entry.key);
+          const asked = ownKey ? [ownKey] : all;
+          return Promise.all(asked.map((extension) => runProvider(`eco:${extension.key}`, async () => {
+            const streams = await findEcosystemStreams(extension, {
+              title: media.title,
+              year: media.year ? Number(media.year) || null : null,
+              ownId: ownKey ? media.providerMediaId ?? undefined : undefined,
+              season: media.type === 'series' ? s ?? null : null,
+              episode: media.type === 'series' ? ep ?? null : null,
+            });
+            return { streams, errors: [] };
+          }, publish)));
+        })();
         // Stage 2 — the JavaScript plugins of every installed repository. They
         // report the same way VyseTV's do: each one publishes the moment it
         // lands, so a slow plugin (they run 3–8 at a time) holds nothing up.
@@ -491,7 +537,15 @@ const SourceModal: React.FC<{
             }
           }
         })();
-        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, pluginJob, cloudstreamJob];
+        const hikariJob = hikariTitle ? runProvider(`hiki:${hikariTitle.provider.key}`, async () => {
+          try {
+            return { streams: await hikiStreams(hikariTitle, s, ep), errors: [] };
+          } catch (error) {
+            return { streams: [], errors: [{ sourceName: hikariTitle.provider.name,
+              message: error instanceof Error ? error.message : 'Hikari could not load the streams.' }] };
+          }
+        }, publish) : Promise.resolve();
+        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, pluginJob, cloudstreamJob, ecosystemJob, hikariJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);
@@ -500,9 +554,11 @@ const SourceModal: React.FC<{
         if (!cancelled) {
           clearLoading();
           setRecovering(false);
+          setSettledEpisode(`${media.id}|${season ?? 1}|${episode ?? 1}`);
         }
       }
     };
+    setSettledEpisode('');
     void load();
     return () => { cancelled = true; controller.abort(); };
   }, [media, season, episode, requestKey, addons, repositories, pluginRepositories, nuvioSettings, retryStream]);
@@ -545,6 +601,7 @@ const SourceModal: React.FC<{
           media={media}
           streams={streams}
           loading={loading}
+          settledEpisode={settledEpisode}
           errors={errors}
           health={health}
           preferredSource={preferredSource}
@@ -560,7 +617,7 @@ const SourceModal: React.FC<{
           providerCount={providerCount}
           preferredLanguage={preferredLanguage}
           sourceSummary={extensionOnly
-            ? `${media.cloudstreamApiName} extension`
+            ? `${extensionName} extension`
             : `${providerCount} provider${providerCount === 1 ? '' : 's'}`}
           onPlay={(stream, alternatives) => {
             stopRecovery();

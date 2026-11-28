@@ -18,6 +18,7 @@ export interface AudioSubtitleDialogProps {
   currentText: string;
   onSelectText: (id: string) => void;
   onLoadSubtitleFile: () => void;
+  onOpenDubbing?: () => void;
   settings: PlayerSettings;
   onSettingsChange: (patch: Partial<PlayerSettings>) => void;
   isAndroid?: boolean;
@@ -55,6 +56,7 @@ export const AudioSubtitleDialog: React.FC<AudioSubtitleDialogProps> = ({
   currentText,
   onSelectText,
   onLoadSubtitleFile,
+  onOpenDubbing,
   settings,
   onSettingsChange,
   isAndroid = false,
@@ -225,6 +227,10 @@ export const AudioSubtitleDialog: React.FC<AudioSubtitleDialogProps> = ({
                   <span>Load Subtitle File</span>
                 </button>
               </div>
+
+              {onOpenDubbing && <button type="button" className="button button-secondary" onClick={onOpenDubbing}>
+                AI Dubbing
+              </button>}
 
               {/* Embedded Subtitles Group */}
               {embeddedSubs.length > 0 && (

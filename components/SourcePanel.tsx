@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { matchBadgeRule } from '../services/badgeRules';
-import { downloadStreamFile } from '../services/androidBridge';
+import { bridgeRpcAvailable } from '../services/androidBridge';
+import { canDownloadVideo, matchEpisodeDownload, planVideoDownload, queueVideoDownloads, type VideoDownloadPlan } from '../services/videoDownloads';
 import { copyText } from '../services/clipboard';
 import {
   ArrowDownToLine, Blocks, Check, ChevronDown, CircleAlert, Copy, Film, HardDrive,
@@ -64,6 +65,7 @@ interface SourcePanelProps {
   media: MediaItem;
   streams: StreamResult[];
   loading: boolean;
+  settledEpisode?: string;
   errors: SourceError[];
   health?: ProviderHealth[];
   preferredSource?: string;
@@ -91,13 +93,41 @@ interface SourcePanelProps {
 }
 
 const SourcePanel: React.FC<SourcePanelProps> = ({
-  media, streams, loading, errors, season, episode, seasons, episodes,
+  media, streams, loading, settledEpisode, errors, season, episode, seasons, episodes,
   onSeasonChange, onEpisodeChange, onRefresh, providerCount, preferredLanguage,
   onPlay, onOpenExtensions, showClose, onClose, health = [], preferredSource = '', onPreferredSourceChange,
   sourceSummary, lastSource,
 }) => {
   const [quality, setQuality] = useState('all');
   const [downloadHint, setDownloadHint] = useState('');
+  const [batch, setBatch] = useState<Record<string, VideoDownloadPlan>>({});
+  const [queueing, setQueueing] = useState(false);
+  const [exportBatch, setExportBatch] = useState(false);
+  const [range, setRange] = useState<{ season: number; pending: number[]; anchor: StreamResult; skipped: number } | null>(null);
+  const episodeKey = `${media.id}|${season ?? 1}|${episode ?? 1}`;
+  const selectedEpisodes = Object.values<VideoDownloadPlan>(batch);
+  const queuedCount = selectedEpisodes.length;
+  const matchingStream = selectedEpisodes[0] && !batch[episodeKey]
+    ? matchEpisodeDownload(streams, selectedEpisodes[0].stream)
+    : undefined;
+
+  async function enqueue(plans: VideoDownloadPlan[], clearBatch = false) {
+    setQueueing(true);
+    try {
+      const requested = plans.map((plan) => ({ ...plan, export: exportBatch }));
+      const remaining = await queueVideoDownloads(requested);
+      const count = plans.length - remaining.length;
+      if (clearBatch) {
+        const failed = new Set(plans.filter((_, index) => remaining.includes(requested[index])));
+        setBatch((current: Record<string, VideoDownloadPlan>) => Object.fromEntries(Object.entries(current).filter(([, plan]) => failed.has(plan))));
+      }
+      setDownloadHint(`${count} of ${plans.length} added to Video Downloads.`);
+    } catch {
+      setDownloadHint('Could not add all videos to the download queue.');
+    } finally {
+      setQueueing(false);
+    }
+  }
   const [provider, setProvider] = useState('all');
   const [language, setLanguage] = useState('all');
   const [codec, setCodec] = useState('all');
@@ -139,6 +169,40 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
     const count = matchingSeason?.episodeCount || 24;
     return Array.from({ length: count }, (_, idx) => ({ value: idx + 1, label: `Episode ${idx + 1}` }));
   }, [episodes, seasons, season]);
+
+  const knownEpisodes = episodes?.length
+    ? episodes.map((item) => item.episode)
+    : Array.from({ length: seasons?.find((item) => item.seasonNumber === (season ?? 1))?.episodeCount ?? 0 }, (_, index) => index + 1);
+
+  function findRemainingEpisodes() {
+    const currentSeason = season ?? 1;
+    const pending = knownEpisodes.filter((number) => number > (episode ?? 1) && !batch[`${media.id}|${currentSeason}|${number}`]);
+    if (!pending.length || !selectedEpisodes[0] || !onEpisodeChange) return;
+    setRange({ season: currentSeason, pending, anchor: selectedEpisodes[0].stream, skipped: 0 });
+    onEpisodeChange(pending[0]);
+  }
+
+  useEffect(() => {
+    if (!range) return;
+    if ((season ?? 1) !== range.season || episode !== range.pending[0]) {
+      setRange(null);
+      return;
+    }
+    if (settledEpisode !== episodeKey) return;
+    const match = matchEpisodeDownload(streams, range.anchor);
+    if (match) {
+      setBatch((current) => ({ ...current, [episodeKey]: planVideoDownload(media, match, range.season, episode) }));
+    }
+    const remaining = range.pending.slice(1);
+    const skipped = range.skipped + (match ? 0 : 1);
+    if (remaining.length) {
+      setRange({ ...range, pending: remaining, skipped });
+      onEpisodeChange?.(remaining[0]);
+    } else {
+      setRange(null);
+      setDownloadHint(skipped ? `${skipped} episodes had no matching source. Review the batch before queuing.` : 'Episode sources are ready. Review the batch before queuing.');
+    }
+  }, [episode, episodeKey, media, onEpisodeChange, range, season, settledEpisode, streams]);
 
   const checkedProviders = health.filter((item) => item.status !== 'searching').length;
   // How many providers are actually still running. This used to print the total
@@ -217,7 +281,22 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
       {health.length > 0 && <details className="source-health"><summary>Provider health · {checkedProviders}/{health.length} checked</summary>
         <ul>{health.map((item) => <li key={item.id}><strong>{item.name}</strong><span className={`health-${item.status}`}>{item.status === 'searching' ? 'Searching…' : item.status === 'ready' ? `${item.count} found` : item.status === 'empty' ? 'No streams' : item.status === 'unsupported' ? 'Not supported' : 'Failed'}{item.message ? ` · ${item.message}` : ''}</span></li>)}</ul>
       </details>}
-      {downloadHint && <p className="download-hint">{downloadHint}</p>}
+      {queuedCount > 0 && <div className="source-toolbar">
+        <button className="button button-primary" disabled={queueing || Boolean(range)} onClick={() => void enqueue(selectedEpisodes, true)}>
+          Queue {queuedCount} {queuedCount === 1 ? 'episode' : 'episodes'}
+        </button>
+        {matchingStream && <button className="button button-secondary" disabled={queueing}
+          onClick={() => setBatch((current) => ({ ...current, [episodeKey]: planVideoDownload(media, matchingStream, season, episode) }))}>
+          Add matching source
+        </button>}
+        {settledEpisode !== undefined && knownEpisodes.some((number) => number > (episode ?? 1)) && !range &&
+          <button className="button button-secondary" disabled={queueing} onClick={findRemainingEpisodes}>Find rest of season</button>}
+        {range && <button className="button button-secondary" onClick={() => setRange(null)}>Stop finding sources</button>}
+        <button className="button button-secondary" disabled={queueing || Boolean(range)} onClick={() => setBatch({})}>Clear selection</button>
+        <label><input type="checkbox" checked={exportBatch} onChange={(event) => setExportBatch(event.target.checked)} /> Save to Downloads</label>
+        {range ? <span role="status">Finding sources for episode {range.pending[0]}.</span> : <span>Select another episode to add it to this batch.</span>}
+      </div>}
+      {downloadHint && <p className="download-hint" role="status">{downloadHint}</p>}
       <div className="stream-list">
         {filtered.map((stream) => {
           const badges = parseStreamBadges(stream);
@@ -257,20 +336,20 @@ const SourcePanel: React.FC<SourcePanelProps> = ({
               </div>
               <div className="stream-actions">
                 {onPreferredSourceChange && <button className="icon-button" onClick={() => onPreferredSourceChange(sourceKey(stream) === preferredSource ? '' : sourceKey(stream))} aria-label={sourceKey(stream) === preferredSource ? `Remove ${stream.sourceName} preference` : `Prefer ${stream.sourceName}`} aria-pressed={sourceKey(stream) === preferredSource} title={sourceKey(stream) === preferredSource ? 'Preferred provider' : 'Prefer this provider'}><Star size={16} fill={sourceKey(stream) === preferredSource ? 'currentColor' : 'none'} /></button>}
-                <button
-                  className="icon-button"
-                  title="Download to device"
-                  aria-label={`Download ${stream.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void downloadStreamFile(stream.url || '', stream.title || 'PRAHA download', stream.headers || {}).then((id) => {
-                      setDownloadHint(id ? 'Download started — see the notification shade.' : 'This stream can\'t be downloaded directly.');
-                      window.setTimeout(() => setDownloadHint(''), 3500);
-                    });
-                  }}
-                >
-                  <ArrowDownToLine size={16} />
-                </button>
+                {bridgeRpcAvailable() && canDownloadVideo(stream) && <>
+                  <button className="icon-button" title="Download to device" aria-label={`Download ${stream.title}`} disabled={queueing}
+                    onClick={() => void enqueue([planVideoDownload(media, stream, season, episode)])}>
+                    <ArrowDownToLine size={16} />
+                  </button>
+                  {media.type === 'series' && <button className="button button-secondary button-small" disabled={queueing}
+                    aria-pressed={batch[episodeKey]?.stream.id === stream.id}
+                    onClick={() => setBatch((current) => {
+                      const next = { ...current };
+                      if (next[episodeKey]?.stream.id === stream.id) delete next[episodeKey];
+                      else next[episodeKey] = planVideoDownload(media, stream, season, episode);
+                      return next;
+                    })}>{batch[episodeKey]?.stream.id === stream.id ? 'Selected' : 'Add to batch'}</button>}
+                </>}
                 <button className="icon-button" onClick={() => copyStream(stream)} aria-label="Copy stream URL">{copied === stream.id ? <Check size={16} /> : <Copy size={16} />}</button>
                 <button className="button button-small button-primary stream-play-cta" onClick={() => play(stream)}>{stream.url.startsWith('magnet:') ? 'Open' : 'Play'}<Play size={14} fill="currentColor" /></button>
               </div>

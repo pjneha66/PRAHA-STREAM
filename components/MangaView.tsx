@@ -14,10 +14,17 @@ import ReadingSourceDirectory from './ReadingSourceDirectory';
 import type { SankaTitle } from '../services/sankaService';
 import { twokindsCatalog, twokindsDetail, twokindsPages } from '../services/twokindsService';
 import type { NsfwMode } from '../types';
+import {
+  ecoMangaCatalog, ecoMangaChapters, ecoMangaDetail, ecoMangaPages,
+  extensionForItemId, installedReadingExtensions,
+} from '../services/ecosystems/reading';
+import type { EcosystemExtension } from '../services/ecosystems/store';
 import './manga-view.css';
 
 interface MangaViewProps extends ReadingLibraryProps {
   prefillQuery?: string;
+  extensionOnly?: boolean;
+  heading?: 'Manga' | 'Comics';
   adultMode?: NsfwMode;
   onAdultMode?: (mode: NsfwMode) => void;
 }
@@ -36,20 +43,29 @@ function catalogManga(item: SankaTitle): MangaItem {
 }
 
 const MangaView: React.FC<MangaViewProps> = (props) => {
-  const [source, setSource] = useState<MangaSource>(props.openReading?.kind === 'manga' ? props.openReading.source : 'WeebCentral');
+  const [source, setSource] = useState<MangaSource>(props.extensionOnly ? 'Extensions' : props.openReading?.kind === 'manga' ? props.openReading.source : 'WeebCentral');
   const [fromLibrary, setFromLibrary] = useState(Boolean(props.openReading));
   return <MangaCatalog key={source} {...props} openReading={fromLibrary ? props.openReading : null} source={source}
     onSourceChange={(next) => { if (next !== source) { setFromLibrary(false); setSource(next); } }} />;
 };
 
 const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceChange: (source: MangaSource) => void }> = ({
-  prefillQuery, source, onSourceChange, adultMode, onAdultMode, ...readingLibrary
+  prefillQuery, source, onSourceChange, adultMode, onAdultMode, extensionOnly, heading: pageHeading = 'Manga', ...readingLibrary
 }) => {
   const [query, setQuery] = useState(prefillQuery || '');
   const [submitted, setSubmitted] = useState(prefillQuery || '');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<MangaItem[]>([]);
   const [kotatsuProvider, setKotatsuProvider] = useState<KotatsuProvider>('all');
+  // The installed ecosystem extension the Extensions source browses. An item's
+  // own id is `<extension key>:<own id>`, so a saved library entry resolves its
+  // extension from the id alone.
+  const ecoExtensions = useMemo(() => installedReadingExtensions('manga', adultMode), [adultMode]);
+  const [ecoKey, setEcoKey] = useState('');
+  const ecoExtension: EcosystemExtension | null =
+    source === 'Extensions'
+      ? (ecoExtensions.find((entry) => entry.key === ecoKey) ?? ecoExtensions[0] ?? null)
+      : null;
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -83,6 +99,11 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
       } else if (source === 'MangaDex') {
         const catalog = await mangaDexCatalog(submitted, nextPage, 'popular', undefined, 'en');
         result = catalog.items.map(catalogManga);
+        more = catalog.hasMore;
+      } else if (source === 'Extensions') {
+        if (!ecoExtension) throw new Error('No manga extensions installed.');
+        const catalog = await ecoMangaCatalog(ecoExtension, submitted, nextPage);
+        result = catalog.items;
         more = catalog.hasMore;
       } else {
         const enabled = (id: KotatsuProvider) => kotatsuProvider === 'all' || kotatsuProvider === id;
@@ -140,12 +161,12 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     } finally {
       if (request === pageRequest.current) setLoading(false);
     }
-  }, [submitted, page, source, adultMode, kotatsuProvider]);
+  }, [submitted, page, source, adultMode, kotatsuProvider, ecoExtension]);
 
   useEffect(() => {
     void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitted, adultMode, kotatsuProvider]);
+  }, [submitted, adultMode, kotatsuProvider, ecoExtension]);
 
   useEffect(() => {
     if (prefillQuery) {
@@ -169,8 +190,19 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     setChaptersLoading(true);
     const ascending = (a: MangaChapter, b: MangaChapter) => compareChapters(a.name, b.name, a.chapterNumber, b.chapterNumber);
     try {
-      const provider = source === 'Kotatsu' ? extraKotatsuProvider(item.kotatsuProvider) : undefined;
-      if (provider) {
+      const eco = source === 'Extensions' ? extensionForItemId(item.id, 'manga', adultMode) : null;
+      if (source === 'Extensions') {
+        if (!eco) throw new Error('This manga extension is unavailable.');
+        const [filled, list] = await Promise.all([
+          ecoMangaDetail(eco, item).catch(() => item),
+          ecoMangaChapters(eco, item),
+        ]);
+        if (request !== detailRequest.current) return;
+        setDetail(filled);
+        if (!list.length) throw new Error('This title has no chapters on this extension.');
+        setChapters(list.sort(ascending));
+      } else if (source === 'Kotatsu' && extraKotatsuProvider(item.kotatsuProvider)) {
+        const provider = extraKotatsuProvider(item.kotatsuProvider)!;
         if (adultMode === 'only') throw new Error('This provider is hidden in Hentai only mode.');
         const list = await provider.chapters(item, adultMode ?? 'off');
         if (request === detailRequest.current) setChapters(list.sort(ascending));
@@ -215,8 +247,13 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
     setReaderLoading(true);
     try {
       let images: string[];
+      const eco = source === 'Extensions' ? extensionForItemId(detail?.id, 'manga', adultMode) : null;
       const provider = source === 'Kotatsu' ? extraKotatsuProvider(detail?.kotatsuProvider) : undefined;
-      if (provider) images = await provider.pages(chapter);
+      if (source === 'Extensions') {
+        if (!eco || !detail) throw new Error('This manga extension is unavailable.');
+        images = await ecoMangaPages(eco, detail, chapter);
+      }
+      else if (provider) images = await provider.pages(chapter);
       else if (source === 'Kotatsu' && detail?.kotatsuProvider === 'webtoons') images = await webtoonsPages(chapter);
       else if (source === 'Kotatsu' && detail?.id === 'twokinds') images = await twokindsPages(chapter.id);
       else if (source === 'MangaDex') images = await mangaDexPages(chapter.id);
@@ -271,7 +308,7 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
 
   return (
     <div className="standard-page manga-page page-enter reading-page">
-      <h1 className="reading-heading">Manga</h1>
+      <h1 className="reading-heading">{pageHeading}</h1>
       <form
         className="manga-search reading-search"
         onSubmit={(event) => {
@@ -283,8 +320,8 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search manga"
-          aria-label="Search manga"
+          placeholder={`Search ${pageHeading.toLowerCase()}`}
+          aria-label={`Search ${pageHeading.toLowerCase()}`}
         />
         {query && (
           <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setSubmitted(''); }}>
@@ -295,10 +332,16 @@ const MangaCatalog: React.FC<MangaViewProps & { source: MangaSource; onSourceCha
       </form>
 
       <div className="reading-controls">
-        <select className="reading-select" aria-label="Manga source" value={source}
+        {!extensionOnly && <select className="reading-select" aria-label="Manga source" value={source}
           onChange={(event) => onSourceChange(event.target.value as MangaSource)}>
-          {(['WeebCentral', 'MangaDex', 'Kotatsu'] as const).map((name) => <option key={name}>{name}</option>)}
-        </select>
+          {(['WeebCentral', 'MangaDex', 'Kotatsu', ...(ecoExtensions.length ? ['Extensions'] as const : [])] as const).map((name) => <option key={name}>{name}</option>)}
+        </select>}
+        {source === 'Extensions' && (
+          <select className="reading-select" aria-label="Extension source" value={ecoExtension?.key ?? ''}
+            onChange={(event) => setEcoKey(event.target.value)}>
+            {ecoExtensions.map((entry) => <option key={entry.key} value={entry.key}>{entry.name}</option>)}
+          </select>
+        )}
         {source === 'Kotatsu' && (
           <select className="reading-select" aria-label="Kotatsu providers" value={kotatsuProvider}
             onChange={(event) => selectProvider(event.target.value as KotatsuProvider)}>

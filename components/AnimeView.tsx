@@ -9,6 +9,7 @@ import type { AnikuraComment } from '../services/animeService';
 import type { ImdxSettings, MediaItem } from '../types';
 import { Artwork, MediaCard, MediaRow } from './MediaCard';
 import AnimeDiscussion from './AnimeDiscussion';
+import AnimeExtensionRows from './AnimeExtensionRows';
 
 type FormatFilter = 'ALL' | (typeof ANIME_FORMATS)[number];
 type SortOption = 'trending' | 'score' | 'newest' | 'popularity';
@@ -497,6 +498,8 @@ const AnimeView: React.FC<{
           compact={compact}
         />
       )}
+
+      <AnimeExtensionRows watchlist={watchlist} compact={compact} onSelect={onSelect} onToggleWatchlist={onToggleWatchlist} />
 
       <section className="anime-browse">
         <div className="section-heading">

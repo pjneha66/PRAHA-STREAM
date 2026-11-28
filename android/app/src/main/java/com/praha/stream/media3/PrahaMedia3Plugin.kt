@@ -24,6 +24,10 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cronet.CronetDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import com.praha.stream.dub.DubVoiceCut
+import com.praha.stream.dub.VoiceCutProcessor
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.CaptionStyleCompat
@@ -143,7 +147,13 @@ class PrahaMedia3Plugin : Plugin() {
             (cronetFactory ?: httpFactory) as androidx.media3.datasource.DataSource.Factory,
         )
 
-        val renderers = DefaultRenderersFactory(context)
+        val renderers = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                DefaultAudioSink.Builder(context)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(VoiceCutProcessor()))
+                    .build()
+        }
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
@@ -232,6 +242,8 @@ class PrahaMedia3Plugin : Plugin() {
     }
 
     private fun releasePlayer() {
+        DubVoiceCut.target = 0f
+        DubVoiceCut.works = false
         progressHandler.removeCallbacks(progressUpdate)
         try {
             player?.release()
@@ -523,6 +535,14 @@ class PrahaMedia3Plugin : Plugin() {
             }
             call.resolve()
         }
+    }
+
+    @PluginMethod
+    fun setDubDialogueCut(call: PluginCall) {
+        val enabled = call.getBoolean("enabled") == true
+        val works = DubVoiceCut.works && player != null
+        DubVoiceCut.target = if (enabled && works) 0.94f else 0f
+        call.resolve(JSObject().put("works", works))
     }
 
     @PluginMethod

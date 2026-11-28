@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FileProvider is only used to hand the downloaded self-update APK to the
+  FileProvider hands the downloaded self-update APK to the
   package installer (MainActivity.downloadAndInstallUpdate). The previous
   `<external-path path=".">`, `<cache-path path=".">` and
   `<external-files-path path=".">` entries exposed the whole external storage
   and cache to any granted URI (audit M-20).
 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="praha_videos" path="video_downloads/" />
     <external-files-path name="praha_update" path="Download/" />
 </paths>

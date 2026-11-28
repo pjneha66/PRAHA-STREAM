@@ -26,6 +26,7 @@ import {
   type PluginQuery,
   type PluginStream,
 } from './jsPlugins';
+import { getTmdbApiKey } from './tmdbConfig';
 import type { StreamResult } from '../types';
 
 /** VyseTV's `_runTimeout`: 25 s for the whole run, network included. */
@@ -44,10 +45,14 @@ interface PluginJobMessage {
   type: 'plugin-run';
   code: string;
   query: Record<string, unknown>;
-  kind: 'plugin' | 'scraper' | 'vega';
+  kind: 'plugin' | 'scraper' | 'vega' | 'ecosystem';
   name?: string;
   /** Ask this global instead of `getStreams` — a catalog page, a title's details. */
   entry?: string;
+  /** Positional entry arguments (ecosystem extensions are called positionally). */
+  args?: unknown[];
+  /** Whole-run budget; ecosystem calls carry their reference runtime's budgets. */
+  timeoutMs?: number;
 }
 
 /** What the worker answers when the run finishes. */
@@ -77,6 +82,16 @@ interface PluginHttpMessage {
   headers: Record<string, string>;
   body?: string;
   timeout?: number;
+}
+
+/** An extension preference read/write, answered from the app frame. */
+interface EcoPrefsMessage {
+  type: 'eco-prefs';
+  op: 'get' | 'set';
+  reqId: string;
+  storeKey: string;
+  key: string;
+  value?: string;
 }
 
 /**
@@ -115,7 +130,7 @@ export function buildPluginQuery(input: {
 /** The script text a plugin's kind needs, composed from its modules. */
 export interface ComposedPlugin {
   code: string;
-  kind: 'plugin' | 'scraper' | 'vega';
+  kind: 'plugin' | 'scraper' | 'vega' | 'ecosystem';
 }
 
 /**
@@ -167,12 +182,74 @@ export function runPluginEntry(
 }
 
 /** The worker plumbing both asks share. */
+/** The worker realm never holds the real TMDB key: request strings carrying the
+ * placeholder are rewritten here, in the app frame (audit H-open), the way the
+ * Nuvio scraper proxy rewrites its own proxied requests. */
+const TMDB_KEY_PLACEHOLDER = '__PRAHA_TMDB__';
+
+/** Where an extension's preferences live: `<storeKey>` → `{key: value}`. */
+const PREFS_STORE_KEY = 'praha.ecosystems.prefs.v1';
+
+function readPrefsStore(): Record<string, Record<string, string>> {
+  try {
+    const raw = localStorage.getItem(PREFS_STORE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, Record<string, string>>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** One extension's stored preferences, as the settings UI reads them. */
+export function readEcosystemPrefs(storeKey: string): Record<string, string> {
+  return { ...(readPrefsStore()[storeKey] ?? {}) };
+}
+
+/** Writes one preference (empty removes it), the way the worker's round trip does. */
+export function writeEcosystemPref(storeKey: string, key: string, value: string): void {
+  ecoPrefOp('set', storeKey, key, value);
+}
+
+function ecoPrefOp(op: string, storeKey: string, key: string, value?: string): string | null {
+  const store = readPrefsStore();
+  const bucket = store[storeKey] ?? (store[storeKey] = {});
+  if (op === 'set') {
+    if (value == null || value === '') delete bucket[key];
+    else bucket[key] = value;
+    try {
+      localStorage.setItem(PREFS_STORE_KEY, JSON.stringify(store));
+    } catch { /* storage full: the preference just does not survive a reload */ }
+    return null;
+  }
+  return bucket[key] ?? null;
+}
+
+function restoreTmdbKey(value: unknown): string {
+  const raw = typeof value === 'string' ? value : '';
+  if (!raw.includes(TMDB_KEY_PLACEHOLDER)) return raw;
+  return raw.split(TMDB_KEY_PLACEHOLDER).join(getTmdbApiKey() || '');
+}
+
+function restoreTmdbKeyInHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  if (!headers) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) out[key] = restoreTmdbKey(value);
+  return out;
+}
+
+/** Extra options an ecosystem call passes through to the worker. */
+interface RunJobOptions {
+  args?: unknown[];
+  timeoutMs?: number;
+}
+
 function runJob(
-  plugin: PluginEntry,
+  plugin: Pick<PluginEntry, 'name'>,
   composed: ComposedPlugin,
   query: Record<string, unknown>,
   entry: string | undefined,
   settle: (done: PluginDoneMessage, log: string[]) => void,
+  options: RunJobOptions = {},
 ): void {
   let worker: Worker;
   try {
@@ -194,21 +271,32 @@ function runJob(
     settle(done, log);
   };
 
+  const budget = options.timeoutMs ?? RUN_TIMEOUT_MS;
   const timer = globalThis.setTimeout(() => {
-    finish({ type: 'plugin-done', ok: false, error: 'The plugin timed out after 25 seconds.' }, []);
-  }, RUN_TIMEOUT_MS);
+    finish({ type: 'plugin-done', ok: false, error: `The plugin timed out after ${Math.round(budget / 1000)} seconds.` }, []);
+  }, budget);
 
   worker.onmessage = async (event: MessageEvent) => {
-    const message = event.data as PluginHttpMessage | PluginDoneMessage | undefined;
+    const message = event.data as PluginHttpMessage | PluginDoneMessage | EcoPrefsMessage | undefined;
     if (!message || typeof message !== 'object') return;
+
+    if ((message as EcoPrefsMessage).type === 'eco-prefs') {
+      const request = message as EcoPrefsMessage;
+      const value = ecoPrefOp(request.op, request.storeKey, request.key, request.value);
+      worker.postMessage({ type: 'eco-prefs-response', reqId: request.reqId, value });
+      return;
+    }
 
     if ((message as PluginHttpMessage).type === 'plugin-http') {
       const request = message as PluginHttpMessage;
       // The transport never throws; a blocked address is an ordinary answer.
-      const answer = await pluginFetch(request.url, {
+      // The worker realm never holds the real TMDB key: ecosystem preludes put
+      // the `__PRAHA_TMDB__` placeholder into the query and it is rewritten
+      // here, the same way the Nuvio scraper proxy rewrites it (audit H-open).
+      const answer = await pluginFetch(restoreTmdbKey(request.url), {
         method: request.method,
-        headers: request.headers,
-        body: request.body,
+        headers: restoreTmdbKeyInHeaders(request.headers),
+        body: restoreTmdbKey(request.body),
         timeout: request.timeout,
       }).catch((error: unknown) => ({
         status: 0,
@@ -238,8 +326,58 @@ function runJob(
     kind: composed.kind,
     name: plugin.name,
     entry,
+    ...(options.args ? { args: options.args } : {}),
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
   };
   worker.postMessage(job);
+}
+
+/**
+ * Calls one named function of an ecosystem extension (Sora module, SkyStream
+ * plugin, Zangetsu provider, AnymeX extension) and answers the same
+ * `{"ok", data|error}` envelope its reference runtime parses:
+ *
+ *   - the function ran → `{ ok: true, data }` (a missing answer is `data: null`);
+ *   - it threw, or the run timed out → `{ ok: false, error }`.
+ *
+ * `code` is the composed script — the ecosystem's prelude plus the extension's
+ * own source — and the function is reached by its global name, called
+ * positionally with `args` exactly as the reference runtime calls it.
+ */
+export function runEcosystemCall(
+  extension: { name: string },
+  code: string,
+  fnName: string,
+  args: unknown[],
+  options: { timeoutMs?: number; /** The entry builds its own `{ok, data|error}` envelope (SkyStream). */ envelope?: boolean } = {},
+): Promise<{ ok: boolean; data?: unknown; log: string[]; error?: string }> {
+  return new Promise((resolve) => {
+    runJob(
+      extension,
+      { code, kind: 'ecosystem' },
+      {},
+      fnName,
+      (done, log) => {
+        if (!done.ok) {
+          resolve({ ok: false, log, error: done.error || 'The extension failed.' });
+          return;
+        }
+        const value = done.value ?? null;
+        if (options.envelope && value && typeof value === 'object' && typeof (value as Record<string, unknown>).ok === 'boolean') {
+          const envelope = value as Record<string, unknown>;
+          resolve({
+            ok: envelope.ok === true,
+            data: envelope.ok === true ? envelope.data ?? null : null,
+            error: envelope.ok === true ? undefined : String(envelope.error ?? 'The extension failed.'),
+            log,
+          });
+          return;
+        }
+        resolve({ ok: true, data: value, log });
+      },
+      { args, timeoutMs: options.timeoutMs },
+    );
+  });
 }
 
 /** The lines a plugin printed, for the plugin log the user can read. */

@@ -1,6 +1,10 @@
 package com.praha.stream;
 
 import android.app.DownloadManager;
+import com.praha.stream.download.DownloadBridge;
+import com.praha.stream.dub.GoogleDubVoice;
+import com.praha.stream.dub.PiperDubVoice;
+import com.praha.stream.telegram.TelegramAccountBridge;
 import android.app.PictureInPictureParams;
 import android.app.UiModeManager;
 import android.content.BroadcastReceiver;
@@ -62,7 +66,9 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
+public class MainActivity extends com.hikari.app.MainActivity {
+    private final VideoDownloads videoDownloads = new VideoDownloads(this);
+    private DubSpeech dubSpeech;
     private final PrahaStreamProxy streamProxy = new PrahaStreamProxy();
     // The full bridge instance used for RPC dispatch on the origin-gated path.
     // It is intentionally NOT injected into JavaScript on that path; only the
@@ -178,7 +184,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
     }
 
     /** This device, its network, and the addresses that only exist inside one. */
-    static boolean isPrivateAddress(InetAddress address) {
+    public static boolean isPrivateAddress(InetAddress address) {
         if (address == null) return true;
         if (address.isAnyLocalAddress() || address.isLoopbackAddress()
                 || address.isLinkLocalAddress() || address.isSiteLocalAddress()
@@ -233,6 +239,7 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         // waits for it before calling a plugin's load(). Set before anything can
         // ask for it, and before the WebView is configured.
         com.lagradost.cloudstream3.CommonActivity.INSTANCE.setActivity(this);
+        com.hikari.app.HikariApp.Companion.setMainActivity(this);
         // An extension calling AppContextUtils.loadResult (open a title page)
         // navigates the web layer instead of an Android screen.
         com.lagradost.cloudstream3.utils.AppContextUtils.INSTANCE.setOpenDetails(
@@ -385,6 +392,10 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
 
     @Override
     public void onDestroy() {
+        if (com.hikari.app.HikariApp.Companion.getMainActivity() == this) {
+            com.hikari.app.HikariApp.Companion.setMainActivity(null);
+        }
+        if (dubSpeech != null) dubSpeech.release();
         moctaleMeter.cancel(null);
         // Do not leave extensions holding a destroyed activity.
         if (com.lagradost.cloudstream3.CommonActivity.INSTANCE.getActivity() == this) {
@@ -444,8 +455,8 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
         };
 
         // Network-bound calls must not occupy the WebView bridge thread.
-        if ("httpRequest".equals(fMethod) || "pluginHttp".equals(fMethod) || "checkAppDns".equals(fMethod) || fMethod.startsWith("cs")) {
-            ExecutorService pool = fMethod.startsWith("cs") ? csExecutor : httpExecutor;
+        if ("httpRequest".equals(fMethod) || "pluginHttp".equals(fMethod) || "checkAppDns".equals(fMethod) || fMethod.startsWith("cs") || fMethod.startsWith("telegramAccount") || "dubGoogleVoice".equals(fMethod) || fMethod.startsWith("dubPiper") || fMethod.startsWith("hiki")) {
+            ExecutorService pool = fMethod.startsWith("cs") || fMethod.startsWith("hiki") ? csExecutor : httpExecutor;
             try {
                 pool.execute(invoke);
             } catch (RejectedExecutionException rejected) {
@@ -584,6 +595,44 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return rpcBridge.shareText(args.optString(0, ""), args.optString(1, ""));
             case "downloadFile":
                 return rpcBridge.downloadFile(args.optString(0, ""), args.optString(1, ""), args.optString(2, ""));
+            case "telegramAccountStatus":
+            case "telegramAccountCredentials":
+            case "telegramAccountAuth":
+            case "telegramAccountVideos":
+            case "telegramAccountPlay":
+                return TelegramAccountBridge.dispatch(this, method, args);
+            case "queueHikariDownload":
+                return DownloadBridge.enqueue(this, args.optString(0));
+            case "hikariDownloads":
+                return DownloadBridge.rows(this);
+            case "videoDownloadStatus":
+                if (args.optString(0).startsWith("hikari-")) return DownloadBridge.status(this, args.optString(0));
+                return videoDownloads.status(args.optLong(0, -1));
+            case "videoDownloadAction":
+                if (args.optString(0).startsWith("hikari-")) return DownloadBridge.action(this, args.optString(0), args.optString(1));
+                return videoDownloads.perform(args.optLong(0, -1), args.optString(1, ""));
+            case "dubPiperReady":
+                return PiperDubVoice.ready(this, args.optString(0));
+            case "dubPiperInstall":
+                return PiperDubVoice.install(this, args.optString(0));
+            case "dubPiperVoice":
+                return PiperDubVoice.synthesize(this, args.optString(0), args.optString(1));
+            case "dubGoogleVoice":
+                return GoogleDubVoice.synthesize(args.optString(0), args.optString(1));
+            case "dubAvailable":
+                return !getPackageManager().queryIntentServices(
+                        new Intent("android.intent.action.TTS_SERVICE"), 0).isEmpty();
+            case "dubSpeak":
+                runOnUiThread(() -> {
+                    if (dubSpeech == null) dubSpeech = new DubSpeech(this);
+                    dubSpeech.speak(args.optString(0), args.optString(1), args.optDouble(2, 1));
+                });
+                return null;
+            case "dubStop":
+                runOnUiThread(() -> {
+                    if (dubSpeech != null) dubSpeech.stop();
+                });
+                return null;
             case "downloadAndInstallUpdate":
                 return rpcBridge.downloadAndInstallUpdate(args.optString(0, ""), args.optString(1, ""));
             case "openSubtitlePicker":
@@ -655,6 +704,16 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                 return com.praha.stream.cloudstream.CsBridge.INSTANCE.providers().toString();
             case "csHome":
                 return com.praha.stream.cloudstream.CsBridge.INSTANCE.home(args.optJSONArray(0)).toString();
+            case "hikiRepo":
+            case "hikiInstall":
+            case "hikiInstalled":
+            case "hikiSetEnabled":
+            case "hikiProviders":
+            case "hikiCatalogs":
+            case "hikiBrowse":
+            case "hikiDetails":
+            case "hikiStreams":
+                return com.praha.stream.hiki.HikiBridge.dispatch(this, method, args);
             case "csCatalogs":
                 return com.praha.stream.cloudstream.CsBridge.INSTANCE.catalogs(args.optJSONArray(0)).toString();
             case "csSetCatalogEnabled":
@@ -1312,7 +1371,8 @@ public class MainActivity extends com.lagradost.cloudstream3.MainActivity {
                         : title.replaceAll("[\\/:*?\"<>|]", "_").trim();
                 request.setTitle(safeTitle);
                 request.setDescription("PRAHA STREAM download");
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PRAHA/" + safeTitle);
+                String uniqueName = java.util.UUID.randomUUID().toString().substring(0, 8);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PRAHA/" + uniqueName + "-" + safeTitle);
                 if (headersJson != null && !headersJson.trim().isEmpty()) {
                     try {
                         JSONObject headers = new JSONObject(headersJson);

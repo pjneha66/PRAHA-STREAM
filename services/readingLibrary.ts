@@ -2,7 +2,12 @@ import type { BookItem } from './archiveService';
 import type { MangaItem } from './mangaService';
 import type { SankaTitle } from './sankaService';
 
-export type MangaSource = 'WeebCentral' | 'MangaDex' | 'Kotatsu';
+/**
+ * The Manga tab's sources. `Extensions` is the installed extension ecosystems'
+* manga surface (AnymeX manga extensions, Sora manga modules); the extension
+* an item belongs to travels in its id prefix, resolved at open time.
+*/
+export type MangaSource = 'WeebCentral' | 'MangaDex' | 'Kotatsu' | 'Extensions';
 
 export type ReadingEntry =
   | { kind: 'books'; item: BookItem }

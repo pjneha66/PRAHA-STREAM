@@ -1,6 +1,6 @@
 package com.praha.stream
 
-import com.lagradost.cloudstream3.CloudStreamApp
+import com.hikari.app.HikariApp
 import com.praha.stream.cloudstream.CsApp
 import com.praha.stream.cloudstream.CsPluginManager
 import kotlinx.coroutines.launch
@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  * extensions are already installed, off the main thread, so the first search does
  * not have to pay for it.
  */
-class PrahaApplication : CloudStreamApp() {
+class PrahaApplication : HikariApp() {
     override fun onCreate() {
         super.onCreate()
         CsApp.init(this)

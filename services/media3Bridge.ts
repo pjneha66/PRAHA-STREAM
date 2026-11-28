@@ -58,6 +58,7 @@ interface PrahaMedia3Plugin {
   pause(): Promise<void>;
   stop(): Promise<void>;
   seek(options: { timeMs: number; absolute?: boolean }): Promise<void>;
+  setDubDialogueCut(options: { enabled: boolean }): Promise<{ works: boolean }>;
   setVolume(options: { volume: number }): Promise<void>;
   setRate(options: { rate: number }): Promise<void>;
   setMute(options: { muted: boolean }): Promise<void>;

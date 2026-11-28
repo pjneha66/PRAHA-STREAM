@@ -206,7 +206,8 @@ describe('Netflix-style Who is watching gate & Anime/Comics in the app shell', (
     });
     render(<App />);
     // The port splits the old combined tab: Comics keeps Sanka/Comick, Manga
-    // is a separate WeebCentral tab. Both must be reachable from the nav.
+    // is a separate WeebCentral tab. Both are under Reading.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reading' })[0]);
     expect(screen.getAllByRole('button', { name: 'Manga' }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByRole('button', { name: 'Comics' })[0]);
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Home, Layers, LayoutGrid, Library,
-  Music2, Play, Plus, Search, Settings, Sparkles, Tv, Tv2,
+  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Download, Home, Layers, LayoutGrid, Library,
+  Mic2, Music2, Play, Plus, Search, Send, Settings, Sparkles, Tv, Tv2,
   Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfilePicker';
@@ -61,7 +61,14 @@ const primaryMobileNavItems = [
   { id: 'reading' as const, label: 'Reading', icon: BookOpen },
 ];
 
+const mediaTools = [
+  { id: 'video-downloads', label: 'Video Downloads', icon: Download, desc: 'Queue, watch offline and export' },
+  { id: 'dubbing', label: 'AI Dubbing', icon: Mic2, desc: 'Translate and speak subtitles' },
+  { id: 'telegram', label: 'Telegram', icon: Send, desc: 'Browse public channel videos' },
+] as const;
+
 const moreNavItems = [
+  ...mediaTools,
   { id: 'cloudstream' as const, label: 'CloudStream', icon: Boxes, desc: 'Repositories & .cs3 extensions' },
   { id: 'collections' as const, label: 'Collections', icon: Layers, desc: 'Franchises & shared universes' },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2, desc: 'High-res audio, albums & charts' },
@@ -198,6 +205,7 @@ const Navigation: React.FC<NavigationProps> = ({
           <p className="nav-label">MENU</p>
           {mainNav.filter((item) => !hiddenNav.includes(item.id)).map(navButton)}
           <p className="nav-label nav-label-spaced">YOUR SPACE</p>
+          {mediaTools.map(navButton)}
           {navButton({ id: 'extensions', label: 'Extensions', icon: Blocks })}
           {navButton({ id: 'settings', label: 'Settings', icon: Settings })}
         </nav>

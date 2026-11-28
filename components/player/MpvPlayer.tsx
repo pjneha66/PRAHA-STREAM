@@ -15,6 +15,7 @@ import { mpvEngine } from '../../services/mpvEngine';
 import { mpvAvailable } from '../../services/mpvBridge';
 import { media3Available } from '../../services/media3Bridge';
 import AudioSubtitleDialog from './AudioSubtitleDialog';
+import PlayerDubbing from './PlayerDubbing';
 import { clamp, formatBitrate, formatBytes, formatSpeed, formatTime, streamHost } from './format';
 import { SHORTCUTS, SHORTCUT_GROUPS } from './shortcuts';
 import { getTheme, PLAYBACK_SPEEDS } from './themes';
@@ -22,7 +23,7 @@ import { useMpvEngine } from './useMpvEngine';
 import { mediaErrorMessage, MAX_STALL_RETRIES } from './recovery';
 import './mpv-player.css';
 
-type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'settings' | 'help' | null;
+type MenuId = 'speed' | 'quality' | 'audio' | 'subs' | 'dub' | 'settings' | 'help' | null;
 
 /**
  * Converted subtitle URLs, keyed by source URL + timing offset.
@@ -1304,6 +1305,7 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               </button>
             ))}
           </div>
+          <button type="button" className="mpv-upload-btn" onClick={() => setMenu('dub')}>AI Dubbing</button>
           <div className="mpv-menu-extra">
             <div className="mpv-delay-row">
               <span>Sync offset: <strong>{settings.subtitleOffset > 0 ? `+${settings.subtitleOffset}` : settings.subtitleOffset || 0}s</strong></span>
@@ -1328,6 +1330,12 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
               <input type="color" value={settings.subtitleColor} onChange={(event) => onSettingsChange({ subtitleColor: event.target.value })} />
             </label>
           </div>
+        </PlayerMenu>
+
+        <PlayerMenu active={menu} close={() => setMenu(null)} id="dub" title="AI Dubbing">
+          <PlayerDubbing session={effectiveUrl} nativeEngine={engine.nativeEngine} video={videoRef}
+            playing={playing && !waiting} rate={rate} baseVolume={muted ? 0 : settings.volume}
+            selected={Boolean(currentText)} duck={engine.setDubDuck} />
         </PlayerMenu>
 
         <PlayerMenu active={menu} close={() => setMenu(null)} id="settings" title="Playback Settings">
@@ -1447,6 +1455,11 @@ const MpvPlayer: React.FC<MpvPlayerProps> = ({
           flash(id ? 'Subtitle track changed' : 'Subtitles disabled');
         }}
         onLoadSubtitleFile={handleLoadSubtitleFile}
+        onOpenDubbing={() => {
+          setAudioSubDialogOpen(false);
+          setControlsVisible(true);
+          setMenu('dub');
+        }}
         settings={settings}
         onSettingsChange={onSettingsChange}
         isAndroid={isAndroidApp()}

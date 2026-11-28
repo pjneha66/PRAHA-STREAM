@@ -2,6 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { loadNovelChapters, loadNovelText, NOVEL_SOURCES, searchNovels, type Novel, type NovelChapter, type NovelSource } from '../services/novelService';
+import { ecoNovelChapters, ecoNovelSearch, ecoNovelText, installedReadingExtensions } from '../services/ecosystems/reading';
+import type { EcosystemExtension } from '../services/ecosystems/store';
+import type { NsfwMode } from '../types';
+
+/** An ecosystem source in the picker: `eco:<extension key>`. */
+type EcoNovelSource = `eco:${string}`;
+
+const novelExtensionOf = (key: string | undefined | null, mode?: NsfwMode): EcosystemExtension | null =>
+  key ? installedReadingExtensions('novel', mode).find((entry) => entry.key === key) ?? null : null;
 import ReadingSourceDirectory from './ReadingSourceDirectory';
 import ReaderZoomControls from './ReaderZoomControls';
 import { Artwork } from './MediaCard';
@@ -13,8 +22,15 @@ function getSavedChapter(novel: Novel) {
   } catch { return null; }
 }
 
-export default function NovelsView() {
-  const [source, setSource] = useState<NovelSource>('readnovelfull');
+export default function NovelsView({ extensionOnly = false, heading = 'Novels', adultMode }: {
+  extensionOnly?: boolean;
+  heading?: 'Books' | 'Novels';
+  adultMode?: NsfwMode;
+} = {}) {
+  const extensions = installedReadingExtensions('novel', adultMode);
+  const [source, setSource] = useState<NovelSource | EcoNovelSource>(() =>
+    extensionOnly ? `eco:${extensions[0]?.key ?? ''}` : 'readnovelfull');
+
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -36,28 +52,38 @@ export default function NovelsView() {
     let active = true;
     setLoading(true);
     setError('');
-    searchNovels(source, search, page).then((result) => {
+    const ecoExtension = novelExtensionOf(source.startsWith('eco:') ? source.slice(4) : null, adultMode);
+    const loader = ecoExtension
+      ? ecoNovelSearch(ecoExtension, search, page)
+      : source.startsWith('eco:') ? Promise.reject(new Error('This extension is unavailable.'))
+        : searchNovels(source as NovelSource, search, page);
+    loader.then((result) => {
       if (!active) return;
       setItems((previous) => page === 1 ? result.items : [...previous, ...result.items]);
       setHasMore(result.hasMore);
     }).catch(() => { if (active) setError('Could not load this novel catalog.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [source, search, page]);
+  }, [source, search, page, adultMode]);
 
   useEffect(() => {
     if (!selected) return;
     let active = true;
     setChapters([]);
     setChapterError('');
-    loadNovelChapters(selected, chapterPage).then((result) => {
+    const ecoExtension = novelExtensionOf(selected.ecoKey, adultMode);
+    const loader = ecoExtension
+      ? ecoNovelChapters(ecoExtension, selected.url).then((items) => ({ items, pageCount: 1 }))
+      : selected.ecoKey ? Promise.reject(new Error('This extension is unavailable.'))
+        : loadNovelChapters(selected, chapterPage);
+    loader.then((result) => {
       if (!active) return;
       setChapters(result.items);
       setChapterPages(result.pageCount);
       if (!result.items.length) setChapterError('This novel has no readable chapters.');
     }).catch(() => { if (active) setChapterError('Could not load the chapters.'); });
     return () => { active = false; };
-  }, [selected, chapterPage]);
+  }, [selected, chapterPage, adultMode]);
 
   const chapter = chapterIndex === null ? undefined : chapters[chapterIndex];
   useEffect(() => {
@@ -66,13 +92,18 @@ export default function NovelsView() {
     setParagraphs([]);
     setChapterError('');
     if (reader.current) reader.current.scrollTop = 0;
-    loadNovelText(chapter).then((text) => {
+    const ecoExtension = novelExtensionOf(chapter.ecoKey, adultMode);
+    const loader = ecoExtension
+      ? ecoNovelText(ecoExtension, chapter.url)
+      : chapter.ecoKey ? Promise.reject(new Error('This extension is unavailable.'))
+        : loadNovelText(chapter);
+    loader.then((text) => {
       if (!active) return;
       setParagraphs(text);
       try { localStorage.setItem(`praha.novel.chapter:${selected.url}`, JSON.stringify({ url: chapter.url, page: chapterPage })); } catch { /* Reading remains available. */ }
     }).catch((reason: unknown) => { if (active) setChapterError(reason instanceof Error ? reason.message : 'Could not open the chapter.'); });
     return () => { active = false; };
-  }, [chapter, selected, chapterPage]);
+  }, [chapter, selected, chapterPage, adultMode]);
 
   const openNovel = (novel: Novel) => {
     setError('');
@@ -84,30 +115,33 @@ export default function NovelsView() {
     setSelected(novel);
   };
 
-  const chooseSource = (next: NovelSource) => {
+  const chooseSource = (next: NovelSource | EcoNovelSource) => {
     if (source !== next) { setSource(next); setPage(1); setItems([]); }
   };
   const resume = selected ? chapters.findIndex((entry) => entry.url === getSavedChapter(selected)?.url) : -1;
   return (
     <div className="standard-page page-enter books-page reading-page">
-      <h1 className="reading-heading">Novels</h1>
+      <h1 className="reading-heading">{heading}</h1>
       <form className="sanka-search reading-search" onSubmit={(event) => {
         event.preventDefault();
         if (query.trim() !== search || page !== 1) { setItems([]); setSearch(query.trim()); setPage(1); }
       }}>
         <Search size={16} />
-        <input type="search" aria-label="Search novels" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search novels" />
+        <input type="search" aria-label={`Search ${heading.toLowerCase()}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${heading.toLowerCase()}`} />
         <button type="submit" className="button button-primary">Search</button>
       </form>
       <div className="reading-controls">
-        <select className="reading-select" aria-label="Novel source" value={source} onChange={(event) => chooseSource(event.target.value as NovelSource)}>
-          {Object.entries(NOVEL_SOURCES).map(([id, site]) => <option key={id} value={id}>{site.label}</option>)}
+        <select className="reading-select" aria-label="Novel source" value={source} onChange={(event) => chooseSource(event.target.value as NovelSource | EcoNovelSource)}>
+          {!extensionOnly && Object.entries(NOVEL_SOURCES).map(([id, site]) => <option key={id} value={id}>{site.label}</option>)}
+          {extensions.map((entry) => (
+            <option key={entry.key} value={`eco:${entry.key}`}>{entry.name} (extension)</option>
+          ))}
         </select>
-        <details className="reading-options">
+        {!extensionOnly && <details className="reading-options">
           <summary>Source directories</summary>
           <ReadingSourceDirectory repository="lnreader" readers={{ 'The Wandering Inn': () => chooseSource('wanderinginn') }} />
           <ReadingSourceDirectory repository="ireader" readers={{ 'Standard Ebooks': () => chooseSource('standardebooks') }} />
-        </details>
+        </details>}
       </div>
       {loading && <p role="status">Loading novels…</p>}
       {error && <p role="alert">{error}</p>}

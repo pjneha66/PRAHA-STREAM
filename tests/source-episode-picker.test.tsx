@@ -164,6 +164,25 @@ describe('SourceModal season/episode picker', () => {
       .toContain(Number(episodeSelect().value));
   });
 
+  it('resolves each remaining episode before adding it to the download batch', async () => {
+    vi.stubGlobal('prahaNativeBridge', { postMessage: vi.fn() });
+    try {
+      film.scrape.mockResolvedValue({
+        streams: [{ id: 'episode-video', title: '720p', url: 'https://example.test/episode.m3u8',
+          sourceType: 'scraper', sourceName: 'Example', language: 'English' }],
+        failures: [],
+      });
+      renderModal({ initialSeason: 1, initialEpisode: 1 });
+      fireEvent.click(await screen.findByRole('button', { name: 'Add to batch' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Find rest of season' }));
+      expect(await screen.findByRole('button', { name: 'Queue 3 episodes' })).toBeTruthy();
+      expect(episodeSelect().value).toBe('3');
+      expect(film.scrape).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('starts on the episode the modal was opened with', async () => {
     render(
       <SourceModal

@@ -75,4 +75,34 @@ Capacitor native plugins, the native build scripts and the web application — i
 available from the repository from which these builds were made. If you received
 a release APK without a repository link, contact the distributor for the source.
 
+## Code ported from Hikari
+
+The extension-ecosystem support — the Sora module, SkyStream plugin, Zangetsu
+provider and AnymeX (Mangayomi-format) extension runtimes, their installers,
+and the boot harnesses those ecosystems' plugins are written against — is a
+port of **Hikari** ([codegeasse1/hikari](https://github.com/codegeasse1/hikari)),
+which is distributed under GPL-3.0. Copyright in that original work remains
+with its author (Copyright (C) 2026 Codegeasse) and contributors. The ported
+files are `services/ecosystems/` and the pieces of `services/pluginRuntime.ts`,
+`services/nuvioWorker.ts` and `components/EcosystemsPanel.tsx` that carry the
+ecosystem call and storage plumbing. QuickJS-only parts of upstream's engines
+(the timer pumps and native crypto bridges) are dropped where the browser
+runtime already provides the equivalent, and the native-only embed-extractor
+stack answers empty; everything else follows the reference behaviour,
+including the response envelopes, caps and error strings.
+
 This notice is provided for information only and is not legal advice.
+
+The Android video download engine and Media3 dialogue-cut processor also come
+from Hikari. PRAHA adapts their queue, network transport and playback controls
+to its Android host. The Telegram public preview and authenticated TDLib
+client and streaming data source are adapted from Hikari's Telegram modules.
+PRAHA includes TDLib's JNI binaries and Java bindings from that revision under
+the Boost Software License 1.0. See the bundled TDLib licence.
+The offline Piper voice setup uses sherpa-onnx 1.13.8 from its
+[official release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8).
+Piper voice packs are installed separately from their upstream release and
+retain the licence supplied with each model.
+The Telegram JNI build and its TLS libraries come from Telegram X 0.29.0.1813,
+as documented by Hikari. The APK bundles the OpenSSL licence alongside the
+TDLib licence. The Telegram build uses PRAHA's packaged Android C++ runtime.

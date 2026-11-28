@@ -137,6 +137,17 @@ repositories {
         }
         filter { includeModule('edde746', 'mpv-android') }
     }
+    exclusiveContent {
+        forRepository {
+            ivy {
+                name = 'sherpa-onnx-release'
+                url = uri('https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8')
+                patternLayout { artifact('[artifact]-[revision].[ext]') }
+                metadataSources { artifact() }
+            }
+        }
+        filter { includeModule('k2-fsa', 'sherpa-onnx') }
+    }
 }
 
 /**
@@ -180,7 +191,32 @@ tasks.register('verifyMpvAar') {
     }
 }
 
+configurations.create('sherpaAarVerify')
 dependencies {
+    sherpaAarVerify 'k2-fsa:sherpa-onnx:1.13.8@aar'
+}
+
+tasks.register('verifySherpaAar') {
+    def artifact = configurations.named('sherpaAarVerify')
+    def expected = '633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96'
+    inputs.files(artifact)
+    inputs.property('expectedSha256', expected)
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        artifact.get().singleFile.withInputStream { stream ->
+            byte[] buffer = new byte[65536]
+            int count
+            while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+        }
+        if (digest.digest().encodeHex().toString() != expected) {
+            throw new GradleException('sherpa-onnx AAR checksum mismatch.')
+        }
+    }
+}
+
+dependencies {
+    implementation 'k2-fsa:sherpa-onnx:1.13.8@aar'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
@@ -283,11 +319,11 @@ afterEvaluate {
         dependsOn('ensureReleaseKeystore')
     }
     tasks.named('assembleRelease').configure {
-        dependsOn('ensureReleaseKeystore', 'verifyMpvAar')
+        dependsOn('ensureReleaseKeystore', 'verifyMpvAar', 'verifySherpaAar')
         finalizedBy('copyApkToDist')
     }
     tasks.named('assembleDebug').configure {
-        dependsOn('verifyMpvAar')
+        dependsOn('verifyMpvAar', 'verifySherpaAar')
         finalizedBy('copyApkToDist')
     }
 }

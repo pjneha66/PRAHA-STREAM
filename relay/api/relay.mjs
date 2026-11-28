@@ -1,4 +1,5 @@
 import { fetchReadingIndex, readingIndexes, readingPageTarget } from '../readingSources.mjs';
+import { isEcoEmbedUrl } from '../ecoEmbeds.mjs';
 import { fetchMoctaleMeter, moctaleLookup } from '../moctale.mjs';
 import { hostedComicPage } from '../comickSources.mjs';
 
@@ -114,6 +115,16 @@ async function relay(request) {
     if (!target) return reply(400, 'Unsupported comic source.');
     headers.Accept = 'text/html';
     // The client parses the HTML as text. It must not execute as a relay page.
+    contentType = 'text/plain; charset=utf-8';
+  } else if (route === '/eco-page' && request.method === 'GET') {
+    // Extension extractor pages: the video hosts' embed pages, allowlisted to
+    // the extractor families in ecoEmbeds.mjs. Returns text/plain so the HTML
+    // cannot execute as a relay page.
+    const raw = incoming.searchParams.get('url');
+    if (!isEcoEmbedUrl(raw)) return reply(400, 'Unsupported embed host.');
+    target = new URL(raw);
+    headers.Accept = 'text/html,*/*;q=0.8';
+    headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
     contentType = 'text/plain; charset=utf-8';
   } else {
     return reply(404, 'Unsupported relay endpoint.');

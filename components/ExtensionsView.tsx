@@ -2,8 +2,11 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowDown, ArrowUp, ArrowUpRight, Blocks, Boxes, Check, ChevronDown, ChevronUp, CircleAlert,
   Cloud, Compass, ExternalLink, Layers, Package, PackageOpen, Play, Plug, RefreshCw,
-  Search, Settings2, ShieldCheck, Sliders, Trash2, WandSparkles, X, Zap, Pencil,
+  Search, Settings2, ShieldCheck, Sliders, Sparkles, Trash2, WandSparkles, X, Zap, Pencil,
 } from 'lucide-react';
+import EcosystemsPanel from './EcosystemsPanel';
+import HikariExtensionsPanel from './HikariExtensionsPanel';
+import type { MediaItem } from '../types';
 import { CURATED_EXTENSIONS, type CuratedExtensionItem } from '../data/extensionCatalog';
 import {
   fetchStremioAddonCatalogs, fetchStremioManifest, getAddonConfigureUrl,
@@ -40,6 +43,7 @@ interface ExtensionsProps {
   notify: (message: string, tone?: 'default' | 'success' | 'error') => void;
   /** CloudStream extensions are managed natively; this opens that screen. */
   onOpenCloudStream: () => void;
+  onOpenHikari?: (item: MediaItem) => void;
 }
 
 const resourceNames = (addon: InstalledAddon) => [...new Set(addon.manifest.resources.map((resource) => resource.name))];
@@ -56,9 +60,9 @@ function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
 
 const ExtensionsView: React.FC<ExtensionsProps> = ({
   addons, repositories, pluginRepositories, nuvioSettings, settings, profile,
-  setAddons, setRepositories, setPluginRepositories, setNuvioSettings, notify, onOpenCloudStream,
+  setAddons, setRepositories, setPluginRepositories, setNuvioSettings, notify, onOpenCloudStream, onOpenHikari,
 }) => {
-  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'jsplugins' | 'cloudstream' | 'directory'>('stremio');
+  const [tab, setTab] = useState<'stremio' | 'nuvio' | 'jsplugins' | 'cloudstream' | 'directory' | 'ecosystems' | 'hikari'>('stremio');
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState('');
@@ -140,8 +144,7 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
   const install = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!installUrl.trim()) { setInstallError('Enter a repository or manifest URL.'); return; }
-    const targetKind = tab === 'directory' ? 'stremio' : tab;
-    await installFromUrl(installUrl, targetKind);
+    if (tab === 'stremio' || tab === 'nuvio' || tab === 'jsplugins') await installFromUrl(installUrl, tab);
   };
 
   const refreshPluginRepo = async (repo: PluginRepository) => {
@@ -241,9 +244,11 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         <button className={tab === 'jsplugins' ? 'active' : ''} onClick={() => { setTab('jsplugins'); setInstallError(''); }}><Package size={18} /><span>JS plugins<small>Scraper & Vega repos</small></span><b>{activePlugins}</b></button>
         <button className={tab === 'cloudstream' ? 'active' : ''} onClick={() => { setTab('cloudstream'); setInstallError(''); }}><Boxes size={18} /><span>CloudStream<small>Native .cs3 extensions</small></span><b>→</b></button>
         <button className={tab === 'directory' ? 'active' : ''} onClick={() => { setTab('directory'); setInstallError(''); }}><Compass size={18} /><span>1-Click Directory<small>Subtitles, anime & catalogs</small></span><b>{CURATED_EXTENSIONS.length}</b></button>
+        <button className={tab === 'hikari' ? 'active' : ''} onClick={() => { setTab('hikari'); setInstallError(''); }}><Package size={18} /><span>Hikari<small>Native .hiki extensions</small></span><b>→</b></button>
+        <button className={tab === 'ecosystems' ? 'active' : ''} onClick={() => { setTab('ecosystems'); setInstallError(''); }}><Sparkles size={18} /><span>Ecosystems<small>Sora · SkyStream · Zangetsu · AnymeX</small></span><b>4</b></button>
       </div>
 
-      {tab !== 'directory' && tab !== 'cloudstream' && (
+      {tab !== 'directory' && tab !== 'cloudstream' && tab !== 'ecosystems' && tab !== 'hikari' && (
         <section className="install-panel">
           <div className="install-panel-title"><span>{tab === 'stremio' ? <Blocks size={20} /> : tab === 'jsplugins' ? <Package size={20} /> : <Zap size={20} />}</span><div><h2>{tab === 'stremio' ? 'Add a Stremio addon' : tab === 'jsplugins' ? 'Add a JS plugin repository' : 'Add a Nuvio repository'}</h2><p>{tab === 'stremio'
             ? 'Paste a manifest URL or stremio:// link. Subtitle addons like OpenSubtitles work automatically.'
@@ -322,7 +327,10 @@ const ExtensionsView: React.FC<ExtensionsProps> = ({
         </section>
       )}
 
-      {tab !== 'directory' && tab !== 'cloudstream' && (
+      {tab === 'hikari' && <HikariExtensionsPanel adult={allowsAdult(settings, profile)} onOpen={(item) => onOpenHikari?.(item)} />}
+      {tab === 'ecosystems' && <EcosystemsPanel notify={(message) => notify(message)} />}
+
+      {tab !== 'directory' && tab !== 'cloudstream' && tab !== 'ecosystems' && tab !== 'hikari' && (
         <div className="installed-heading">
           <div>
             <h2>Installed {tab === 'stremio' ? 'addons' : 'repositories'}</h2>

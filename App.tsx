@@ -13,6 +13,7 @@ import ExploreView from './components/ExploreView';
 import AnimeView from './components/AnimeView';
 import SankaExplorer from './components/SankaExplorer';
 import MangaView from './components/MangaView';
+import ReadingExtensionPicker from './components/ReadingExtensionPicker';
 import NovelsView from './components/NovelsView';
 import AudiobooksView from './components/AudiobooksView';
 import BooksView from './components/BooksView';
@@ -45,7 +46,7 @@ import { animeService } from './services/animeService';
 import { imdxService } from './services/imdxService';
 import { DEFAULT_HOME_ROWS, normalizeHomeRows, readHomeCache, writeHomeCache } from './services/homeCache';
 import type { HomeRowSettings } from './services/homeCache';
-import { configureAppDns, exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop } from './services/androidBridge';
+import { configureAppDns, exitAndroidApp, exportBackupFile, getNativeAppVersion, nativeVlcStop, prahaRpc } from './services/androidBridge';
 import { createBackupBundle, scrobbleWatchProgress, validateAndParseBackup } from './services/backupSyncService';
 import { checkForUpdates, type UpdateInfo } from './services/autoUpdateService';
 import { OctaveMusicService, type MusicTrack } from './services/musicService';
@@ -64,12 +65,15 @@ import {
 
 const SESSION_PROFILE_KEY = 'praha.v2.session-profile-picked';
 
+const VideoDownloadsView = React.lazy(() => import('./components/VideoDownloadsView'));
+const DubStudioView = React.lazy(() => import('./components/DubStudioView'));
+const TelegramView = React.lazy(() => import('./components/TelegramView'));
 const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 // The dedicated live-channel player, a port of VyseTV's `LiveTvPlayerPage`.
 // Loaded like `PlayerModal`, so neither is in the first bundle.
 const LiveTvPlayer = React.lazy(() => import('./components/player/LiveTvPlayer'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'collections', 'cloudstream', 'extensions', 'settings'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'collections', 'cloudstream', 'extensions', 'settings', 'video-downloads', 'dubbing', 'telegram'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -1100,6 +1104,10 @@ const App: React.FC = () => {
   }, [view]);
 
   const startVideo = useCallback((next: ActivePlayerState, resumeLimit = 95) => {
+    if (next.stream.sourceType === 'hikari' && next.stream.externalUrl) {
+      void prahaRpc('openBrowser', [next.stream.externalUrl]).catch(() => notify('Could not open this external stream.', 'error'));
+      return;
+    }
     const existing = history.find((entry) => matchesPlayback(entry, next));
     const initialTime = existing && existing.progress < resumeLimit ? existing.currentTime || 0 : 0;
     upsertHistory(next);
@@ -1107,7 +1115,7 @@ const App: React.FC = () => {
     latestProgressRef.current = null;
     lastProgressFlushRef.current = 0;
     setPlayer({ ...next, initialTime });
-  }, [history, upsertHistory]);
+  }, [history, upsertHistory, notify]);
 
   const resumeWatchEntry = (entry: WatchProgress) => {
     if (entry.lastStream && entry.progress < 96) {
@@ -1464,15 +1472,24 @@ const App: React.FC = () => {
     );
   } else if (view === 'sanka') {
     page = (
-      <SankaExplorer
+      <ReadingExtensionPicker
+        key="comics-extensions"
+        mode="comics"
         adultMode={effectiveNsfwMode(settings, activeProfile)}
-        onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
         savedReading={savedReading}
         onToggleReading={toggleReading}
         onSaveReading={saveReading}
-        openReading={readingTarget?.kind === 'sanka' ? readingTarget : null}
-        prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
-      />
+      >
+        <SankaExplorer
+          adultMode={effectiveNsfwMode(settings, activeProfile)}
+          onAdultMode={activeProfile.isKids ? undefined : updateReadingAdultMode}
+          savedReading={savedReading}
+          onToggleReading={toggleReading}
+          onSaveReading={saveReading}
+          openReading={readingTarget?.kind === 'sanka' ? readingTarget : null}
+          prefillQuery={searchPrefill?.view === 'sanka' ? searchPrefill.term : undefined}
+        />
+      </ReadingExtensionPicker>
     );
   } else if (view === 'manga') {
     page = (
@@ -1513,17 +1530,25 @@ const App: React.FC = () => {
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
   } else if (view === 'novels') {
-    page = <NovelsView />;
+    page = <NovelsView adultMode={effectiveNsfwMode(settings, activeProfile)} />;
+  } else if (view === 'video-downloads' || view === 'dubbing' || view === 'telegram') {
+    page = <React.Suspense fallback={<p role="status">Loading…</p>}>
+      {view === 'video-downloads' ? <VideoDownloadsView />
+        : view === 'dubbing' ? <DubStudioView />
+          : <TelegramView key={activeProfile.id} profileId={activeProfile.id} onPlay={playExplorerStream} />}
+    </React.Suspense>;
   } else if (view === 'books') {
     page = (
-      <BooksView
-        savedReading={savedReading}
-        onToggleReading={toggleReading}
-        onSaveReading={saveReading}
-        openReading={readingTarget?.kind === 'books' ? readingTarget : null}
-        compact={settings.compactCards}
-        prefillQuery={searchPrefill?.view === 'books' ? searchPrefill.term : undefined}
-      />
+      <ReadingExtensionPicker key="books-extensions" mode="books" adultMode={effectiveNsfwMode(settings, activeProfile)}>
+        <BooksView
+          savedReading={savedReading}
+          onToggleReading={toggleReading}
+          onSaveReading={saveReading}
+          openReading={readingTarget?.kind === 'books' ? readingTarget : null}
+          compact={settings.compactCards}
+          prefillQuery={searchPrefill?.view === 'books' ? searchPrefill.term : undefined}
+        />
+      </ReadingExtensionPicker>
     );
   } else if (view === 'music') {
     page = (
@@ -1628,6 +1653,10 @@ const App: React.FC = () => {
         setNuvioSettings={setNuvioSettings}
         notify={notify}
         onOpenCloudStream={() => navigate('cloudstream')}
+        onOpenHikari={(item) => {
+          const first = item.hikari?.episodes[0];
+          openSources(item, first?.season, first?.number, first?.name);
+        }}
       />
     );
   } else {

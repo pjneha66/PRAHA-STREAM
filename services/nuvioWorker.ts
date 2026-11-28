@@ -23,6 +23,26 @@ const worker = self as unknown as DedicatedWorkerGlobalScope;
 const originalFetch = worker.fetch.bind(worker);
 
 /**
+ * A post the app cannot clone must never kill the run silently: wrap the
+ * scope's own postMessage so a structured-clone failure surfaces as an
+ * ordinary run error naming the message type, the way upstream's
+ * serialisation boundary reports unserialisable answers.
+ */
+const rawPostMessage = worker.postMessage.bind(worker);
+worker.postMessage = function postChecked(message: unknown) {
+  try {
+    return rawPostMessage(message);
+  } catch (error) {
+    const type = message && typeof message === 'object' ? String((message as { type?: unknown }).type) : typeof message;
+    return rawPostMessage({
+      type: 'plugin-done',
+      ok: false,
+      error: `post ${type} failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+} as typeof worker.postMessage;
+
+/**
  * The real TMDB API key must never enter the worker realm (audit H-open):
  * every scraper we execute is third-party code. Scrapers that read the
  * `TMDB_API_KEY` global instead receive this placeholder, and any request
@@ -180,17 +200,56 @@ interface PendingHttpRequest {
 
 const pendingHttp = new Map<string, PendingHttpRequest>();
 
+/** Pending extension-preference round trips (SkyStream/AnymeX storage). */
+const pendingPrefs = new Map<string, { resolve: (value: string | null) => void; timer: ReturnType<typeof setTimeout>; set: boolean }>();
+
 let httpCounter = 0;
+
+/**
+ * One extension preference, read or written on the main thread (a worker has
+ * no localStorage). The app stores them per extension, which is where the
+ * SkyStream shim's getPreference/setPreference and the AnymeX
+ * SharedPreferences land.
+ */
+function ecoPref(op: 'get' | 'set', storeKey: string, key: string, value?: string): Promise<string | null> {
+  const reqId = `pref-${op}-${Math.random().toString(36).slice(2)}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingPrefs.delete(reqId)) resolve(op === 'get' ? null : null);
+    }, 5000);
+    pendingPrefs.set(reqId, { resolve, timer, set: op === 'set' });
+    worker.postMessage({ type: 'eco-prefs', op, reqId, storeKey, key, value });
+  });
+}
 
 /** What a plugin may call. Never throws: a failure is `status: 0` plus a reason. */
 function pluginHttp(url: unknown, options: Record<string, any> = {}): Promise<Record<string, unknown>> {
   const target = String(url == null ? '' : url);
   const reqId = `http-${++httpCounter}-${Math.random().toString(36).slice(2)}`;
   const timeout = Math.min(Math.max(Number(options.timeout) || 12000, 1000), 20000);
+  // Header values are flattened to strings: extensions (ecosystem ones above
+  // all) hand over Headers objects, arrays, or computed values, and a
+  // non-string value would make the relay post uncloneable.
+  const headers: Record<string, string> = {};
+  if (options.headers && typeof options.headers === 'object' && !Array.isArray(options.headers)) {
+    for (const [key, value] of Object.entries(options.headers as Record<string, unknown>)) {
+      if (value == null) continue;
+      if (typeof value === 'string') {
+        headers[key] = value;
+        continue;
+      }
+      try {
+        const serialized = JSON.stringify(value);
+        headers[key] = serialized === undefined ? String(value) : serialized;
+      } catch {
+        headers[key] = String(value);
+      }
+    }
+  }
   const payload = {
     url: target,
     method: String(options.method || 'GET').toUpperCase(),
-    headers: options.headers && typeof options.headers === 'object' ? options.headers : {},
+    headers,
     // `body` may be an object; the contract says it is then sent as JSON.
     body:
       options.body == null
@@ -257,6 +316,15 @@ worker.onmessage = async (event) => {
       text: typeof payload.text === 'string' ? payload.text : '',
       error: payload.error || undefined,
     });
+    return;
+  }
+
+  if (payload?.type === 'eco-prefs-response') {
+    const pending = pendingPrefs.get(payload.reqId);
+    if (!pending) return;
+    pendingPrefs.delete(payload.reqId);
+    clearTimeout(pending.timer);
+    pending.resolve(payload.value == null ? null : String(payload.value));
     return;
   }
 
@@ -328,6 +396,13 @@ async function runPluginJob(payload: {
   name?: string;
   /** Ask this global instead of `getStreams` (a catalog page, a title's details). */
   entry?: string;
+  /**
+   * Argument array for the entry call. Ecosystem extensions (Sora, SkyStream,
+   * Zangetsu, AnymeX) are invoked positionally — `search("kw", 1, [])` — which
+   * is how their reference runtimes call them; absent, the single `query`
+   * object is passed as before.
+   */
+  args?: unknown[];
 }): Promise<void> {
   const log: string[] = [];
   const capture = (...parts: unknown[]) => {
@@ -346,6 +421,11 @@ async function runPluginJob(payload: {
     define('self', worker);
     // The plugin contract: one door out, and no other.
     define('http', pluginHttp);
+    // Extension preference storage (a worker cannot touch localStorage):
+    // `__ecoPrefGet(store, key)` / `__ecoPrefSet(store, key, value)` round-trip
+    // to the main thread, which keeps the values per extension.
+    define('__ecoPrefGet', (storeKey: string, key: string) => ecoPref('get', String(storeKey ?? ''), String(key ?? '')));
+    define('__ecoPrefSet', (storeKey: string, key: string, value: string) => ecoPref('set', String(storeKey ?? ''), String(key ?? ''), value == null ? '' : String(value)));
     define('fetch', undefined);
     define('XMLHttpRequest', undefined);
     define('WebSocket', undefined);
@@ -395,8 +475,21 @@ async function runPluginJob(payload: {
       const fn = (typeof exported[payload.entry] === 'function' ? exported[payload.entry] : undefined)
         || context.local(payload.entry);
       if (typeof fn !== 'function') throw new Error(`This plugin has no ${payload.entry}().`);
-      const value = await (fn as (args: unknown) => unknown)(payload.query);
-      worker.postMessage({ type: 'plugin-done', ok: true, value: value ?? null, log });
+      // Positional args when the caller sent an array (ecosystem extensions),
+      // the single query object otherwise — the shape VyseTV's engine used.
+      const callArgs = Array.isArray(payload.args) ? payload.args : [payload.query];
+      const value = await (fn as (...callArgs: unknown[]) => unknown)(...callArgs);
+      // Upstream serialises every answer (QuickJS stringify); structured clone
+      // is stricter, so a module result carrying a live Promise or method is
+      // flattened to its JSON shape before it crosses back to the app.
+      let clonable: unknown = value ?? null;
+      try {
+        structuredClone(clonable);
+      } catch {
+        clonable = JSON.parse(JSON.stringify(clonable, (_key, item: unknown) =>
+          (item instanceof Promise || typeof item === 'function') ? null : item));
+      }
+      worker.postMessage({ type: 'plugin-done', ok: true, value: clonable, log });
       return;
     }
     const getStreams = exported.getStreams || context.localGetStreams || scope.getStreams;
