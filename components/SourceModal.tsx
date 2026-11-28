@@ -25,6 +25,7 @@ import type {
 } from '../types';
 import SourcePanel from './SourcePanel';
 import { hikiStreams } from '../services/hikariExtensions';
+import { ruleScraperStreamsFor } from '../services/ruleScraper';
 
 /**
  * The empty plugin list. It must be one shared array: a `= []` default in the
@@ -129,9 +130,10 @@ const SourceModal: React.FC<{
    * down the component could drift from this one.
    */
   const hikariTitle = media.hikari;
-  const extensionName = hikariTitle?.provider.name || media.cloudstreamApiName;
+  const ruleTitle = media.ruleScraper;
+  const extensionName = hikariTitle?.provider.name || ruleTitle?.config.name || media.cloudstreamApiName;
   const extensionOnly = Boolean(
-    hikariTitle || media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
+    hikariTitle || ruleTitle || media.cloudstreamApiName && media.cloudstreamPlayables?.length && cloudStreamAvailable(),
   );
 
   // Load real season metadata from AniCore (anime) or TMDB for series
@@ -545,7 +547,15 @@ const SourceModal: React.FC<{
               message: error instanceof Error ? error.message : 'Hikari could not load the streams.' }] };
           }
         }, publish) : Promise.resolve();
-        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, pluginJob, cloudstreamJob, ecosystemJob, hikariJob];
+        const ruleJob = ruleTitle ? runProvider(`rule:${ruleTitle.config.name}`, async () => {
+          try {
+            return { streams: await ruleScraperStreamsFor(ruleTitle, s, ep), errors: [] };
+          } catch (error) {
+            return { streams: [], errors: [{ sourceName: ruleTitle.config.name,
+              message: error instanceof Error ? error.message : 'The rule source could not load the streams.' }] };
+          }
+        }, publish) : Promise.resolve();
+        const jobs = [filmJob, playtorrioJob, stremioJob, nuvioJob, pluginJob, cloudstreamJob, ecosystemJob, hikariJob, ruleJob];
         await Promise.all(jobs);
       } catch (error) {
         if (!cancelled) setErrors([{ sourceName: 'Source search', message: error instanceof Error ? error.message : 'Unable to search sources.' }]);

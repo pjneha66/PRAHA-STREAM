@@ -1,8 +1,9 @@
 import type { HikiTitle } from './services/hikariExtensions';
-export const APP_VERSION = '2.11.41';
+import type { RuleScraperTitle } from './services/ruleScraper';
+export const APP_VERSION = '2.11.42';
 
 export type MediaType = 'movie' | 'series';
-export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'video-downloads' | 'dubbing' | 'telegram' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'settings';
+export type AppView = 'home' | 'anime' | 'sanka' | 'manga' | 'livetv' | 'audiobooks' | 'music' | 'video-downloads' | 'dubbing' | 'telegram' | 'books' | 'novels' | 'discover' | 'flow' | 'library' | 'explore' | 'collections' | 'cloudstream' | 'extensions' | 'calendar' | 'settings';
 
 export type LibraryStatus = 'watching' | 'plan' | 'hold' | 'dropped' | 'completed';
 
@@ -115,7 +116,7 @@ export interface MediaItem {
   runtime?: string;
   maturity?: string;
   source: 'tmdb' | 'stremio' | 'nuvio' | 'anicore' | 'imdx' | 'youtube' | 'iptv' | 'cloudstream'
-    | 'sora' | 'skystream' | 'zangetsu' | 'anymex' | 'telegram' | 'hikari';
+    | 'sora' | 'skystream' | 'zangetsu' | 'anymex' | 'telegram' | 'hikari' | 'rule-scraper' | 'calendar';
   /** Present when the title was resolved through AniCore / Anikura. */
   anime?: AnimeReference;
   addonUrl?: string;
@@ -134,6 +135,8 @@ export interface MediaItem {
    * playable list travel with the item rather than being looked up again.
    */
   hikari?: HikiTitle;
+  /** Present when the title came from a JSON-rule scraper source. */
+  ruleScraper?: RuleScraperTitle;
   cloudstreamApiName?: string;
   cloudstreamUrl?: string;
   cloudstreamPlayables?: CloudStreamPlayable[];
@@ -511,7 +514,7 @@ export interface StreamResult {
   title: string;
   url: string;
   sourceName: string;
-  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed' | 'cloudstream' | 'ecosystem' | 'telegram' | 'hikari';
+  sourceType: 'stremio' | 'nuvio' | 'playtorrio' | 'iptv' | 'scraper' | 'debrid' | 'torrserver' | 'embed' | 'cloudstream' | 'ecosystem' | 'telegram' | 'hikari' | 'rule-scraper';
   quality?: string;
   size?: string;
   language?: string;

@@ -130,7 +130,7 @@ port and nothing loaded the script.
 
 - **App:** PRAHA-STREAM — a Capacitor (React + TypeScript + Vite) media streaming app for Android (also a web app).
 - **Package / applicationId:** `com.praha.stream`, label `PRAHA STREAM`.
-- **Version:** 2.11.41, `versionCode 66` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
+- **Version:** 2.11.42, `versionCode 67` (bumped in `package.json`, `package-lock.json`, `types.ts`, `android/app/build.gradle`).
 - **Key configs:** `capacitor.config.json`, `vite.config.ts`, `android/build.gradle` (AGP `8.13.0`, Gradle 8.13), `android/app/build.gradle`.
 - **Native Android entry:** `android/app/src/main/java/com/praha/stream/MainActivity.java` (includes a WebView bridge with `@JavascriptInterface` methods). Playback is **libmpv** (`com.praha.stream.mpv.PrahaMpvPlugin`, from the `edde746:mpv-android` AAR) with Media3/ExoPlayer and a web player as fallbacks. There is no LibVLC in the build any more — the `player-vlc-active` CSS class name is a leftover from that era.
 

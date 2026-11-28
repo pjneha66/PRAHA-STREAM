@@ -16,6 +16,7 @@ import MangaView from './components/MangaView';
 import ReadingExtensionPicker from './components/ReadingExtensionPicker';
 import NovelsView from './components/NovelsView';
 import AudiobooksView from './components/AudiobooksView';
+import CalendarView from './components/CalendarView';
 import BooksView from './components/BooksView';
 import MusicView from './components/MusicView';
 import { MusicPlayerProvider } from './components/music/MusicPlayerProvider';
@@ -73,7 +74,7 @@ const PlayerModal = React.lazy(() => import('./components/PlayerModal'));
 // Loaded like `PlayerModal`, so neither is in the first bundle.
 const LiveTvPlayer = React.lazy(() => import('./components/player/LiveTvPlayer'));
 
-const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'collections', 'cloudstream', 'extensions', 'settings', 'video-downloads', 'dubbing', 'telegram'];
+const VALID_VIEWS: AppView[] = ['home', 'livetv', 'anime', 'sanka', 'manga', 'music', 'audiobooks', 'books', 'novels', 'discover', 'flow', 'library', 'explore', 'collections', 'cloudstream', 'extensions', 'settings', 'video-downloads', 'dubbing', 'telegram', 'calendar'];
 
 function parseHashView(): AppView {
   if (typeof window === 'undefined') return 'home';
@@ -1529,6 +1530,8 @@ const App: React.FC = () => {
     );
   } else if (view === 'audiobooks') {
     page = <AudiobooksView />;
+  } else if (view === 'calendar') {
+    page = <CalendarView onOpenMedia={(item) => openSources(item)} />;
   } else if (view === 'novels') {
     page = <NovelsView adultMode={effectiveNsfwMode(settings, activeProfile)} />;
   } else if (view === 'video-downloads' || view === 'dubbing' || view === 'telegram') {
@@ -1655,6 +1658,10 @@ const App: React.FC = () => {
         onOpenCloudStream={() => navigate('cloudstream')}
         onOpenHikari={(item) => {
           const first = item.hikari?.episodes[0];
+          openSources(item, first?.season, first?.number, first?.name);
+        }}
+        onOpenRuleScraper={(item) => {
+          const first = item.ruleScraper?.episodes[0];
           openSources(item, first?.season, first?.number, first?.name);
         }}
       />

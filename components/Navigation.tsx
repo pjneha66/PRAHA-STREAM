@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, Check, Compass, Download, Home, Layers, LayoutGrid, Library,
+  Blocks, BookHeadphones, BookMarked, BookOpen, Boxes, CalendarDays, Check, Compass, Download, Home, Layers, LayoutGrid, Library,
   Mic2, Music2, Play, Plus, Search, Send, Settings, Sparkles, Tv, Tv2,
   Trash2, UserPlus, Users, X,
 } from 'lucide-react';
@@ -44,6 +44,7 @@ const mainNav = [
   { id: 'home' as const, label: 'Home', icon: Home },
   { id: 'livetv' as const, label: 'Live TV', icon: Tv2 },
   { id: 'anime' as const, label: 'Anime', icon: Tv },
+  { id: 'calendar' as const, label: 'Calendar', icon: CalendarDays },
   { id: 'reading' as const, label: 'Reading', icon: BookOpen },
   { id: 'music' as const, label: 'Music Streaming', icon: Music2 },
   { id: 'audiobooks' as const, label: 'Audiobooks', icon: BookHeadphones },
